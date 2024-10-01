@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from "constructs";
 
 export class S3BucketStack extends cdk.Stack {
@@ -17,12 +18,12 @@ export class S3BucketStack extends cdk.Stack {
       autoDeleteObjects: true,
       cors: [{
         allowedMethods: [s3.HttpMethods.GET,s3.HttpMethods.POST,s3.HttpMethods.PUT,s3.HttpMethods.DELETE],
-        allowedOrigins: ['*'],      
+        allowedOrigins: ['*'],
         allowedHeaders: ["*"]
       }],
 
       blockPublicAccess: {
-        blockPublicAccess: false,
+        blockPublicPolicy: false,
         blockPublicAcls: false,
         ignorePublicAcls: false,
         restrictPublicBuckets: false
@@ -31,7 +32,7 @@ export class S3BucketStack extends cdk.Stack {
     });
 
     this.kendraBucket.addToResourcePolicy(new iam.PolicyStatement({
-        effect: iam.Effect.Allow,
+        effect: iam.Effect.ALLOW,
         principals: [new iam.AnyPrincipal()],
         actions: ['s3.GetObject'],
         resources: [`${this.kendraBucket.bucketArn}/*`]
@@ -44,8 +45,8 @@ export class S3BucketStack extends cdk.Stack {
       autoDeleteObjects: true,
       cors: [{
         allowedMethods: [s3.HttpMethods.GET,s3.HttpMethods.POST,s3.HttpMethods.PUT,s3.HttpMethods.DELETE],
-        allowedOrigins: ['*'], 
-        allowedHeaders: ["*"]     
+        allowedOrigins: ['*'],
+        allowedHeaders: ["*"]
       }]
     });
   }
