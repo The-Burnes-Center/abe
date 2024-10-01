@@ -4,15 +4,14 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from "constructs";
 
 export class S3BucketStack extends cdk.Stack {
-  public readonly kendraBucket: s3.Bucket;
+  public readonly knowledgeBucket: s3.Bucket;
   public readonly feedbackBucket: s3.Bucket;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
     // Create a new S3 bucket
-    this.kendraBucket = new s3.Bucket(scope, 'KendraSourceBucket', {
-      // bucketName: 'kendra-s3-source',
+    this.knowledgeBucket = new s3.Bucket(scope, 'KnowledgeSourceBucket', {      
       versioned: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,

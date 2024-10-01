@@ -71,6 +71,11 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
   );  
   const messageHistoryRef = useRef<ChatBotHistoryItem[]>([]);
 
+  const [
+    selectedDataSource,
+    setSelectedDataSource
+  ] = useState({ label: "Bedrock Knowledge Base", value: "kb" } as SelectProps.ChangeDetail["selectedOption"]);
+
   useEffect(() => {
     messageHistoryRef.current = props.messageHistory;    
   }, [props.messageHistory]);
@@ -269,7 +274,8 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
 `,
             projectId: 'rsrs111111',
             user_id: username,
-            session_id: props.session.id
+            session_id: props.session.id,
+            retrievalSource: selectedDataSource.value
           }
         });
         
@@ -425,19 +431,7 @@ export default function ChatInputPanel(props: ChatInputPanelProps) {
         <div className={styles.input_controls_right}>
           <SpaceBetween direction="horizontal" size="xxs" alignItems="center">
             <div style={{ paddingTop: "1px" }}>              
-            </div>
-            <StatusIndicator
-              type={
-                readyState === ReadyState.OPEN
-                  ? "success"
-                  : readyState === ReadyState.CONNECTING ||
-                    readyState === ReadyState.UNINSTANTIATED
-                    ? "in-progress"
-                    : "error"
-              }
-            >
-              {readyState === ReadyState.OPEN ? "Connected" : connectionStatus}
-            </StatusIndicator>
+            </div>            
           </SpaceBetween>
         </div>
       </div>
