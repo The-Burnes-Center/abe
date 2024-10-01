@@ -34,7 +34,7 @@ export class S3BucketStack extends cdk.Stack {
     this.kendraBucket.addToResourcePolicy(new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         principals: [new iam.AnyPrincipal()],
-        actions: ['s3.GetObject'],
+        actions: ['s3:GetObject'],
         resources: [`${this.kendraBucket.bucketArn}/*`]
     }));
 
