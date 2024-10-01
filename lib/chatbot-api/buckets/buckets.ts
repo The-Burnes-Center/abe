@@ -30,11 +30,11 @@ export class S3BucketStack extends cdk.Stack {
 
     });
 
-    this.kendraBucket.addToResourcePolicy(new iam.PolicyStatement({
+    this.knowledgeBucket.addToResourcePolicy(new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         principals: [new iam.AnyPrincipal()],
         actions: ['s3:GetObject'],
-        resources: [`${this.kendraBucket.bucketArn}/*`]
+        resources: [`${this.knowledgeBucket.bucketArn}/*`]
     }));
 
     this.feedbackBucket = new s3.Bucket(scope, 'FeedbackDownloadBucket', {
