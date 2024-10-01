@@ -4,7 +4,7 @@ export const AUTHENTICATION = true;
 // kendraIndexName - must be unique to your account
 export const kendraIndexName = 'gen-ai-osd-chatbot-index'
 // must be unique globally or the deployment will fail
-export const cognitoDomainName = "genaiosd-auth"
+export const cognitoDomainName = "genaimvp-osd-auth"
 // this can be anything that would be understood easily, but you must use the same name
 // when setting up a sign-in provider in Cognito
 // make sure to leave it blank if you do not actually have an SSO provider configured in Cognito!
