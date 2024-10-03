@@ -116,7 +116,7 @@ export default function NavigationPanel() {
             ],
           },)
         }
-        elif (data.includes("Admin")) {
+        else if (data.includes("Admin")) {
           console.log("admin found!")
           newItems.push({
             type: "section",
