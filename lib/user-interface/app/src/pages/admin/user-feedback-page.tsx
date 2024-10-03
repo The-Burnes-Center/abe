@@ -40,7 +40,7 @@ export default function UserFeedbackPage() {
         const admin = result?.signInUserSession?.idToken?.payload["custom:role"]
         if (admin) {
           const data = JSON.parse(admin);
-          if (data.includes("Admin")) {
+          if (data.some(role => role.includes("Admin"))) {
             setAdmin(true);
           }
         }

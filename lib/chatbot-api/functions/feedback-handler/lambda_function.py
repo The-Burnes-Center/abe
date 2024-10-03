@@ -24,7 +24,7 @@ def lambda_handler(event, context):
     try:
         claims = event["requestContext"]["authorizer"]["jwt"]["claims"]
         roles = json.loads(claims['custom:role'])
-        if "Admin" in roles:                        
+        if any('Admin' in role for role in roles):
             print("admin granted!")
             admin = True
         else:
