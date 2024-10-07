@@ -123,7 +123,7 @@ export default function Chat(props: { sessionId?: string}) {
           statusIconAriaLabel="Info"
           header=""
        >
-        AI Models can make mistakes. Be mindful in validating important information.
+        AI Models can make mistakes. Be mindful in validating important information. Also,check for appropriate permission before procuring goods/services
       </Alert> )}
 
       
