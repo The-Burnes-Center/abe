@@ -46,7 +46,13 @@ export class S3BucketStack extends cdk.Stack {
         allowedMethods: [s3.HttpMethods.GET,s3.HttpMethods.POST,s3.HttpMethods.PUT,s3.HttpMethods.DELETE],
         allowedOrigins: ['*'],
         allowedHeaders: ["*"]
-      }]
+      }],
+       blockPublicAccess: {
+        blockPublicPolicy: false,
+        blockPublicAcls: false,
+        ignorePublicAcls: false,
+        restrictPublicBuckets: false
+      }
     });
   }
 }
