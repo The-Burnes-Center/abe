@@ -4,6 +4,7 @@
 !global.d.ts
 node_modules
 *.pyc
+aws-exports.json
 
 # CDK asset staging directory
 .cdk.staging
