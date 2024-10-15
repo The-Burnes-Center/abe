@@ -66,7 +66,7 @@ export class UserInterface extends Construct {
           domain: props.cognitoDomain.concat(".auth.us-east-1.amazoncognito.com"),
           scope: ["aws.cognito.signin.user.admin","email", "openid", "profile"],
           redirectSignIn: "https://" + distribution.distributionDomainName,
-          // redirectSignOut: "https://myapplications.microsoft.com/",
+          redirectSignOut: "https://" + distribution.distributionDomainName,
           responseType: "code"
         }
       },
