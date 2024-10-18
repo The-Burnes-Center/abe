@@ -57,7 +57,7 @@ const UserFeedbackDetailPage = () => {
         <ContentLayout header={<Header variant="h1">Feedback Details</Header>}>
           <SpaceBetween size="l">
                 {/* <FeedbackTab updateSelectedFeedback={setFeedback} selectedFeedback={feedback}/> */}
-                <FeedbackDetailsTab />
+                <FeedbackDetailsTab selectedFeedback={feedbackItem} />
           </SpaceBetween>
         </ContentLayout>
       }
