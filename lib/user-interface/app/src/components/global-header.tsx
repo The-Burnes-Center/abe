@@ -8,6 +8,7 @@ import { StorageHelper } from "../common/helpers/storage-helper";
 import { Auth } from "aws-amplify";
 import useOnFollow from "../common/hooks/use-on-follow";
 import { CHATBOT_NAME } from "../common/constants";
+import '../styles/Osd.scss';
 
 export default function GlobalHeader() {
   const onFollow = useOnFollow();
@@ -54,7 +55,7 @@ export default function GlobalHeader() {
       style={{ zIndex: 1002, top: 0, left: 0, right: 0, position: "fixed" }}
       id="awsui-top-navigation"
     >
-      <TopNavigation
+      <TopNavigation 
         identity={{
           href: "/",
           logo: { src: "/images/stateseal-color.png", alt:  CHATBOT_NAME  + " Logo" },

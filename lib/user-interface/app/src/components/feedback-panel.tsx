@@ -72,10 +72,10 @@ export default function EmailPanel(props: FeedbackPanelProps) {
                         URL
                       </Box>
                       
-                      {(JSON.parse(props.selectedFeedback.Sources) as any[]).map((item) =>
+                      {/* {(JSON.parse(props.selectedFeedback.Sources) as any[]).map((item) =>
                         <Link href={item.uri} external={true} variant="primary">
                           {item.uri.match(/^(?:https?:\/\/)?([\w-]+(\.[\w-]+)+)/)[1]}
-                        </Link>)}
+                        </Link>)} */}
                     </SpaceBetween>
                   </ColumnLayout>
                 </ExpandableSection>
