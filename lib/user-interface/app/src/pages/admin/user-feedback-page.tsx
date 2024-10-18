@@ -90,11 +90,11 @@ export default function UserFeedbackPage() {
           ]}
         />
       }
-      splitPanel={<FeedbackPanel selectedFeedback={feedback}/>}
+      // splitPanel={<FeedbackPanel selectedFeedback={feedback}/>}
       content={
         <ContentLayout header={<Header variant="h1">View Feedback</Header>}>
           <SpaceBetween size="l">
-                <FeedbackTab updateSelectedFeedback={setFeedback}/>
+                <FeedbackTab updateSelectedFeedback={setFeedback} selectedFeedback={feedback}/>
           </SpaceBetween>
         </ContentLayout>
       }

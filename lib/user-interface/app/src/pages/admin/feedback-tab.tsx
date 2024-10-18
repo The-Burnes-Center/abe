@@ -20,10 +20,12 @@ import { Utils } from "../../common/utils";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import React from 'react';
 import { useNotifications } from "../../components/notif-manager";
-import { feedbackCategories } from '../../common/constants'
+import { feedbackCategories } from '../../common/constants';
+import { useNavigate } from 'react-router-dom';
 
 export interface FeedbackTabProps {
   updateSelectedFeedback: React.Dispatch<any>;
+  selectedFeedback: React.Dispatch<any>;
 }
 
 export default function FeedbackTab(props: FeedbackTabProps) {
@@ -35,6 +37,15 @@ export default function FeedbackTab(props: FeedbackTabProps) {
   const [selectedItems, setSelectedItems] = useState<any[]>([]);
   const [showModalDelete, setShowModalDelete] = useState(false);
   const needsRefresh = useRef<boolean>(false);
+  const navigate = useNavigate();
+
+  const onProblemClick = (feedbackItem) => {
+    // Navigate to the feedback details page and pass in the selected feedback
+    console.log(feedbackItem);
+    navigate(`/admin/user-feedback/${feedbackItem.FeedbackID}`, {
+      state: { feedback: feedbackItem }
+    });
+  };
 
   const [
     selectedOption,
@@ -152,7 +163,7 @@ export default function FeedbackTab(props: FeedbackTabProps) {
   };
 
 
-  const columnDefinitions = getColumnDefinition("feedback");
+  const columnDefinitions = getColumnDefinition("feedback", onProblemClick);
 
   /** Deletes all selected feedback */
   const deleteSelectedFeedback = async () => {

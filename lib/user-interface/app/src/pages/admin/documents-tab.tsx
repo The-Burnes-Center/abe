@@ -168,7 +168,7 @@ export default function DocumentsTab(props: DocumentsTabProps) {
     }
   };
 
-  const columnDefinitions = getColumnDefinition(props.documentType);
+  const columnDefinitions = getColumnDefinition(props.documentType, () => {});
 
   /** Deletes selected files */
   const deleteSelectedFiles = async () => {
