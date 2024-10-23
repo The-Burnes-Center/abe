@@ -246,16 +246,18 @@ export class LambdaFunctionStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(60),
     });
 
-    // Grant the Lambda function permission to read from the S3 knowledge bucket
+ // Grant the Lambda function permission to read from the S3 knowledge bucket
     metadataHandlerFunction.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['s3:*'],
+      actions: ['s3:GetObject'],
       resources: [`${props.knowledgeBucket.bucketArn}/*`],
     }));
 
     // Add S3 Event Source for OBJECT_CREATED to the Lambda (after bucket creation)
-    this.metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
+    metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
       events: [s3.EventType.OBJECT_CREATED],
     }));
+
+    this.metadataHandlerFunction = metadataHandlerFunction;
   }
 }
