@@ -235,29 +235,28 @@ export class LambdaFunctionStack extends cdk.Stack {
     this.uploadS3Function = uploadS3APIHandlerFunction;
 
 
- // Define the metadata handler Lambda function (Python)
+    // Import the S3 bucket ARN
+    const knowledgeBucketArn = cdk.Fn.importValue('KnowledgeBucketArn');
+
+    const knowledgeBucket = s3.Bucket.fromBucketArn(this, 'ImportedKnowledgeBucket', knowledgeBucketArn);
+
+    // Define the Lambda function
     const metadataHandlerFunction = new lambda.Function(this, 'MetadataHandlerFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
-      code: lambda.Code.fromAsset(path.join(__dirname, 'metadata-handler')), // Path to Lambda code
-      handler: 'lambda_function.lambda_handler', // Python handler
+      code: lambda.Code.fromAsset('path-to-your-lambda-code'),
+      handler: 'lambda_function.lambda_handler',
       environment: {
-        "KNOWLEDGE_BUCKET": props.knowledgeBucket.bucketName, // Pass knowledgeBucket to Lambda
+        KNOWLEDGE_BUCKET: knowledgeBucket.bucketName,
       },
-      timeout: cdk.Duration.seconds(60),
     });
 
- // Grant the Lambda function permission to read from the S3 knowledge bucket
-    metadataHandlerFunction.addToRolePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: ['s3:GetObject'],
-      resources: [`${props.knowledgeBucket.bucketArn}/*`],
-    }));
-
     // Add S3 Event Source for OBJECT_CREATED to the Lambda (after bucket creation)
-    metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
+    metadataHandlerFunction.addEventSource(new S3EventSource(knowledgeBucket, {
       events: [s3.EventType.OBJECT_CREATED],
     }));
 
-    this.metadataHandlerFunction = metadataHandlerFunction;
+    // Grant the Lambda function permissions to read from the S3 bucket
+    knowledgeBucket.grantRead(metadataHandlerFunction);
+
   }
 }
