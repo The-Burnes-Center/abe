@@ -243,7 +243,7 @@ export class LambdaFunctionStack extends cdk.Stack {
     // Define the Lambda function
     const metadataHandlerFunction = new lambda.Function(this, 'MetadataHandlerFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
-      code: lambda.Code.fromAsset('path-to-your-lambda-code'),
+      code: lambda.Code.fromAsset(path.join(__dirname, 'metadata-handler')),
       handler: 'lambda_function.lambda_handler',
       environment: {
         KNOWLEDGE_BUCKET: knowledgeBucket.bucketName,
