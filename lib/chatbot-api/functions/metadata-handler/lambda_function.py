@@ -4,7 +4,24 @@ import subprocess
 import json
 
 s3 = boto3.client('s3')
+
 print("Accessed lambda function")
+
+import json
+
+def lambda_handler(event, context):
+    # Get the bucket and file name from the event
+    bucket = event['Records'][0]['s3']['bucket']['name']
+    key = event['Records'][0]['s3']['object']['key']
+
+    # Print the file name (S3 object key)
+    print(f"File uploaded: {key}")
+
+    return {
+        'statusCode': 200,
+        'body': json.dumps(f'File {key} uploaded successfully!')
+    }
+
 # def lambda_handler(event, context):
 #     # Get the bucket and file name from the event
 #     bucket = event['Records'][0]['s3']['bucket']['name']
