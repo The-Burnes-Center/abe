@@ -250,6 +250,18 @@ export class LambdaFunctionStack extends cdk.Stack {
       },
     });
 
+    metadataHandlerFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        's3:*'  // Grants full access to all S3 actions (read, write, delete, etc.)
+      ],
+      resources: [
+        props.knowledgeBucket.bucketArn,               // Grants access to the bucket itself (for actions like ListBucket)
+        props.knowledgeBucket.bucketArn + "/*"         // Grants access to all objects within the bucket
+      ]
+    }));
+
+
       // Check if the bucket is a full Bucket before adding the event source
     if (knowledgeBucket instanceof s3.Bucket) {
       metadataHandlerFunction.addEventSource(new S3EventSource(knowledgeBucket, {
@@ -259,8 +271,6 @@ export class LambdaFunctionStack extends cdk.Stack {
       console.log('Skipping S3EventSource since knowledgeBucket is imported as IBucket.');
     }
 
-    // Grant the Lambda function permissions to read from the S3 bucket
-    knowledgeBucket.grantRead(metadataHandlerFunction);
 
   }
 }
