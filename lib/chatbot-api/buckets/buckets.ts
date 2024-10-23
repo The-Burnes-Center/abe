@@ -37,10 +37,6 @@ export class S3BucketStack extends cdk.Stack {
         resources: [`${this.knowledgeBucket.bucketArn}/*`]
     }));
 
-    this.knowledgeBucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new s3n.LambdaDestination(metadataHandlerFunction)
-    );
 
     this.feedbackBucket = new s3.Bucket(scope, 'FeedbackDownloadBucket', {
       // bucketName: 'feedback-download',

@@ -253,11 +253,9 @@ export class LambdaFunctionStack extends cdk.Stack {
       resources: [`${props.knowledgeBucket.bucketArn}/*`],
     }));
 
-//     // Set up an S3 event source to trigger the Lambda when a file is uploaded to the knowledge bucket
-//     metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
-//       events: [s3.EventType.OBJECT_CREATED],
-//     }));
-//
-//     this.metadataHandlerFunction = metadataHandlerFunction;
+    // Add S3 Event Source for OBJECT_CREATED to the Lambda (after bucket creation)
+    this.metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
+      events: [s3.EventType.OBJECT_CREATED],
+    }));
   }
 }
