@@ -289,7 +289,6 @@ export class LambdaFunctionStack extends cdk.Stack {
           metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
             events: [s3.EventType.OBJECT_CREATED],
           }));
-        console.error('Failed to add S3 event source to the metadataHandlerFunction:', error.message);
     } else {
       console.log('Skipping S3EventSource since knowledgeBucket is imported as IBucket.');
     }
