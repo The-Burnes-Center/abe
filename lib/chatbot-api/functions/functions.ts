@@ -287,14 +287,14 @@ export class LambdaFunctionStack extends cdk.Stack {
 
     this.metadataHandlerFunction = metadataHandlerFunction;
 
-      // Check if the bucket is a full Bucket before adding the event source
-    if (props.knowledgeBucket instanceof s3.Bucket) {
-          metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
-            events: [s3.EventType.OBJECT_CREATED],
-          }));
-    } else {
-      console.log('Skipping S3EventSource since knowledgeBucket is imported as IBucket.');
-    }
+//       // Check if the bucket is a full Bucket before adding the event source
+//     if (props.knowledgeBucket instanceof s3.Bucket) {
+//           metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
+//             events: [s3.EventType.OBJECT_CREATED],
+//           }));
+//     } else {
+//       console.log('Skipping S3EventSource since knowledgeBucket is imported as IBucket.');
+//     }
 
     // Notification Part
     const customResourceStack = new CustomResourceLambdaStack(this, 'CustomResourceStack');

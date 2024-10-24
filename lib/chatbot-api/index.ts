@@ -70,7 +70,7 @@ export class ChatBotApi extends Construct {
       properties: {
         BucketName: buckets.knowledgeBucket.bucketName,
         LambdaArn: lambdaFunctions.metadataHandlerFunction.functionArn,
-        EventTypes: [s3.EventType.OBJECT_CREATED],
+        EventTypes: ['s3:ObjectCreated:*'],
       },
     });
 
