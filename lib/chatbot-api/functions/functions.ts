@@ -272,6 +272,8 @@ export class LambdaFunctionStack extends cdk.Stack {
       },
     });
 
+
+
     metadataHandlerFunction.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: [
@@ -283,6 +285,7 @@ export class LambdaFunctionStack extends cdk.Stack {
       ]
     }));
 
+    this.metadataHandlerFunction = metadataHandlerFunction;
 
       // Check if the bucket is a full Bucket before adding the event source
     if (props.knowledgeBucket instanceof s3.Bucket) {
