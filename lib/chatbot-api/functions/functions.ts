@@ -300,7 +300,7 @@ export class LambdaFunctionStack extends cdk.Stack {
 //             events: [s3.EventType.OBJECT_CREATED],
 //           }));
 //     } else {
-//       console.log('Skipping S3EventSource since knowledgeBucket is imported as IBucket.');
+//       console.log('Skipping SEventSource since knowledgeBucket is imported as IBucket.');
 //     }
 
 
