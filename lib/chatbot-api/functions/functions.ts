@@ -264,10 +264,10 @@ export class LambdaFunctionStack extends cdk.Stack {
 
 
 
-    // Import the S3 bucket ARN
-    const knowledgeBucketArn = cdk.Fn.importValue('KnowledgeBucketArn');
-
-    const knowledgeBucket = s3.Bucket.fromBucketArn(scope, 'ImportedKnowledgeBucket', knowledgeBucketArn);
+//     // Import the S3 bucket ARN
+//     const knowledgeBucketArn = cdk.Fn.importValue('KnowledgeBucketArn');
+//
+//     const knowledgeBucket = s3.Bucket.fromBucketArn(scope, 'ImportedKnowledgeBucket', knowledgeBucketArn);
 
     // Define the Lambda function
     const metadataHandlerFunction = new lambda.Function(scope, 'MetadataHandlerFunction', {
@@ -275,7 +275,7 @@ export class LambdaFunctionStack extends cdk.Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, 'metadata-handler')),
       handler: 'lambda_function.lambda_handler',
       environment: {
-        KNOWLEDGE_BUCKET: knowledgeBucket.bucketName,
+        "BUCKET": props.knowledgeBucket.bucketName,
       },
     });
 
