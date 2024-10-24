@@ -20,6 +20,26 @@ interface LambdaFunctionStackProps {
   readonly knowledgeBaseSource: bedrock.CfnDataSource;
 }
 
+
+export class CustomResourceLambdaStack extends cdk.Stack {
+  public readonly s3NotificationSetupLambda: lambda.Function;
+
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+  // Notification Lambda
+    this.s3NotificationSetupLambda = new lambda.Function(this, 'S3NotificationSetupLambda', {
+      runtime: lambda.Runtime.PYTHON_3_9,  // Python runtime
+      code: lambda.Code.fromAsset(path.join(__dirname, '../s3-notification')),
+      handler: 'lambda_function.lambda_handler',
+      timeout: cdk.Duration.seconds(60),
+    });
+
+  }
+}
+
+
+
 export class LambdaFunctionStack extends cdk.Stack {  
   public readonly chatFunction : lambda.Function;
   public readonly sessionFunction : lambda.Function;
@@ -235,6 +255,8 @@ export class LambdaFunctionStack extends cdk.Stack {
     this.uploadS3Function = uploadS3APIHandlerFunction;
 
 
+
+
     // Import the S3 bucket ARN
     const knowledgeBucketArn = cdk.Fn.importValue('KnowledgeBucketArn');
 
@@ -263,18 +285,26 @@ export class LambdaFunctionStack extends cdk.Stack {
 
 
       // Check if the bucket is a full Bucket before adding the event source
-//     if (knowledgeBucket instanceof s3.Bucket) {
-      try{
-          metadataHandlerFunction.addEventSource(new S3EventSource(knowledgeBucket, {
+    if (props.knowledgeBucket instanceof s3.Bucket) {
+          metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
             events: [s3.EventType.OBJECT_CREATED],
           }));
-      }catch(error){
         console.error('Failed to add S3 event source to the metadataHandlerFunction:', error.message);
-      }
-//     } else {
-//       console.log('Skipping S3EventSource since knowledgeBucket is imported as IBucket.');
-//     }
+    } else {
+      console.log('Skipping S3EventSource since knowledgeBucket is imported as IBucket.');
+    }
 
+    // Notification Part
+    const customResourceStack = new CustomResourceLambdaStack(this, 'CustomResourceStack');
+    // Add a Custom Resource to set S3 notification
+    new cdk.CustomResource(this, 'S3NotificationCustomResource', {
+      serviceToken: customResourceStack.s3NotificationSetupLambda.functionArn,
+      properties: {
+        BucketName: props.knowledgeBucket.bucketName,
+        LambdaArn: metadataHandlerFunction.functionArn,
+        EventTypes: [s3.EventType.OBJECT_CREATED],
+      },
+    });
 
   }
 }
