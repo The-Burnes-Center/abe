@@ -290,7 +290,7 @@ export class LambdaFunctionStack extends cdk.Stack {
       ]
     }));
 
-    refs.metadataHandlerFunction = metadataHandlerFunction;
+    this.metadataHandlerFunction = metadataHandlerFunction;
 
 //       // Check if the bucket is a full Bucket before adding the event source
 //     if (props.knowledgeBucket instanceof s3.Bucket) {
