@@ -39,7 +39,7 @@ export class S3BucketStack extends cdk.Stack {
 
  // Output the bucket ARN to be used in other stacks
     new cdk.CfnOutput(scope, 'KnowledgeBucketArn', {
-      value: scope.knowledgeBucket.bucketArn,
+      value: this.knowledgeBucket.bucketArn,
       exportName: 'KnowledgeBucketArn',
     });
 
