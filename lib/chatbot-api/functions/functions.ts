@@ -40,6 +40,8 @@ export class CustomResourceLambdaStack extends cdk.Stack {
       resources: ['*'],
     }));
 
+    this.s3NotificationSetupLambda = s3NotificationSetupLambda;
+
   }
 }
 
