@@ -37,11 +37,11 @@ export class S3BucketStack extends cdk.Stack {
         resources: [`${this.knowledgeBucket.bucketArn}/*`]
     }));
 
- // Output the bucket ARN to be used in other stacks
-    new cdk.CfnOutput(scope, 'KnowledgeBucketArn', {
-      value: scope.knowledgeBucket.bucketArn,
-      exportName: 'KnowledgeBucketArn',
-    });
+//  // Output the bucket ARN to be used in other stacks
+//     new cdk.CfnOutput(scope, 'KnowledgeBucketArn', {
+//       value: this.knowledgeBucket.bucketArn,
+//       exportName: 'KnowledgeBucketArn',
+//     });
 
     this.feedbackBucket = new s3.Bucket(scope, 'FeedbackDownloadBucket', {
       // bucketName: 'feedback-download',
