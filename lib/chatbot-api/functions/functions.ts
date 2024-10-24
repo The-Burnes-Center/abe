@@ -30,7 +30,7 @@ export class CustomResourceLambdaStack extends cdk.Stack {
   // Notification Lambda
     this.s3NotificationSetupLambda = new lambda.Function(this, 'S3NotificationSetupLambda', {
       runtime: lambda.Runtime.PYTHON_3_9,  // Python runtime
-      code: lambda.Code.fromAsset(path.join(__dirname, '../s3-notification')),
+      code: lambda.Code.fromAsset(path.join(__dirname, 's3-notification')),
       handler: 'lambda_function.lambda_handler',
       timeout: cdk.Duration.seconds(60),
     });
