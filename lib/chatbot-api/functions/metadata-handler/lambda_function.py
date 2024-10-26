@@ -1,10 +1,8 @@
 import boto3
 import json
+from datetime import datetime
 
 s3 = boto3.client('s3')
-
-print("Accessed lambda function")
-
 
 def lambda_handler(event, context):
     # Get the bucket and file name (key) from the event
@@ -15,9 +13,29 @@ def lambda_handler(event, context):
         # Print the bucket and file name
         print(f"File uploaded: Bucket - {bucket}, Key - {key}")
 
+        # Get the current upload time
+        upload_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # New metadata (Adding 'Awesome' and the upload time)
+        new_metadata = {
+            'x-amz-meta-filename': f'{key} Awesome',
+            'x-amz-meta-upload-time': upload_time
+        }
+
+        # Copy the object to itself to update metadata
+        s3.copy_object(
+            Bucket=bucket,
+            CopySource={'Bucket': bucket, 'Key': key},
+            Key=key,
+            Metadata=new_metadata,
+            MetadataDirective='REPLACE'  # Replaces existing metadata
+        )
+
+        print(f"Metadata added: Filename - {key} Awesome, Upload time - {upload_time}")
+
         return {
             'statusCode': 200,
-            'body': json.dumps(f"File {key} uploaded successfully in bucket {bucket}")
+            'body': json.dumps(f"File {key} uploaded successfully with new metadata in bucket {bucket}")
         }
 
     except Exception as e:
