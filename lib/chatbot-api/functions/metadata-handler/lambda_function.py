@@ -15,7 +15,14 @@ def lambda_handler(event, context):
     # Retrieve the file from S3
     try:
         response = s3.get_object(Bucket=bucket, Key=key)
-        file_content = response['Body'].read().decode('utf-8')
+        file_content = response['Body'].read()
+
+        # Try to decode the file content with UTF-8, fallback to ISO-8859-1 if it fails
+        try:
+            file_content = file_content.decode('utf-8')
+        except UnicodeDecodeError:
+            print("Failed to decode with UTF-8, trying ISO-8859-1")
+            file_content = file_content.decode('ISO-8859-1')
 
         # Call Claude for summarization
         summary = summarize_file(file_content)
