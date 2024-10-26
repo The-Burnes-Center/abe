@@ -21,31 +21,6 @@ interface LambdaFunctionStackProps {
 }
 
 
-export class CustomResourceLambdaStack extends cdk.Stack {
-  public readonly s3NotificationSetupLambda: lambda.Function;
-
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
-    super(scope, id, props);
-
-  // Notification Lambda
-    const s3NotificationSetupLambda = new lambda.Function(scope, 'S3NotificationSetupLambda', {
-      runtime: lambda.Runtime.PYTHON_3_9,  // Python runtime
-      code: lambda.Code.fromAsset(path.join(__dirname, 's3-notification')),
-      handler: 'lambda_function.lambda_handler',
-      timeout: cdk.Duration.seconds(60),
-    });
-  // Add necessary permissions for the Lambda to set S3 notifications
-    s3NotificationSetupLambda.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['s3:*'],
-      resources: ['*'],
-    }));
-
-    this.s3NotificationSetupLambda = s3NotificationSetupLambda;
-
-  }
-}
-
-
 
 export class LambdaFunctionStack extends cdk.Stack {  
   public readonly chatFunction : lambda.Function;
@@ -296,11 +271,11 @@ export class LambdaFunctionStack extends cdk.Stack {
 
 //       // Check if the bucket is a full Bucket before adding the event source
 //     if (props.knowledgeBucket instanceof s3.Bucket) {
-//           metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
-//             events: [s3.EventType.OBJECT_CREATED],
-//           }));
+      metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
+        events: [s3.EventType.OBJECT_CREATED],
+      }));
 //     } else {
-//       console.log('Skipping S3 EventSource since knowledgeBucket is imported as IBucket.');
+//       console.log('Skipping S33 EventSource since knowledgeBucket is imported as IBucket.');
 //     }
 
 

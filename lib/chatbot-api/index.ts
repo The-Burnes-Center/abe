@@ -10,7 +10,6 @@ import { RestBackendAPI } from "./gateway/rest-api"
 import { LambdaFunctionStack } from "./functions/functions"
 import { TableStack } from "./tables/tables"
 import { S3BucketStack } from "./buckets/buckets"
-import { CustomResourceLambdaStack } from './functions/functions'
 
 
 import { WebSocketLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
@@ -61,18 +60,6 @@ export class ChatBotApi extends Construct {
         knowledgeBaseSource : knowledgeBase.dataSource,
 
       })
-
-    const customResourceStack = new CustomResourceLambdaStack(this, 'CustomResourceStack');
-
-        // Add S3 notification setup using custom resource
-    new cdk.CustomResource(this, 'S3NotificationSetup', {
-      serviceToken: customResourceStack.s3NotificationSetupLambda.functionArn,
-      properties: {
-        BucketName: buckets.knowledgeBucket.bucketName,
-        LambdaArn: lambdaFunctions.metadataHandlerFunction.functionArn,
-        EventTypes: ['s3:ObjectCreated:*'],
-      },
-    });
 
     const wsAuthorizer = new WebSocketLambdaAuthorizer('WebSocketAuthorizer', props.authentication.lambdaAuthorizer, {identitySource: ['route.request.querystring.Authorization']});
 
