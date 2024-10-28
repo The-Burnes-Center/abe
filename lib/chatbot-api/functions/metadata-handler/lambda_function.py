@@ -1,23 +1,32 @@
 import boto3
 import json
 from datetime import datetime
-from urllib.parse import unquote
-import time
+import urllib.parse
+
 
 s3 = boto3.client('s3')
 
 def lambda_handler(event, context):
     try:
+        # Check if the event is caused by the Lambda function itself
+        if event['Records'][0]['eventSource'] == 'aws:s3' and \
+           event['Records'][0]['eventName'].startswith('ObjectCreated:Copy'):
+            print("Skipping event triggered by copy operation")
+            return {
+                'statusCode': 200,
+                'body': json.dumps("Skipped event triggered by copy operation")
+            }
+
+
+    try:
         # Get the bucket name and file key from the event, handling URL-encoded characters
         bucket = event['Records'][0]['s3']['bucket']['name']
         raw_key = event['Records'][0]['s3']['object']['key']
-        key = unquote(raw_key)
-        print(f"Processing raw file: Bucket - {bucket}, Key - {raw_key}")
+        print(f"Processing file: Bucket - {bucket}, Key - {raw_key}")
+        key = urllib.parse.unquote_plus(raw_key)
         print(f"Processing file: Bucket - {bucket}, Key - {key}")
-
         # Get the existing metadata of the object
         try:
-            time.sleep(1)
             response = s3.head_object(Bucket=bucket, Key=key)
             existing_metadata = response.get('Metadata', {})
         except Exception as e:
