@@ -17,6 +17,9 @@ def lambda_handler(event, context):
                 'body': json.dumps("Skipped event triggered by copy operation")
             }
 
+    except
+        print("Issue checking for s3 action")
+
 
     try:
         # Get the bucket name and file key from the event, handling URL-encoded characters
