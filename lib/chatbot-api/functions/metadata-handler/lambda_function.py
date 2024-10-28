@@ -17,7 +17,7 @@ def lambda_handler(event, context):
                 'body': json.dumps("Skipped event triggered by copy operation")
             }
 
-    except
+    except:
         print("Issue checking for s3 action")
 
 
