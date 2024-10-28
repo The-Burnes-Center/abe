@@ -2,6 +2,7 @@ import boto3
 import json
 from datetime import datetime
 from urllib.parse import unquote
+import time
 
 s3 = boto3.client('s3')
 
@@ -16,6 +17,7 @@ def lambda_handler(event, context):
 
         # Get the existing metadata of the object
         try:
+            time.sleep(1)
             response = s3.head_object(Bucket=bucket, Key=key)
             existing_metadata = response.get('Metadata', {})
         except Exception as e:
