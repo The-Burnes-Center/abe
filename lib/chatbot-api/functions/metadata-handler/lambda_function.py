@@ -1,7 +1,7 @@
 import boto3
 import json
 from datetime import datetime
-from urllib.parse import unquote_plus
+from urllib.parse import unquote
 
 s3 = boto3.client('s3')
 
@@ -9,7 +9,9 @@ def lambda_handler(event, context):
     try:
         # Get the bucket name and file key from the event, handling URL-encoded characters
         bucket = event['Records'][0]['s3']['bucket']['name']
-        key = unquote_plus(event['Records'][0]['s3']['object']['key'])
+        raw_key = event['Records'][0]['s3']['object']['key']
+        key = unquote(raw_key)
+        print(f"Processing raw file: Bucket - {bucket}, Key - {raw_key}")
         print(f"Processing file: Bucket - {bucket}, Key - {key}")
 
         # Get the existing metadata of the object
@@ -26,8 +28,8 @@ def lambda_handler(event, context):
         # Generate new metadata fields
         upload_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         new_metadata = {
-            'x-amz-meta-filename': f"{key} Awesome",
-            'x-amz-meta-upload-time': upload_time
+            'filename': f"{key} Awesome",
+            'upload-time': upload_time
         }
 
         # Merge new metadata with any existing metadata
@@ -44,6 +46,7 @@ def lambda_handler(event, context):
             )
             print(f"Metadata successfully updated for {key}: {updated_metadata}")
         except Exception as e:
+            print("Error in copying file copy")
             print(f"Error updating metadata for {key}: {e}")
             return {
                 'statusCode': 500,
