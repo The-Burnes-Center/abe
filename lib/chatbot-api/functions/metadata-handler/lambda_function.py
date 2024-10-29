@@ -37,7 +37,7 @@ def lambda_handler(event, context):
             print(f"File content length: {len(file_content)} characters")
 
             # Print the first 1000 characters of the content
-            print(f"First 1000 characters of the file:\n{file_content[:1000].hex()}")
+            print(f"First 1000 characters of the file:\n{file_content[:1000]}")
 
         except Exception as e:
             print(f"Error fetching content for {key}: {e}")
