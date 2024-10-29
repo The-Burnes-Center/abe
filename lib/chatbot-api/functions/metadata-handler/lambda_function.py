@@ -34,8 +34,19 @@ def lambda_handler(event, context):
         # Get the object from S3
         try:
             response = s3.get_object(Bucket=bucket, Key=key)
-            file_content = response['Body'].read()# Decode the byte stream to text
-            # encoded_content = base64.b64encode(file_content[:5000]).decode('utf-8')
+            try:
+                file_content = base64.b64decode(raw_content).decode('utf-8')
+            except:
+                print("Failed using b64")
+                try:
+                    file_content = response['Body'].read().decode('utf-8')# Decode the byte stream to text
+                except:
+                    print("Failed using utf")
+                    return {
+                        'statusCode': 500,
+                        'body': json.dumps(f"Error fetching content for {key}: {e}")
+                    }
+
 
             # Prepare the prompt for Claude 3
             prompt = f"This is the content of a file named '{key}' from an S3 bucket. Please analyze the file, and if it is binary encoded content - {file_content} and provide a summary of its contents as a human understandable text."
