@@ -259,7 +259,8 @@ export class LambdaFunctionStack extends cdk.Stack {
     metadataHandlerFunction.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: [
-        's3:*'  // Grants full access to all S3 actions (read, write, delete, etc.)
+        's3:*' ,
+        'bedrock:*'// Grants full access to all S3 actions (read, write, delete, etc.)
       ],
       resources: [
         props.knowledgeBucket.bucketArn,               // Grants access to the bucket itself (for actions like ListBucket)
