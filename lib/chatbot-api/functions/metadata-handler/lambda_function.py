@@ -33,11 +33,11 @@ def lambda_handler(event, context):
         # Get the object from S3
         try:
             response = s3.get_object(Bucket=bucket, Key=key)
-            file_content = response['Body'].read().decode('utf-8')  # Decode the byte stream to text
+            file_content = response['Body'].read() # Decode the byte stream to text
             print(f"File content length: {len(file_content)} characters")
 
             # Print the first 1000 characters of the content
-            print(f"First 1000 characters of the file:\n{file_content[:1000]}")
+            print(f"First 1000 characters of the file:\n{file_content[:1000].hex()}")
 
         except Exception as e:
             print(f"Error fetching content for {key}: {e}")
