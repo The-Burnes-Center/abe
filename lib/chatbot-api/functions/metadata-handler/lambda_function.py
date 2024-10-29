@@ -27,16 +27,15 @@ def lambda_handler(event, context):
         # Get the bucket name and file key from the event, handling URL-encoded characters
         bucket = event['Records'][0]['s3']['bucket']['name']
         raw_key = event['Records'][0]['s3']['object']['key']
-        print(f"Processing file: Bucket - {bucket}, Key - {raw_key}")
         key = urllib.parse.unquote_plus(raw_key)
-        print(f"Processing file: Bucket - {bucket}, Key - {key}")
+        print(f"Processing file: Bucket - {bucket}, File - {key}")
         # Get the existing metadata of the object
 
         # Get the object from S3
         try:
             response = s3.get_object(Bucket=bucket, Key=key)
-            file_content = response['Body'].read() # Decode the byte stream to text
-            encoded_content = base64.b64encode(file_content).decode('utf-8')
+            file_content = response['Body'].read()# Decode the byte stream to text
+            encoded_content = base64.b64encode(file_content[:5000]).decode('utf-8')
 
             # Prepare the prompt for Claude 3
             prompt = f"This is the content of a file named '{key}' from an S3 bucket. Please analyze it and provide a summary of its contents. If it's a binary file, describe what type of file it appears to be and any relevant information you can extract."
@@ -46,7 +45,7 @@ def lambda_handler(event, context):
                 modelId="anthropic.claude-3-sonnet-20240229-v1:0",
                 body=json.dumps({
                     "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 1000,
+                    "max_tokens": 2048,
                     "messages": [
                         {"role": "user", "content": [
                             {"type": "text", "text": prompt},
