@@ -2,9 +2,11 @@ import boto3
 import json
 from datetime import datetime
 import urllib.parse
+import base64
 
 
 s3 = boto3.client('s3')
+bedrock = boto3.client('bedrock-runtime')
 
 def lambda_handler(event, context):
     try:
@@ -34,7 +36,30 @@ def lambda_handler(event, context):
         try:
             response = s3.get_object(Bucket=bucket, Key=key)
             file_content = response['Body'].read() # Decode the byte stream to text
-            print(f"File content length: {len(file_content)} characters")
+            encoded_content = base64.b64encode(file_content).decode('utf-8')
+
+            # Prepare the prompt for Claude 3
+            prompt = f"This is the content of a file named '{key}' from an S3 bucket. Please analyze it and provide a summary of its contents. If it's a binary file, describe what type of file it appears to be and any relevant information you can extract."
+
+            # Invoke Claude 3 via Amazon Bedrock
+            response = bedrock.invoke_model(
+                modelId="anthropic.claude-3-sonnet-20240229-v1:0",
+                body=json.dumps({
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": 1000,
+                    "messages": [
+                        {"role": "user", "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image", "source": {"type": "base64", "media_type": "application/octet-stream",
+                                                         "data": encoded_content}}
+                        ]}
+                    ]
+                })
+            )
+
+            # Process the response
+            result = json.loads(response['body'].read())
+            summary = result['content'][0]['text']
 
             # Print the first 1000 characters of the content
             print(f"First 1000 characters of the file:\n{file_content[:1000]}")
