@@ -35,10 +35,10 @@ def lambda_handler(event, context):
         try:
             response = s3.get_object(Bucket=bucket, Key=key)
             file_content = response['Body'].read()# Decode the byte stream to text
-            encoded_content = base64.b64encode(file_content[:5000]).decode('utf-8')
+            # encoded_content = base64.b64encode(file_content[:5000]).decode('utf-8')
 
             # Prepare the prompt for Claude 3
-            prompt = f"This is the content of a file named '{key}' from an S3 bucket. Please analyze it and provide a summary of its contents. If it's a binary file, describe what type of file it appears to be and any relevant information you can extract."
+            prompt = f"This is the content of a file named '{key}' from an S3 bucket. Please analyze the file, and if it is binary encoded content - {file_content} and provide a summary of its contents as a human understandable text."
 
             # Invoke Claude 3 via Amazon Bedrock
             response = bedrock.invoke_model(
@@ -50,7 +50,7 @@ def lambda_handler(event, context):
                         {"role": "user", "content": [
                             {"type": "text", "text": prompt},
                             {"type": "image", "source": {"type": "base64", "media_type": "application/octet-stream",
-                                                         "data": encoded_content}}
+                                                         "data": file_content}}
                         ]}
                     ]
                 })
