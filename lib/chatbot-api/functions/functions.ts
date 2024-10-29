@@ -259,12 +259,13 @@ export class LambdaFunctionStack extends cdk.Stack {
     metadataHandlerFunction.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: [
-        's3:*' ,
-        'bedrock:*'// Grants full access to all S3 actions (read, write, delete, etc.)
+        's3:*' ,// Grants full access to all S3 actions (read, write, delete, etc.)
+        'bedrock:InvokeModel'
       ],
       resources: [
         props.knowledgeBucket.bucketArn,               // Grants access to the bucket itself (for actions like ListBucket)
-        props.knowledgeBucket.bucketArn + "/*"         // Grants access to all objects within the bucket
+        props.knowledgeBucket.bucketArn + "/*" ,        // Grants access to all objects within the bucket
+        'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0'  // Add the Bedrock model resource explicitly
       ]
     }));
 
