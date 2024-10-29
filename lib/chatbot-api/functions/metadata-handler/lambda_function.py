@@ -29,6 +29,23 @@ def lambda_handler(event, context):
         key = urllib.parse.unquote_plus(raw_key)
         print(f"Processing file: Bucket - {bucket}, Key - {key}")
         # Get the existing metadata of the object
+
+        # Get the object from S3
+        try:
+            response = s3.get_object(Bucket=bucket, Key=key)
+            file_content = response['Body'].read().decode('utf-8')  # Decode the byte stream to text
+            print(f"File content length: {len(file_content)} characters")
+
+            # Print the first 1000 characters of the content
+            print(f"First 1000 characters of the file:\n{file_content[:1000]}")
+
+        except Exception as e:
+            print(f"Error fetching content for {key}: {e}")
+            return {
+                'statusCode': 500,
+                'body': json.dumps(f"Error fetching content for {key}: {e}")
+            }
+
         try:
             response = s3.head_object(Bucket=bucket, Key=key)
             existing_metadata = response.get('Metadata', {})
