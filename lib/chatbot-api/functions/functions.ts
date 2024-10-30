@@ -260,7 +260,8 @@ export class LambdaFunctionStack extends cdk.Stack {
       effect: iam.Effect.ALLOW,
       actions: [
         's3:*' ,// Grants full access to all S3 actions (read, write, delete, etc.)
-        'bedrock:InvokeModel'
+        'bedrock:InvokeModel',
+        'bedrock:Retrieve'
       ],
       resources: [
         props.knowledgeBucket.bucketArn,               // Grants access to the bucket itself (for actions like ListBucket)
