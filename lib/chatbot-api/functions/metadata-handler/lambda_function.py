@@ -15,20 +15,36 @@ kb_id = os.environ['KB_ID']
 
 def retrieve_kb_docs(query, knowledge_base_id):
     try:
-        response = bedrock.retrieve(
-            knowledgeBaseId=knowledge_base_id,
-            retrievalQuery={
-                'text': query
+        payload = {
+            "knowledgeBaseId": knowledge_base_id,
+            "retrievalQuery": {
+                "text": query
             },
-            retrievalConfiguration={
-                'vectorSearchConfiguration': {
-                    'numberOfResults': 10  # Increase this to get more content
+            "retrievalConfiguration": {
+                "vectorSearchConfiguration": {
+                    "numberOfResults": 10
                 }
             }
+        }
+
+        response = bedrock.invoke_model(
+            modelId='anthropic.claude-3-sonnet-20240229-v1:0',
+            contentType='application/json',
+            accept='application/json',
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 1000,
+                "messages": [
+                    {"role": "system",
+                     "content": "You are an AI assistant that retrieves information from a knowledge base."},
+                    {"role": "user",
+                     "content": f"Retrieve information about the following query from the knowledge base: {query}"}
+                ]
+            })
         )
 
-        full_content = "\n\n".join([item['content'] for item in response['retrievalResults']])
-        return full_content
+        result = json.loads(response['body'].read())
+        return result['content'][0]['text']
     except ClientError as e:
         print(f"Error fetching knowledge base docs: {e}")
         return "Error occurred while searching the knowledge base."
