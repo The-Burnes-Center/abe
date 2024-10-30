@@ -3,10 +3,58 @@ import json
 from datetime import datetime
 import urllib.parse
 import base64
+import os
+from botocore.exceptions import ClientError
+
 
 
 s3 = boto3.client('s3')
 bedrock = boto3.client('bedrock-runtime')
+kb_id = os.environ['KB_ID']
+
+
+def retrieve_kb_docs(query, knowledge_base_id):
+    try:
+        response = bedrock.retrieve(
+            knowledgeBaseId=knowledge_base_id,
+            retrievalQuery={
+                'text': query
+            },
+            retrievalConfiguration={
+                'vectorSearchConfiguration': {
+                    'numberOfResults': 10  # Increase this to get more content
+                }
+            }
+        )
+
+        full_content = "\n\n".join([item['content'] for item in response['retrievalResults']])
+        return full_content
+    except ClientError as e:
+        print(f"Error fetching knowledge base docs: {e}")
+        return "Error occurred while searching the knowledge base."
+
+
+def get_claude_response(query, context):
+    try:
+        response = bedrock.invoke_model(
+            modelId="anthropic.claude-3-sonnet-20240229-v1:0",
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 1000,
+                "messages": [
+                    {"role": "system",
+                     "content": "You are an AI assistant that provides summary of the document in 200 characters max. Always refer to the context when answering."},
+                    {"role": "user", "content": f"Context: {context}\n\nQuestion: {query}"}
+                ]
+            })
+        )
+
+        result = json.loads(response['body'].read())
+        return result['content'][0]['text']
+    except Exception as e:
+        print(f"Error invoking Claude: {e}")
+        return "Error occurred while generating a response."
+
 
 def lambda_handler(event, context):
     try:
@@ -29,57 +77,22 @@ def lambda_handler(event, context):
         raw_key = event['Records'][0]['s3']['object']['key']
         key = urllib.parse.unquote_plus(raw_key)
         print(f"Processing file: Bucket - {bucket}, File - {key}")
-        # Get the existing metadata of the object
-        #
-        # # Get the object from S3
-        # try:
-        #     response = s3.get_object(Bucket=bucket, Key=key)
-        #     try:
-        #         file_content = base64.b64decode(response['Body']).decode('utf-8')
-        #     except Exception as e:
-        #         print(f"Failed using b64 : {e}")
-        #         try:
-        #             file_content = response['Body'].read().decode('utf-8')# Decode the byte stream to text
-        #         except Exception as e:
-        #             print(f"Failed using utf : {e}")
-        #             return {
-        #                 'statusCode': 500,
-        #                 'body': json.dumps(f"Error fetching content for {key}:{e}")
-        #             }
-        #
-        #
-        #     # Prepare the prompt for Claude 3
-        #     prompt = f"This is the content of a file named '{key}' from an S3 bucket. Please analyze the file, and if it is binary encoded content - {file_content} and provide a summary of its contents as a human understandable text."
-        #
-        #     # Invoke Claude 3 via Amazon Bedrock
-        #     response = bedrock.invoke_model(
-        #         modelId="anthropic.claude-3-sonnet-20240229-v1:0",
-        #         body=json.dumps({
-        #             "anthropic_version": "bedrock-2023-05-31",
-        #             "max_tokens": 2048,
-        #             "messages": [
-        #                 {"role": "user", "content": [
-        #                     {"type": "text", "text": prompt},
-        #                     {"type": "image", "source": {"type": "base64", "media_type": "application/octet-stream",
-        #                                                  "data": file_content}}
-        #                 ]}
-        #             ]
-        #         })
-        #     )
-        #
-        #     # Process the response
-        #     result = json.loads(response['body'].read())
-        #     summary = result['content'][0]['text']
-        #     # Print the first 1000 characters of the content
-        #     print(f"Summary : {summary}")
-        #
-        # except Exception as e:
-        #     print(f"Error fetching content for {key}: {e}")
-        #     return {
-        #         'statusCode': 500,
-        #         'body': json.dumps(f"Error fetching content for {key}: {e}")
-        #     }
+        # Extract file name without extension
+        file_name = os.path.splitext(os.path.basename(key))[0]
 
+        # Retrieve the document content from the knowledge base
+        document_content = retrieve_kb_docs(file_name, kb_id)
+        if "Error occurred" in document_content:
+            return {
+                'statusCode': 500,
+                'body': json.dumps("Error retrieving document content from knowledge base")
+            }
+        # Define your custom query here
+        custom_query = "Provide a detailed summary of this document, including its main topics and key points."
+
+        # Get Claude's response
+        claude_response = get_claude_response(custom_query, document_content)
+        print(f"Response summary : {claude_response}")
         try:
             response = s3.head_object(Bucket=bucket, Key=key)
             existing_metadata = response.get('Metadata', {})
