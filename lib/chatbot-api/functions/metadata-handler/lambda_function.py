@@ -36,15 +36,15 @@ def lambda_handler(event, context):
             response = s3.get_object(Bucket=bucket, Key=key)
             try:
                 file_content = base64.b64decode(raw_content).decode('utf-8')
-            except:
-                print("Failed using b64")
+            except Exception as e:
+                print(f"Failed using b64 : {e}")
                 try:
                     file_content = response['Body'].read().decode('utf-8')# Decode the byte stream to text
-                except:
+                except Exception as e:
                     print("Failed using utf")
                     return {
                         'statusCode': 500,
-                        'body': json.dumps(f"Error fetching content for {key}: {e}")
+                        'body': json.dumps(f"Error fetching content for {key}:{e}")
                     }
 
 
