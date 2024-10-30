@@ -35,10 +35,8 @@ def retrieve_kb_docs(query, knowledge_base_id):
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": 1000,
                 "messages": [
-                    {"role": "system",
-                     "content": "You are an AI assistant that retrieves information from a knowledge base."},
                     {"role": "user",
-                     "content": f"Retrieve information about the following query from the knowledge base: {query}"}
+                     "content": f"Retrieve information about the following query from the knowledge base: {query}. Knowledge base retrieval parameters: {json.dumps(payload)}"}
                 ]
             })
         )
@@ -49,7 +47,6 @@ def retrieve_kb_docs(query, knowledge_base_id):
         print(f"Error fetching knowledge base docs: {e}")
         return "Error occurred while searching the knowledge base."
 
-
 def get_claude_response(query, context):
     try:
         response = bedrock.invoke_model(
@@ -58,9 +55,7 @@ def get_claude_response(query, context):
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": 1000,
                 "messages": [
-                    {"role": "system",
-                     "content": "You are an AI assistant that provides summary of the document in 200 characters max. Always refer to the context when answering."},
-                    {"role": "user", "content": f"Context: {context}\n\nQuestion: {query}"}
+                    {"role": "user", "content": f"You are an AI assistant that provides summary of the document in 200 characters max. Always refer to the context when answering. Context: {context}\n\nQuestion: {query}"}
                 ]
             })
         )
@@ -70,7 +65,6 @@ def get_claude_response(query, context):
     except Exception as e:
         print(f"Error invoking Claude: {e}")
         return "Error occurred while generating a response."
-
 
 def lambda_handler(event, context):
     try:
