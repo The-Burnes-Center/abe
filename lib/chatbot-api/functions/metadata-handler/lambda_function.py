@@ -33,7 +33,7 @@ def retrieve_kb_docs(query, knowledge_base_id):
             accept='application/json',
             body=json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 1000,
+                "max_tokens": 2048,
                 "messages": [
                     {"role": "user",
                      "content": f"Retrieve information about the following query from the knowledge base: {query}. Knowledge base retrieval parameters: {json.dumps(payload)}"}
@@ -88,7 +88,7 @@ def lambda_handler(event, context):
         key = urllib.parse.unquote_plus(raw_key)
         print(f"Processing file: Bucket - {bucket}, File - {key}")
         # Extract file name without extension
-        file_name = os.path.splitext(os.path.basename(key))[0]
+        file_name = os.path.splitext(os.path.basename(raw_key))[0]
 
         # Retrieve the document content from the knowledge base
         document_content = retrieve_kb_docs(file_name, kb_id)
