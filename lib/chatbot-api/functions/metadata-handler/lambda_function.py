@@ -97,12 +97,14 @@ def lambda_handler(event, context):
                 'statusCode': 500,
                 'body': json.dumps("Error retrieving document content from knowledge base")
             }
+
+        print(f"Content : {document_content})
         # Define your custom query here
-        custom_query = "Provide a detailed summary of this document, including its main topics and key points."
+        # custom_query = "Provide a detailed summary of this document, including its main topics and key points."
 
         # Get Claude's response
-        claude_response = get_claude_response(custom_query, document_content)
-        print(f"Response summary : {claude_response}")
+        # claude_response = get_claude_response(custom_query, document_content)
+        # print(f"Response summary : {claude_response}")
         try:
             response = s3.head_object(Bucket=bucket, Key=key)
             existing_metadata = response.get('Metadata', {})
