@@ -249,6 +249,7 @@ export class LambdaFunctionStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_12,
       code: lambda.Code.fromAsset(path.join(__dirname, 'metadata-handler')),
       handler: 'lambda_function.lambda_handler',
+      timeout: cdk.Duration.seconds(30),
       environment: {
         "BUCKET": props.knowledgeBucket.bucketName,
         "KB_ID": props.knowledgeBase.attrKnowledgeBaseId
