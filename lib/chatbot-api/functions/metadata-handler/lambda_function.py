@@ -30,55 +30,55 @@ def lambda_handler(event, context):
         key = urllib.parse.unquote_plus(raw_key)
         print(f"Processing file: Bucket - {bucket}, File - {key}")
         # Get the existing metadata of the object
-
-        # Get the object from S3
-        try:
-            response = s3.get_object(Bucket=bucket, Key=key)
-            try:
-                file_content = base64.b64decode(response['Body']).decode('utf-8')
-            except Exception as e:
-                print(f"Failed using b64 : {e}")
-                try:
-                    file_content = response['Body'].read().decode('utf-8')# Decode the byte stream to text
-                except Exception as e:
-                    print(f"Failed using utf : {e}")
-                    return {
-                        'statusCode': 500,
-                        'body': json.dumps(f"Error fetching content for {key}:{e}")
-                    }
-
-
-            # Prepare the prompt for Claude 3
-            prompt = f"This is the content of a file named '{key}' from an S3 bucket. Please analyze the file, and if it is binary encoded content - {file_content} and provide a summary of its contents as a human understandable text."
-
-            # Invoke Claude 3 via Amazon Bedrock
-            response = bedrock.invoke_model(
-                modelId="anthropic.claude-3-sonnet-20240229-v1:0",
-                body=json.dumps({
-                    "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 2048,
-                    "messages": [
-                        {"role": "user", "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image", "source": {"type": "base64", "media_type": "application/octet-stream",
-                                                         "data": file_content}}
-                        ]}
-                    ]
-                })
-            )
-
-            # Process the response
-            result = json.loads(response['body'].read())
-            summary = result['content'][0]['text']
-            # Print the first 1000 characters of the content
-            print(f"Summary : {summary}")
-
-        except Exception as e:
-            print(f"Error fetching content for {key}: {e}")
-            return {
-                'statusCode': 500,
-                'body': json.dumps(f"Error fetching content for {key}: {e}")
-            }
+        #
+        # # Get the object from S3
+        # try:
+        #     response = s3.get_object(Bucket=bucket, Key=key)
+        #     try:
+        #         file_content = base64.b64decode(response['Body']).decode('utf-8')
+        #     except Exception as e:
+        #         print(f"Failed using b64 : {e}")
+        #         try:
+        #             file_content = response['Body'].read().decode('utf-8')# Decode the byte stream to text
+        #         except Exception as e:
+        #             print(f"Failed using utf : {e}")
+        #             return {
+        #                 'statusCode': 500,
+        #                 'body': json.dumps(f"Error fetching content for {key}:{e}")
+        #             }
+        #
+        #
+        #     # Prepare the prompt for Claude 3
+        #     prompt = f"This is the content of a file named '{key}' from an S3 bucket. Please analyze the file, and if it is binary encoded content - {file_content} and provide a summary of its contents as a human understandable text."
+        #
+        #     # Invoke Claude 3 via Amazon Bedrock
+        #     response = bedrock.invoke_model(
+        #         modelId="anthropic.claude-3-sonnet-20240229-v1:0",
+        #         body=json.dumps({
+        #             "anthropic_version": "bedrock-2023-05-31",
+        #             "max_tokens": 2048,
+        #             "messages": [
+        #                 {"role": "user", "content": [
+        #                     {"type": "text", "text": prompt},
+        #                     {"type": "image", "source": {"type": "base64", "media_type": "application/octet-stream",
+        #                                                  "data": file_content}}
+        #                 ]}
+        #             ]
+        #         })
+        #     )
+        #
+        #     # Process the response
+        #     result = json.loads(response['body'].read())
+        #     summary = result['content'][0]['text']
+        #     # Print the first 1000 characters of the content
+        #     print(f"Summary : {summary}")
+        #
+        # except Exception as e:
+        #     print(f"Error fetching content for {key}: {e}")
+        #     return {
+        #         'statusCode': 500,
+        #         'body': json.dumps(f"Error fetching content for {key}: {e}")
+        #     }
 
         try:
             response = s3.head_object(Bucket=bucket, Key=key)
