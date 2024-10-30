@@ -98,7 +98,7 @@ def lambda_handler(event, context):
                 'body': json.dumps("Error retrieving document content from knowledge base")
             }
 
-        print(f"Content : {document_content})
+        print(f"Content : {document_content}")
         # Define your custom query here
         # custom_query = "Provide a detailed summary of this document, including its main topics and key points."
 
