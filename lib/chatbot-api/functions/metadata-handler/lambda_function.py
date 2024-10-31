@@ -26,7 +26,7 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
                 }
             }
         )
-
+        print(f"Raw response : {response}")
         if response['retrievalResults']:
             for result in response['retrievalResults']:
                 uri = result['location']['s3Location']['uri']
