@@ -13,12 +13,12 @@ bedrock = boto3.client('bedrock-agent-runtime', region_name = 'us-east-1')
 kb_id = os.environ['KB_ID']
 
 
-def retrieve_kb_docs(query, knowledge_base_id):
+def retrieve_kb_docs(file_name, knowledge_base_id):
     try:
         response = bedrock.retrieve(
             knowledgeBaseId=knowledge_base_id,
             retrievalQuery={
-                'text': query
+                'text': file_name
             },
             retrievalConfiguration={
                 'vectorSearchConfiguration': {
@@ -28,13 +28,14 @@ def retrieve_kb_docs(query, knowledge_base_id):
         )
 
         if response['retrievalResults']:
-            result = response['retrievalResults'][0]
-            content = result['content']
-            uri = result['location']['s3Location']['uri']
-            return {
-                'content': content,
-                'uri': uri
-            }
+            for result in response['retrievalResults']:
+                uri = result['location']['s3Location']['uri']
+                if file_name in uri:
+                    return {
+                        'content': result['content']['text'],
+                        'uri': uri
+                    }
+
         else:
             return {
                 'content': "No relevant document found in the knowledge base.",
