@@ -15,38 +15,37 @@ kb_id = os.environ['KB_ID']
 
 def retrieve_kb_docs(query, knowledge_base_id):
     try:
-        payload = {
-            "knowledgeBaseId": knowledge_base_id,
-            "retrievalQuery": {
-                "text": query
+        response = bedrock.retrieve(
+            knowledgeBaseId=knowledge_base_id,
+            retrievalQuery={
+                'text': query
             },
-            "retrievalConfiguration": {
-                "vectorSearchConfiguration": {
-                    "numberOfResults": 10
+            retrievalConfiguration={
+                'vectorSearchConfiguration': {
+                    'numberOfResults': 1  # We only want the most relevant document
                 }
             }
-        }
-
-        response = bedrock.invoke_model(
-            modelId='anthropic.claude-3-sonnet-20240229-v1:0',
-            contentType='application/json',
-            accept='application/json',
-            body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 2048,
-                "messages": [
-                    {"role": "user",
-                     "content": f"Retrieve information about the following document from the knowledge base: {query}. Knowledge base retrieval parameters: {json.dumps(payload)}"}
-                ]
-            })
         )
 
-        result = json.loads(response['body'].read())
-        return result['content'][0]['text']
+        if response['retrievalResults']:
+            result = response['retrievalResults'][0]
+            content = result['content']
+            uri = result['location']['s3Location']['uri']
+            return {
+                'content': content,
+                'uri': uri
+            }
+        else:
+            return {
+                'content': "No relevant document found in the knowledge base.",
+                'uri': None
+            }
     except ClientError as e:
         print(f"Error fetching knowledge base docs: {e}")
-        return "Error occurred while searching the knowledge base."
-
+        return {
+            'content': "Error occurred while searching the knowledge base.",
+            'uri': None
+        }
 def lambda_handler(event, context):
     try:
         # Check if the event is caused by the Lambda function itself
