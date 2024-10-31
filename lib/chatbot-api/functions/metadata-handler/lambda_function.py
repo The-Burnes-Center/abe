@@ -22,7 +22,7 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
             },
             retrievalConfiguration={
                 'vectorSearchConfiguration': {
-                    'numberOfResults': 10  # We only want the most relevant document
+                    'numberOfResults': 20  # We only want the most relevant document
                 }
             }
         )
@@ -51,6 +51,34 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
             'content': "Error occurred while searching the knowledge base.",
             'uri': None
         }
+
+
+def summarize_and_categorize(content):
+    try:
+        # Use Bedrock's Claude model to generate summary and category
+        response = bedrock.invoke_model(
+            modelId='anthropic.claude-3-sonnet-20240229-v1:0',
+            contentType='application/json',
+            accept='application/json',
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 500,
+                "messages": [
+                    {"role": "system",
+                     "content": "You are an AI assistant that summarizes documents and categorizes them."},
+                    {"role": "user",
+                     "content": f"Summarize the following document in about 100 words. Then, categorize it as either 'user guide', 'handbook', 'unknown', or 'swc index'. Provide your response in JSON format with keys 'summary' and 'category'.\n\nDocument: {content}"}
+                ]
+            })
+        )
+
+        result = json.loads(response['body'].read())
+        summary_and_category = json.loads(result['content'][0]['text'])
+        return summary_and_category
+    except Exception as e:
+        print(f"Error generating summary and category: {e}")
+        return {"summary": "Error generating summary", "category": "unknown"}
+
 def lambda_handler(event, context):
     try:
         # Check if the event is caused by the Lambda function itself
@@ -78,6 +106,8 @@ def lambda_handler(event, context):
         # Retrieve the document content from the knowledge base
         print(f"file : {key}, kb_id : {kb_id}")
         document_content = retrieve_kb_docs(key, kb_id)
+        summary_and_category = summarize_and_categorize(document_content)
+        print(f"Summary and category : {summary_and_category}")
         if "Error occurred" in document_content:
             return {
                 'statusCode': 500,
