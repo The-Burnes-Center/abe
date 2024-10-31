@@ -27,14 +27,18 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
             }
         )
         print(f"Raw response : {response}")
+        full_content = []
+        file_uri = []
         if response['retrievalResults']:
             for result in response['retrievalResults']:
                 uri = result['location']['s3Location']['uri']
                 if file_name in uri:
-                    return {
-                        'content': result['content']['text'],
-                        'uri': uri
-                    }
+                    full_content.append(result['content']['text'])
+                    file_uri = uri
+            return {
+                'content': full_content,
+                'uri': file_uri
+            }
 
         else:
             return {
