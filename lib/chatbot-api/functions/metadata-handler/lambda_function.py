@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 
 s3 = boto3.client('s3')
 bedrock = boto3.client('bedrock-agent-runtime', region_name = 'us-east-1')
+bedrock_invoke =boto3.client('bedrock-runtime', region_name = 'us-east-1')
 kb_id = os.environ['KB_ID']
 
 
@@ -56,7 +57,7 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
 def summarize_and_categorize(content):
     try:
         # Use Bedrock's Claude model to generate summary and category
-        response = bedrock.invoke_model(
+        response = bedrock_invoke.invoke_model(
             modelId='anthropic.claude-3-sonnet-20240229-v1:0',
             contentType='application/json',
             accept='application/json',
