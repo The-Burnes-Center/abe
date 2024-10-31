@@ -2,9 +2,9 @@ import boto3
 import json
 from datetime import datetime
 import urllib.parse
-import base64
 import os
 from botocore.exceptions import ClientError
+from config import get_full_prompt, get_all_tags, CATEGORIES, CUSTOM_TAGS
 
 
 
@@ -66,18 +66,29 @@ def summarize_and_categorize(content):
                 "messages": [
                     {
                         "role": "user",
-                        "content": f"Summarize the following document in about 100 words. Then, categorize it as either 'user guide', 'handbook', 'unknown', or 'swc index'. Provide your response in JSON format with keys 'summary' and 'category'.\n\nDocument: {content}"
+                        "content": get_full_prompt(content)
                     }
                 ]
             })
         )
 
         result = json.loads(response['body'].read())
-        summary_and_category = json.loads(result['content'][0]['text'])
-        return summary_and_category
+        summary_and_tags = json.loads(result['content'][0]['text'])
+        # Validate the tags
+        all_tags = get_all_tags()
+        for tag, value in summary_and_tags['tags'].items():
+            if tag not in all_tags or value not in all_tags[tag]:
+                summary_and_tags['tags'][tag] = 'unknown'
+
+        return summary_and_tags
     except Exception as e:
-        print(f"Error generating summary and category: {e}")
-        return {"summary": "Error generating summary", "category": "unknown"}
+        print(f"Error generating summary and tags: {e}")
+        return {"summary": "Error generating summary", "tags": {"category": "unknown"}}
+
+def get_metadata(bucket,key):
+    response = s3.head_object(Bucket=bucket, Key=key)
+    existing_metadata = response.get('Metadata', {})
+    return existing_metadata
 
 def lambda_handler(event, context):
     try:
@@ -100,25 +111,32 @@ def lambda_handler(event, context):
         raw_key = event['Records'][0]['s3']['object']['key']
         key = urllib.parse.unquote_plus(raw_key)
         print(f"Processing file: Bucket - {bucket}, File - {key}")
-        # Extract file name without extension
-        # file_name = os.path.splitext(os.path.basename(raw_key))[0]
 
         # Retrieve the document content from the knowledge base
         print(f"file : {key}, kb_id : {kb_id}")
         document_content = retrieve_kb_docs(key, kb_id)
-        summary_and_category = summarize_and_categorize(document_content)
-        print(f"Summary and category : {summary_and_category}")
         if "Error occurred" in document_content:
             return {
                 'statusCode': 500,
                 'body': json.dumps("Error retrieving document content from knowledge base")
             }
+        else:
+            print(f"Content : {document_content}")
 
-        print(f"Content : {document_content}")
+        summary_and_tags = summarize_and_categorize(document_content)
+        if "Error generating summary" in summary_and_tags['summary']:
+            return {
+                'statusCode': 500,
+                'body': json.dumps("Error generating summary and tags")
+            }
+        else:
+            print(f"Summary and category : {summary_and_tags}")
+
+
+
 
         try:
-            response = s3.head_object(Bucket=bucket, Key=key)
-            existing_metadata = response.get('Metadata', {})
+            existing_metadata = get_metadata(bucket,key)
         except Exception as e:
             print(f"Error fetching metadata for {key}: {e}")
             return {
@@ -127,10 +145,10 @@ def lambda_handler(event, context):
             }
 
         # Generate new metadata fields
-        upload_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # upload_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         new_metadata = {
-            'filename': f"{key} Awesome",
-            'upload-time': upload_time
+            'summary': summary_and_tags['summary'],
+            **{f"tag_{k}": v for k, v in summary_and_tags['tags'].items()}
         }
 
         # Merge new metadata with any existing metadata
