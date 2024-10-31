@@ -56,7 +56,6 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
 
 def summarize_and_categorize(content):
     try:
-        # Use Bedrock's Claude model to generate summary and category
         response = bedrock_invoke.invoke_model(
             modelId='anthropic.claude-3-sonnet-20240229-v1:0',
             contentType='application/json',
@@ -65,10 +64,10 @@ def summarize_and_categorize(content):
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": 500,
                 "messages": [
-                    {"role": "system",
-                     "content": "You are an AI assistant that summarizes documents and categorizes them."},
-                    {"role": "user",
-                     "content": f"Summarize the following document in about 100 words. Then, categorize it as either 'user guide', 'handbook', 'unknown', or 'swc index'. Provide your response in JSON format with keys 'summary' and 'category'.\n\nDocument: {content}"}
+                    {
+                        "role": "user",
+                        "content": f"Summarize the following document in about 100 words. Then, categorize it as either 'user guide', 'handbook', 'unknown', or 'swc index'. Provide your response in JSON format with keys 'summary' and 'category'.\n\nDocument: {content}"
+                    }
                 ]
             })
         )
