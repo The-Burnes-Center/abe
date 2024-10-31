@@ -22,7 +22,7 @@ def retrieve_kb_docs(query, knowledge_base_id):
             },
             retrievalConfiguration={
                 'vectorSearchConfiguration': {
-                    'numberOfResults': 1  # We only want the most relevant document
+                    'numberOfResults': 10  # We only want the most relevant document
                 }
             }
         )
