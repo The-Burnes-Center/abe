@@ -47,25 +47,6 @@ def retrieve_kb_docs(query, knowledge_base_id):
         print(f"Error fetching knowledge base docs: {e}")
         return "Error occurred while searching the knowledge base."
 
-def get_claude_response(query, context):
-    try:
-        response = bedrock.invoke_model(
-            modelId="anthropic.claude-3-sonnet-20240229-v1:0",
-            body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 1000,
-                "messages": [
-                    {"role": "user", "content": f"You are an AI assistant that provides summary of the document in 200 characters max. Always refer to the context when answering. Context: {context}\n\nQuestion: {query}"}
-                ]
-            })
-        )
-
-        result = json.loads(response['body'].read())
-        return result['content'][0]['text']
-    except Exception as e:
-        print(f"Error invoking Claude: {e}")
-        return "Error occurred while generating a response."
-
 def lambda_handler(event, context):
     try:
         # Check if the event is caused by the Lambda function itself
@@ -100,12 +81,7 @@ def lambda_handler(event, context):
             }
 
         print(f"Content : {document_content}")
-        # Define your custom query here
-        # custom_query = "Provide a detailed summary of this document, including its main topics and key points."
 
-        # Get Claude's response
-        # claude_response = get_claude_response(custom_query, document_content)
-        # print(f"Response summary : {claude_response}")
         try:
             response = s3.head_object(Bucket=bucket, Key=key)
             existing_metadata = response.get('Metadata', {})
