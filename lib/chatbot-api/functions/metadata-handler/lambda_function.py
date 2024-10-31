@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 
 
 s3 = boto3.client('s3')
-bedrock = boto3.client('bedrock-runtime', region_name = 'us-east-1')
+bedrock = boto3.client('bedrock-agent-runtime', region_name = 'us-east-1')
 kb_id = os.environ['KB_ID']
 
 
