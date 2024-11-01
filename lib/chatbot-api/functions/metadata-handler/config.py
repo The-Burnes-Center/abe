@@ -18,7 +18,7 @@ CUSTOM_TAGS = {
 TAG_DESCRIPTIONS = {
     'category': 'The type of document',
     'complexity': 'Indicates how complex the document is to understand for a new buyer for state.',
-    'author': 'The Author of the document'
+    'author': 'The name of the person or organization who wrote or published the document. Extract this from the document content if available.'
 }
 
 
@@ -41,6 +41,7 @@ def get_full_prompt(content):
             prompt += f"   Description: {TAG_DESCRIPTIONS[tag]}\n"
 
     prompt += f"""
+For tags with no predefined values, please determine an appropriate value based on the tag's description and the document content.
 Provide your response in JSON format with keys 'summary' and 'tags', where 'tags' is an object containing the selected tags.
 
 Document: {content}"""
