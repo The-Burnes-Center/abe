@@ -27,7 +27,7 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
                 }
             }
         )
-        print(f"Raw response : {response}")
+
         full_content = []
         file_uri = []
         if response['retrievalResults']:
@@ -93,12 +93,33 @@ def get_metadata(bucket,key):
     existing_metadata = response.get('Metadata', {})
     return existing_metadata
 
+def get_complete_metadata(bucket):
+    all_metadata = {}
+    try:
+        paginator = s3.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket =bucket):
+            if 'Contents' in page:
+                for obj in page['Contents']:
+                    key = obj['Key']
+                    try:
+                        all_metadata[key] = get_metadata(bucket,key)
+                    except Exception as e:
+                        print(f"Error in fetching complete metadata for {key}: {e}")
+
+        return all_metadata
+
+    except Exception as e:
+        print(f"Error occured in fetching complete metadata : {e}")
+        return None
+
 def lambda_handler(event, context):
     try:
         # Check if the event is caused by the Lambda function itself
         if event['Records'][0]['eventSource'] == 'aws:s3' and \
            event['Records'][0]['eventName'].startswith('ObjectCreated:Copy'):
             print("Skipping event triggered by copy operation")
+
+
             return {
                 'statusCode': 200,
                 'body': json.dumps("Skipped event triggered by copy operation")
@@ -173,6 +194,17 @@ def lambda_handler(event, context):
             return {
                 'statusCode': 500,
                 'body': json.dumps(f"Error updating metadata for {key}: {e}")
+            }
+        all_metadata = get_complete_metadata(bucket)
+        if all_metadata is not None:
+            return {
+                'statusCode': 200,
+                'body': json.dumps(all_metadata)
+            }
+        else:
+            return {
+                'statusCode': 500,
+                'body': json.dumps("Failed to retrieve metadata")
             }
 
         return {
