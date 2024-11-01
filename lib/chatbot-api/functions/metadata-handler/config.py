@@ -2,21 +2,23 @@
 
 # Categories and their descriptions
 CATEGORIES = {
-    'user guide': 'A document that provides step-by-step instructions on how to purchase using a specific contract.',
-    'handbook': 'A comprehensive reference document that covers various aspects of a OSD',
-    'swc index': 'An index or catalog telling what contracts are available.',
+    'user guide': 'A document that provides step-by-step instructions on how to purchase for a specific contract.',
+    'handbook': 'A comprehensive reference document that covers various aspects of OSD Procurement',
+    'swc index': 'Contains a list telling what contracts are available and who manages them.',
     'unknown': 'Documents that do not clearly fit into any of the above categories.'
 }
 
 # Additional custom tags
 CUSTOM_TAGS = {
     'complexity': ['low', 'medium', 'high']
+    'author':[]
 }
 
 # Tag descriptions
 TAG_DESCRIPTIONS = {
     'category': 'The type of document',
-    'complexity': 'Indicates how complex the document is to understand for a new buyer for state.'
+    'complexity': 'Indicates how complex the document is to understand for a new buyer for state.',
+    'author': 'The Author of the document'
 }
 
 

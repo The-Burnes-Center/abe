@@ -57,7 +57,7 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
 def summarize_and_categorize(content):
     try:
         response = bedrock_invoke.invoke_model(
-            modelId='anthropic.claude-3-sonnet-20240229-v1:0',
+            modelId='anthropic.claude-3-5-sonnet-20240620-v1:0',
             contentType='application/json',
             accept='application/json',
             body=json.dumps({
