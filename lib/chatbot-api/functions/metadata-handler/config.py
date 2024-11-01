@@ -10,7 +10,7 @@ CATEGORIES = {
 
 # Additional custom tags
 CUSTOM_TAGS = {
-    'complexity': ['low', 'medium', 'high']
+    'complexity': ['low', 'medium', 'high'],
     'author':[]
 }
 
