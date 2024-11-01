@@ -77,7 +77,10 @@ def summarize_and_categorize(content):
         # Validate the tags
         all_tags = get_all_tags()
         for tag, value in summary_and_tags['tags'].items():
-            if tag not in all_tags or value not in all_tags[tag]:
+            if tag in all_tags:
+                if all_tags[tag] and value not in all_tags[tag]:
+                    summary_and_tags['tags'][tag] = 'unknown'
+            else:
                 summary_and_tags['tags'][tag] = 'unknown'
 
         return summary_and_tags
