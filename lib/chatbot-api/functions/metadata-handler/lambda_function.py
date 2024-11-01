@@ -54,7 +54,7 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
         }
 
 
-def summarize_and_categorize(content):
+def summarize_and_categorize(key,content):
     try:
         response = bedrock_invoke.invoke_model(
             modelId='anthropic.claude-3-sonnet-20240229-v1:0',
@@ -66,7 +66,7 @@ def summarize_and_categorize(content):
                 "messages": [
                     {
                         "role": "user",
-                        "content": get_full_prompt(content)
+                        "content": get_full_prompt(key,content)
                     }
                 ]
             })
@@ -126,7 +126,7 @@ def lambda_handler(event, context):
         else:
             print(f"Content : {document_content}")
 
-        summary_and_tags = summarize_and_categorize(document_content)
+        summary_and_tags = summarize_and_categorize(key,document_content)
         if "Error generating summary" in summary_and_tags['summary']:
             return {
                 'statusCode': 500,

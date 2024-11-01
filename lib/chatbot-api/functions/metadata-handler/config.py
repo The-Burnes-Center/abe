@@ -1,10 +1,9 @@
-# config.py
 
 # Categories and their descriptions
 CATEGORIES = {
     'user guide': 'A document that provides step-by-step instructions on how to purchase for a specific contract.',
     'handbook': 'A comprehensive reference document that covers various aspects of OSD Procurement',
-    'swc index': 'Contains a list telling what contracts are available and who manages them.',
+    'swc index': 'A sheet containing a list telling what contracts are available and who manages them.',
     'unknown': 'Documents that do not clearly fit into any of the above categories.'
 }
 
@@ -26,7 +25,7 @@ def get_all_tags():
     return {**{'category': list(CATEGORIES.keys())}, **CUSTOM_TAGS}
 
 
-def get_full_prompt(content):
+def get_full_prompt(key,content):
     all_tags = get_all_tags()
 
     prompt = f"""Analyze the following document and provide:
@@ -44,6 +43,7 @@ def get_full_prompt(content):
 For tags with no predefined values, please determine an appropriate value based on the tag's description and the document content.
 Provide your response in JSON format with keys 'summary' and 'tags', where 'tags' is an object containing the selected tags.
 
+Document Name : {key}
 Document: {content}"""
 
     return prompt
