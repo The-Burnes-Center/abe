@@ -197,6 +197,7 @@ def lambda_handler(event, context):
             }
         all_metadata = get_complete_metadata(bucket)
         if all_metadata is not None:
+            print(f"All Metadata : {all_metadata}")
             return {
                 'statusCode': 200,
                 'body': json.dumps(all_metadata)
