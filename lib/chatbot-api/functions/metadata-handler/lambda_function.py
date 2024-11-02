@@ -1,6 +1,5 @@
 import boto3
 import json
-from datetime import datetime
 import urllib.parse
 import os
 from botocore.exceptions import ClientError
@@ -106,6 +105,16 @@ def get_complete_metadata(bucket):
                     except Exception as e:
                         print(f"Error in fetching complete metadata for {key}: {e}")
 
+        metadata_json = json.dumps(all_metadata)
+        # Upload to S3 with a specific key
+        metadata_file = r"metadata.json"
+        s3.put_object(
+            Bucket=bucket,
+            Key=metadata_file,
+            Body=metadata_json,
+            ContentType='application/json'
+        )
+        print(f"Metadata successfully uploaded to {bucket}/{metadata_file}")
         return all_metadata
 
     except Exception as e:
@@ -125,6 +134,7 @@ def lambda_handler(event, context):
                 'body': json.dumps("Skipped event triggered by copy operation")
             }
 
+
     except:
         print("Issue checking for s3 action")
 
@@ -134,6 +144,14 @@ def lambda_handler(event, context):
         bucket = event['Records'][0]['s3']['bucket']['name']
         raw_key = event['Records'][0]['s3']['object']['key']
         key = urllib.parse.unquote_plus(raw_key)
+
+        if key == "metadata.json":
+            print("Skipping processing for metadata.json to prevent recursion.")
+            return {
+                'statusCode': 200,
+                'body': json.dumps("Skipped processing for metadata.json")
+            }
+
         print(f"Processing file: Bucket - {bucket}, File - {key}")
 
         # Retrieve the document content from the knowledge base
@@ -195,6 +213,7 @@ def lambda_handler(event, context):
                 'statusCode': 500,
                 'body': json.dumps(f"Error updating metadata for {key}: {e}")
             }
+
         all_metadata = get_complete_metadata(bucket)
         if all_metadata is not None:
             print(f"All Metadata : {all_metadata}")
@@ -207,11 +226,6 @@ def lambda_handler(event, context):
                 'statusCode': 500,
                 'body': json.dumps("Failed to retrieve metadata")
             }
-
-        return {
-            'statusCode': 200,
-            'body': json.dumps(f"File {key} metadata updated successfully in bucket {bucket}")
-        }
 
     except Exception as e:
         print(f"Unexpected error processing file: {e}")
