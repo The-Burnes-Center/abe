@@ -105,14 +105,14 @@ def get_complete_metadata(bucket):
                     except Exception as e:
                         print(f"Error in fetching complete metadata for {key}: {e}")
 
-        metadata_json = json.dumps(all_metadata)
+        metadata_json = json.dumps(all_metadata, indent=4)
         # Upload to S3 with a specific key
-        metadata_file = r"metadata.json"
+        metadata_file = r"metadata.txt"
         s3.put_object(
             Bucket=bucket,
             Key=metadata_file,
             Body=metadata_json,
-            ContentType='application/json'
+            ContentType='text/plain'
         )
         print(f"Metadata successfully uploaded to {bucket}/{metadata_file}")
         return all_metadata
@@ -145,11 +145,11 @@ def lambda_handler(event, context):
         raw_key = event['Records'][0]['s3']['object']['key']
         key = urllib.parse.unquote_plus(raw_key)
 
-        if key == "metadata.json":
-            print("Skipping processing for metadata.json to prevent recursion.")
+        if key == "metadata.txt":
+            print("Skipping processing for metadata.txt to prevent recursion.")
             return {
                 'statusCode': 200,
-                'body': json.dumps("Skipped processing for metadata.json")
+                'body': json.dumps("Skipped processing for metadata.txt")
             }
 
         print(f"Processing file: Bucket - {bucket}, File - {key}")
