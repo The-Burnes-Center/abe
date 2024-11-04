@@ -15,10 +15,12 @@ kb_id = os.environ['KB_ID']
 
 def retrieve_kb_docs(file_name, knowledge_base_id):
     try:
+        key,_ = os.path.splitext(file_name)
+        print(f"Search query KB : {key}")
         response = bedrock.retrieve(
             knowledgeBaseId=knowledge_base_id,
             retrievalQuery={
-                'text': file_name
+                'text': key
             },
             retrievalConfiguration={
                 'vectorSearchConfiguration': {
@@ -72,6 +74,7 @@ def summarize_and_categorize(key,content):
         )
 
         result = json.loads(response['body'].read())
+        print(f"Raw llm output : {result['content'][0]['text']}")
         summary_and_tags = json.loads(result['content'][0]['text'])
         # Validate the tags
         all_tags = get_all_tags()
