@@ -73,12 +73,13 @@ def summarize_and_categorize(key,content):
             })
         )
 
-        print(f"Raw llm output : {response['body'].read()}")
+        raw_response_body= response['body'].read()
+        print(f"Raw llm output : {raw_response_body}")
         try:
-            result = json.loads(response['body'].read())
+            result = json.loads(raw_response_body)
         except json.JSONDecodeError:
             print("Error: Response not in JSON format")
-            result = {"content": [{"text": response['body'].read()}]}
+            result = {"content": [{"text": raw_response_body}]}
 
         summary_and_tags = json.loads(result['content'][0]['text'])
         # Validate the tags
