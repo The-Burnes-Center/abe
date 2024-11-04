@@ -41,7 +41,16 @@ def get_full_prompt(key,content):
 
     prompt += f"""
 For tags with no predefined values, please determine an appropriate value based on the tag's description and the document content.
-Provide your response in JSON format with keys 'summary' and 'tags', where 'tags' is an object containing the selected tags.
+Ensure that your response is in JSON format with keys 'summary' and 'tags', where 'tags' is an object containing the selected tags.
+Example JSON Response:
+{{
+    "summary": "<Your Summary>",
+    "tags": {{
+        "category": "user guide",
+        "complexity": "medium",
+        "author": "Commonwealth of Massachusetts Operational Services Division"
+    }}
+}}
 
 Document Name : {key}
 Document: {content}"""
