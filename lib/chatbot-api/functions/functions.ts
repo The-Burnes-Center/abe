@@ -303,6 +303,7 @@ _If details are provided:_
 
 
 // Trigger the lambda function when a document is uploaded
+
     this.metadataHandlerFunction = metadataHandlerFunction;
 
       metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
