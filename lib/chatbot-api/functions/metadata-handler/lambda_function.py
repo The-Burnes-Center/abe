@@ -8,11 +8,12 @@ from config import get_full_prompt, get_all_tags, CATEGORIES, CUSTOM_TAGS
 
 
 s3 = boto3.client('s3')
-bedrock = boto3.client('bedrock-agent-runtime', region_name = 'us-east-1')
-bedrock_invoke =boto3.client('bedrock-runtime', region_name = 'us-east-1')
+bedrock = boto3.client('bedrock-agent-runtime', region_name = 'us-east-1') #For using retrieve function
+bedrock_invoke =boto3.client('bedrock-runtime', region_name = 'us-east-1') #For using invoke function
 kb_id = os.environ['KB_ID']
 
 
+# Using Knowledge Base to fetch document contents
 def retrieve_kb_docs(file_name, knowledge_base_id):
     try:
         key,_ = os.path.splitext(file_name)
@@ -55,6 +56,7 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
         }
 
 
+# Function to summarize and categorize using claude 3
 def summarize_and_categorize(key,content):
     try:
         response = bedrock_invoke.invoke_model(
@@ -96,11 +98,13 @@ def summarize_and_categorize(key,content):
         print(f"Error generating summary and tags: {e}")
         return {"summary": "Error generating summary", "tags": {"category": "unknown"}}
 
+# Getting metadata information from a file
 def get_metadata(bucket,key):
     response = s3.head_object(Bucket=bucket, Key=key)
     existing_metadata = response.get('Metadata', {})
     return existing_metadata
 
+#Getting metadata information of all files in a single document
 def get_complete_metadata(bucket):
     all_metadata = {}
     try:
@@ -153,7 +157,7 @@ def lambda_handler(event, context):
         bucket = event['Records'][0]['s3']['bucket']['name']
         raw_key = event['Records'][0]['s3']['object']['key']
         key = urllib.parse.unquote_plus(raw_key)
-
+        # Skipping operation if the uploaded file is metadata.
         if key == "metadata.txt":
             print("Skipping processing for metadata.txt to prevent recursion.")
             return {
@@ -196,7 +200,7 @@ def lambda_handler(event, context):
             }
 
         # Generate new metadata fields
-        # upload_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
         new_metadata = {
             'summary': summary_and_tags['summary'],
             **{f"tag_{k}": v for k, v in summary_and_tags['tags'].items()}

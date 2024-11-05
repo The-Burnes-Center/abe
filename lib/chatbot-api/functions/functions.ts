@@ -270,12 +270,8 @@ _If details are provided:_
 
 
 
-//     // Import the S3 bucket ARN
-//     const knowledgeBucketArn = cdk.Fn.importValue('KnowledgeBucketArn');
-//
-//     const knowledgeBucket = s3.Bucket.fromBucketArn(scope, 'ImportedKnowledgeBucket', knowledgeBucketArn);
 
-    // Define the Lambda function
+    // Define the Lambda function for metadata
     const metadataHandlerFunction = new lambda.Function(scope, 'MetadataHandlerFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
       code: lambda.Code.fromAsset(path.join(__dirname, 'metadata-handler')),

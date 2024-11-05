@@ -1,5 +1,5 @@
 
-# Categories and their descriptions
+# # Define tag values and their descriptions for categorizing documents (when values are agency specific)
 CATEGORIES = {
     'user guide': 'A document that provides step-by-step instructions on how to purchase for a specific contract.',
     'handbook': 'A comprehensive reference document that covers various aspects of OSD Procurement',
@@ -7,24 +7,24 @@ CATEGORIES = {
     'unknown': 'Documents that do not clearly fit into any of the above categories.'
 }
 
-# Additional custom tags
+# Define custom tags to provide additional metadata for documents.
 CUSTOM_TAGS = {
-    'complexity': ['low', 'medium', 'high'],
-    'author':[]
+    'complexity': ['low', 'medium', 'high'],# Levels indicating document complexity for new buyers.
+    'author':[]  # Placeholder for author names; values will be extracted from content if available.
 }
 
-# Tag descriptions
+# Descriptions for each tag to guide their use and selection.
 TAG_DESCRIPTIONS = {
     'category': 'The type of document',
     'complexity': 'Indicates how complex the document is to understand for a new buyer for state.',
     'author': 'The name of the person or organization who wrote or published the document. Extract this from the document content if available.'
 }
 
-
+# Function to compile all tags (predefined and custom) into a dictionary for easy access.
 def get_all_tags():
     return {**{'category': list(CATEGORIES.keys())}, **CUSTOM_TAGS}
 
-
+# Function to generate a prompt that directs the AI to analyze a document, summarize it, and apply relevant tags.
 def get_full_prompt(key,content):
     all_tags = get_all_tags()
 
