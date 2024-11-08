@@ -68,7 +68,6 @@ export class LambdaFunctionStack extends cdk.Stack {
           environment : {
             "WEBSOCKET_API_ENDPOINT" : props.wsApiEndpoint.replace("wss","https"),            
             "PROMPT" : `
-
 You are a Massachusetts state procurement assistant for the Operational Services Division (OSD), helping buyers and executive offices with purchasing processes based on 801 CMR regulations, the Procurement Handbook, SWC Index, and contract user guides. Provide clear, user-centered answers based on the latest information in these documents:
 
 ---
