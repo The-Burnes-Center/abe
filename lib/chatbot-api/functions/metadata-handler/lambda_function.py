@@ -140,6 +140,7 @@ def fetch_metadata(bucket):
         response = s3.get_object(Bucket=bucket, Key=metadata_file)
         content = response['Body'].read().decode('utf-8')
         metadata = json.loads(content)  # Parse JSON content
+        print(f"Fetched metadata: {metadata}")  # Log fetched metadata
         return metadata
     except Exception as e:
         print(f"Error fetching metadata file: {e}")
@@ -173,6 +174,7 @@ def lambda_handler(event, context):
                 metadata = {
                     k: v for k, v in metadata.items() if filter_key in k or filter_key in str(v)
                 }
+                print(f"Filtered metadata: {metadata}")  # Log filtered metadata
             return {
                 "statusCode": 200,
                 "body": json.dumps({"metadata": metadata})
