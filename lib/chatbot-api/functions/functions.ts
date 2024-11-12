@@ -40,7 +40,8 @@ export class LambdaFunctionStack extends cdk.Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, 'session-handler')), // Points to the lambda directory
       handler: 'lambda_function.lambda_handler', // Points to the 'hello' file in the lambda directory
       environment: {
-        "DDB_TABLE_NAME" : props.sessionTable.tableName
+        "DDB_TABLE_NAME" : props.sessionTable.tableName,
+        "METADATA_BUCKET": props.knowledgeBucket.bucketName,
       },
       timeout: cdk.Duration.seconds(30)
     });
@@ -55,7 +56,7 @@ export class LambdaFunctionStack extends cdk.Stack {
         'dynamodb:Query',
         'dynamodb:Scan'
       ],
-      resources: [props.sessionTable.tableArn, props.sessionTable.tableArn + "/index/*"]
+      resources: [props.sessionTable.tableArn, props.sessionTable.tableArn + "/index/*", `${props.knowledgeBucket.bucketArn}/metadata.txt`]
     }));
 
     this.sessionFunction = sessionAPIHandlerFunction;
@@ -140,7 +141,9 @@ You are a procurement assistant for Massachusetts’ Operational Services Divisi
           ],
           resources: [this.sessionFunction.functionArn]
         }));
-        
+
+        websocketAPIFunction.addEnvironment("METADATA_HANDLER_FUNCTION", metadataHandlerFunction.functionArn);
+
         this.chatFunction = websocketAPIFunction;
 
     const feedbackAPIHandlerFunction = new lambda.Function(scope, 'FeedbackHandlerFunction', {

@@ -252,6 +252,37 @@ def list_sessions_by_user_id(user_id, limit = 15):
     return response  # Return the response object
 
 
+def fetch_metadata(filter_key=None):
+    """
+    Fetch metadata from the metadata.txt file in S3 and optionally filter it by a provided key.
+    """
+    try:
+        s3 = boto3.client('s3')
+        bucket_name = os.environ.get("METADATA_BUCKET")  # Add METADATA_BUCKET in your environment variables
+        metadata_file_key = "metadata.txt"
+
+        # Retrieve the metadata file from S3
+        response = s3.get_object(Bucket=bucket_name, Key=metadata_file_key)
+        metadata_content = response['Body'].read().decode('utf-8')
+        metadata = json.loads(metadata_content)
+
+        # If a filter_key is provided, filter the metadata
+        if filter_key:
+            filtered_metadata = {
+                k: v for k, v in metadata.items()
+                if filter_key in k or filter_key in json.dumps(v)
+            }
+            return {"statusCode": 200, "metadata": filtered_metadata}
+
+        # Return the complete metadata if no filter_key is provided
+        return {"statusCode": 200, "metadata": metadata}
+
+    except Exception as e:
+        print(f"Error fetching metadata: {e}")
+        return {
+            "statusCode": 500,
+            "error": f"Failed to fetch metadata: {str(e)}"
+        }
 
 
 def lambda_handler(event, context):
@@ -262,10 +293,16 @@ def lambda_handler(event, context):
     chat_history = data.get('chat_history', None)
     new_chat_entry = data.get('new_chat_entry')
     title = data.get('title', f"Chat on {str(datetime.now())}")
+    filter_key = data.get('filter_key')  # Add filter_key from the request payload
+
     if operation != 'list_sessions_by_user_id':
         print(operation)
     print(data)
     print(new_chat_entry)
+
+    # Handle fetch_metadata operation
+    if operation == 'fetch_metadata':
+        return fetch_metadata(filter_key)
 
     if operation == 'add_session':
         return add_session(session_id, user_id, chat_history, title, new_chat_entry)
