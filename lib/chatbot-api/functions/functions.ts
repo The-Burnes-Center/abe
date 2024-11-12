@@ -142,8 +142,6 @@ You are a procurement assistant for Massachusetts’ Operational Services Divisi
           resources: [this.sessionFunction.functionArn]
         }));
 
-        websocketAPIFunction.addEnvironment("METADATA_HANDLER_FUNCTION", metadataHandlerFunction.functionArn);
-
         this.chatFunction = websocketAPIFunction;
 
     const feedbackAPIHandlerFunction = new lambda.Function(scope, 'FeedbackHandlerFunction', {
@@ -301,6 +299,7 @@ You are a procurement assistant for Massachusetts’ Operational Services Divisi
         events: [s3.EventType.OBJECT_CREATED],
       }));
 
+    websocketAPIFunction.addEnvironment("METADATA_HANDLER_FUNCTION", metadataHandlerFunction.functionArn);
 
   }
 }
