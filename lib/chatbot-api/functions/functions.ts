@@ -300,7 +300,23 @@ You are a procurement assistant for Massachusetts’ Operational Services Divisi
         events: [s3.EventType.OBJECT_CREATED],
       }));
 
-    websocketAPIFunction.addEnvironment("METADATA_HANDLER_FUNCTION", metadataHandlerFunction.functionArn);
+const metadataRetrievalFunction = new lambda.Function(scope, 'MetadataRetrievalFunction', {
+  runtime: lambda.Runtime.PYTHON_3_12,
+  code: lambda.Code.fromAsset(path.join(__dirname, 'metadata-retrieval')),
+  handler: 'lambda_function.lambda_handler',
+  timeout: cdk.Duration.seconds(30),
+  environment: {
+    "BUCKET": props.knowledgeBucket.bucketName,
+  },
+});
+
+metadataRetrievalFunction.addToRolePolicy(new iam.PolicyStatement({
+  effect: iam.Effect.ALLOW,
+  actions: ['s3:*'],
+  resources: [`${props.knowledgeBucket.bucketArn}/metadata.txt`]
+}));
+
+websocketAPIFunction.addEnvironment("METADATA_RETRIEVAL_FUNCTION", metadataRetrievalFunction.functionArn);
 
   }
 }

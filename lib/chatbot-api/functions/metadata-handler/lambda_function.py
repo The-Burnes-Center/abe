@@ -134,18 +134,6 @@ def get_complete_metadata(bucket):
         print(f"Error occured in fetching complete metadata : {e}")
         return None
 
-def fetch_metadata(bucket):
-    try:
-        metadata_file = "metadata.txt"
-        response = s3.get_object(Bucket=bucket, Key=metadata_file)
-        content = response['Body'].read().decode('utf-8')
-        metadata = json.loads(content)  # Parse JSON content
-        print(f"Fetched metadata: {metadata}")  # Log fetched metadata
-        return metadata
-    except Exception as e:
-        print(f"Error fetching metadata file: {e}")
-        return {"error": f"Failed to fetch metadata file: {str(e)}"}
-
 
 def lambda_handler(event, context):
     try:
@@ -164,27 +152,6 @@ def lambda_handler(event, context):
     except:
         print("Issue checking for s3 action")
 
-    # Handle metadata retrieval request
-    try:
-        if event.get("operation") == "fetch_metadata":
-            filter_key = event.get("filter_key", "")  # Extract filter_key from the event payload
-            metadata = fetch_metadata(os.environ["BUCKET"])  # Fetch metadata from metadata.txt
-            if filter_key:
-                # If a filter_key is provided, filter the metadata
-                metadata = {
-                    k: v for k, v in metadata.items() if filter_key in k or filter_key in str(v)
-                }
-                print(f"Filtered metadata: {metadata}")  # Log filtered metadata
-            return {
-                "statusCode": 200,
-                "body": json.dumps({"metadata": metadata})
-            }
-    except Exception as e:
-        print(f"Error in fetching metadata: {e}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({"error": str(e)})
-        }
 
     try:
         # Get the bucket name and file key from the event, handling URL-encoded characters
