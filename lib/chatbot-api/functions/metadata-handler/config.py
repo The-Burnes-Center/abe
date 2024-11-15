@@ -1,9 +1,11 @@
 
 # # Define tag values and their descriptions for categorizing documents (when values are agency specific)
 CATEGORIES = {
-    'user guide': 'A document that provides step-by-step instructions on how to purchase for a specific contract.',
+    'user guide': 'A detailed document providing clear, step-by-step instructions on how to procure goods or services under a specific contract. It outlines the key terms, processes, and requirements buyers need to follow.',
     'handbook': 'A comprehensive reference document that covers various aspects of OSD Procurement',
     'swc index': 'A sheet containing a list telling what contracts are available and who manages them.',
+    'external reference': 'Supplementary documents or links that direct users to additional resources, guides, or pages. These references provide further clarity or context for procurement-related topics.',
+    'memos': 'Documents which are official communications that outline updates, amendments, or directives regarding the Handbook, regulations, or other procurement policies. These documents ensure compliance with the latest changes.',
     'unknown': 'Documents that do not clearly fit into any of the above categories.'
 }
 
