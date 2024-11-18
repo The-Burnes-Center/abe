@@ -25,7 +25,7 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
             },
             retrievalConfiguration={
                 'vectorSearchConfiguration': {
-                    'numberOfResults': 50  # We only want the most relevant document
+                    'numberOfResults': 100  # We only want the most relevant document
                 }
             }
         )
