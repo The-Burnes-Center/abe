@@ -79,11 +79,43 @@ def summarize_and_categorize(key,content):
         #
         raw_response_body= response['body'].read().decode('utf-8') #Added decoding
         print(f"Raw llm output : {raw_response_body}")
+
+        # Parse the raw response body
         try:
             result = json.loads(raw_response_body)
         except json.JSONDecodeError:
-            print("Error: Response not in JSON format")
-            result = {"content": [{"text": raw_response_body}]}
+            print("Error: Response body is not valid JSON")
+            return {
+                "summary": "Error parsing response body",
+                "tags": {"category": "unknown"}
+            }
+
+        # Validate 'content' field
+        if 'content' not in result or not result['content']:
+            print("Error: 'content' field is missing or empty")
+            return {
+                "summary": "Error generating summary",
+                "tags": {"category": "unknown"}
+            }
+
+        # Extract and parse the text field
+        text_content = result['content'][0].get('text', '')
+        if not text_content:
+            print("Error: 'text' field in 'content' is empty")
+            return {
+                "summary": "Error generating summary",
+                "tags": {"category": "unknown"}
+            }
+
+        # Parse the nested JSON string in the 'text' field
+        try:
+            summary_and_tags = json.loads(text_content)
+        except json.JSONDecodeError:
+            print(f"Error parsing 'text' as JSON: {text_content}")
+            return {
+                "summary": "Error parsing nested JSON in 'text'",
+                "tags": {"category": "unknown"}
+            }
 
         summary_and_tags = json.loads(result['content'][0]['text'])
         # Validate the tags
