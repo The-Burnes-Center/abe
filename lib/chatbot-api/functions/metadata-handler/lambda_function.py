@@ -76,7 +76,8 @@ def summarize_and_categorize(key,content):
             })
         )
 
-        raw_response_body= response['body'].read()
+        #
+        raw_response_body= response['body'].read().decode('utf-8') #Added decoding
         print(f"Raw llm output : {raw_response_body}")
         try:
             result = json.loads(raw_response_body)
