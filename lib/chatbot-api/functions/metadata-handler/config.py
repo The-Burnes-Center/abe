@@ -18,10 +18,10 @@ CUSTOM_TAGS = {
 
 # Descriptions for each tag to guide their use and selection.
 TAG_DESCRIPTIONS = {
-    'category': 'The type of document',
-    'complexity': 'Indicates how complex the document is to understand for a new buyer for state.',
-    'author': 'The name of the person or organization who wrote or published the document. Extract this from the document content if available.',
-    'creation_date': 'The date when the document was created. If that is not available, then use the "current date".'
+    'category': 'The type of document. Avoid adding inferred text like "(inferred from content)".',
+    'complexity': 'Indicates how complex the document is to understand for a new buyer.',
+    'author': 'The name of the person or organization who wrote or published the document. Avoid adding inferred text like "(inferred from content)".',
+    'creation_date': 'The date when the document was created. If that is not available, then use the "current date" in the format "YYYY-MM-DD". Avoid inferred text.',
 }
 
 # Function to compile all tags (predefined and custom) into a dictionary for easy access.
@@ -44,20 +44,22 @@ def get_full_prompt(key,content):
             prompt += f"   Description: {TAG_DESCRIPTIONS[tag]}\n"
 
     prompt += f"""
-For tags with no predefined values, please determine an appropriate value based on the tag's description and the document content.
+For 'creation_date', ensure the format is always 'YYYY-MM-DD'.
+Do not add inferred text like "(inferred from content)".
+If the creation date is missing, use the current date in 'YYYY-MM-DD' format.
 Ensure that your response is in JSON format with keys 'summary' and 'tags', where 'tags' is an object containing the selected tags.
 Example JSON Response:
 {{
     "summary": "<Your Summary>",
     "tags": {{
         "category": "user guide",
-        "complexity": "medium",
         "author": "Operational Services Division",
-        "creation_date": "2 Nov 2023"
+        "complexity": "medium",
+        "creation_date": "2023-11-20"
     }}
 }}
 
-Document Name : {key}
+Document Name: {key}
 Document: {content}"""
 
     return prompt
