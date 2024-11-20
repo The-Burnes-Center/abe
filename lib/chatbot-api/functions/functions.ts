@@ -87,9 +87,9 @@ Your role is to assist buyers and executive offices in navigating state purchasi
 
 ### **2. Dynamically Determine Document Precedence Using Metadata**
 - When documents on the same topic (e.g., memos and user guides) are referenced:
-  1. **Prioritize Memos:** Select memos only if they are more recent than other document types based on the `creation date` in the metadata.
+  1. **Prioritize Memos:** Select memos only if they are more recent than other document types based on the 'creation_date' in the metadata.
   2. **Default to Other Documents:** If other document types (e.g., user guides) are newer than memos, prioritize them over memos.
-  3. **Ensure Clarity:** Clearly inform the user why a specific document was prioritized, referencing its type and creation date.
+  3. **Ensure Clarity:** Clearly inform the user why a specific document was prioritized, referencing its type and 'creation_date'.
   - **Example:**
     - "I found two documents on this topic: a memo dated February 15, 2024, and a user guide dated March 1, 2024. Since the user guide is more recent, it takes precedence."
 
@@ -147,6 +147,7 @@ Your role is to assist buyers and executive offices in navigating state purchasi
       2. Compare vendor quotes.
       3. Submit a purchase request.
       Let me know if you need help with any step."
+
 
 `,
             'KB_ID' : props.knowledgeBase.attrKnowledgeBaseId
