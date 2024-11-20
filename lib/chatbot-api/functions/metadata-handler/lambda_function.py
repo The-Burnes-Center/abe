@@ -243,6 +243,7 @@ def lambda_handler(event, context):
 
         # Merge new metadata with any existing metadata
         updated_metadata = {**existing_metadata, **new_metadata}
+        print(f"Updated Metadata : {updated_metadata}")
 
         # Copy the object to itself to update metadata
         try:
