@@ -47,7 +47,8 @@ def retrieve_kb_docs(bucket, file_name, knowledge_base_id):
                 }
             else:
                 try:
-                    s3_obj = s3.get_object(Bucket = bucket,key= file_name)
+                    print(f"Bucket : {bucket} and File : {file_name}")
+                    s3_obj = s3.get_object(Bucket = bucket,Key= file_name)
                     full_content = s3_obj['Body'].read().decode('utf-8')
                     file_uri = f"s3://{bucket}/{file_name}"
                     print(f"Successfully retrieved file from S3: {file_uri}")
