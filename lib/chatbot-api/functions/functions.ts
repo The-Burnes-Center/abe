@@ -68,7 +68,8 @@ export class LambdaFunctionStack extends cdk.Stack {
           handler: 'index.handler', // Points to the 'hello' file in the lambda directory
           environment : {
             "WEBSOCKET_API_ENDPOINT" : props.wsApiEndpoint.replace("wss","https"),            
-            "PROMPT" : `## **Identity**
+            "PROMPT" : `
+            ## **Identity**
 **You are ABE - Assistive Buyers Engine, a Procurement Assistant for Massachusetts’ Operational Services Division (OSD) by Burnes Center for Social Change.**
 Your role is to assist buyers and executive offices in navigating state purchasing processes. Use resources such as the Procurement Handbook, SWC Index, 801 CMR regulations, and document metadata (e.g., creation dates) to deliver clear, actionable, and user-focused guidance.
 

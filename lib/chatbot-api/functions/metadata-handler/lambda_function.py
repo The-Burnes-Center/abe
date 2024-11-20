@@ -14,7 +14,7 @@ kb_id = os.environ['KB_ID']
 
 
 # Using Knowledge Base to fetch document contents
-def retrieve_kb_docs(file_name, knowledge_base_id):
+def retrieve_kb_docs(bucket, file_name, knowledge_base_id):
     try:
         key,_ = os.path.splitext(file_name)
         print(f"Search query KB : {key}")
@@ -39,10 +39,29 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
                 if file_name in uri:
                     full_content.append(result['content']['text'])
                     file_uri = uri
-            return {
-                'content': full_content,
-                'uri': file_uri
-            }
+
+            if full_content:
+                return {
+                    'content': full_content,
+                    'uri': file_uri
+                }
+            else:
+                try:
+                    s3_obj = s3.get_object(Bucket = bucket,key= file_name)
+                    full_content = s3_obj['Body'].read().decode('utf-8')
+                    file_uri = f"s3://{bucket}/{file_name}"
+                    print(f"Successfully retrieved file from S3: {file_uri}")
+                    return {
+                        'content': [full_content],
+                        'uri': file_uri
+                    }
+                except Exception as e:
+                    print(f"Error reading file content from S3: {e}")
+                    return {
+                        'content': full_content,
+                        'uri': file_uri
+                    }
+
 
         else:
             return {
@@ -52,7 +71,7 @@ def retrieve_kb_docs(file_name, knowledge_base_id):
     except ClientError as e:
         print(f"Error fetching knowledge base docs: {e}")
         return {
-            'content': "Error occurred while searching the knowledge base.",
+            'content': [],
             'uri': None
         }
 
@@ -204,11 +223,11 @@ def lambda_handler(event, context):
 
         # Retrieve the document content from the knowledge base
         print(f"file : {key}, kb_id : {kb_id}")
-        document_content = retrieve_kb_docs(key, kb_id)
-        if "Error occurred" in document_content:
+        document_content = retrieve_kb_docs(bucket, key, kb_id)
+        if not document_content['content']:
             return {
-                'statusCode': 500,
-                'body': json.dumps("Error retrieving document content from knowledge base")
+                'statusCode': 404,
+                'body': json.dumps("No relevant content found")
             }
         else:
             print(f"Content : {document_content}")
@@ -243,6 +262,7 @@ def lambda_handler(event, context):
 
         # Merge new metadata with any existing metadata
         updated_metadata = {**existing_metadata, **new_metadata}
+        updated_metadata = {k.replace(" ", "_"): v for k, v in updated_metadata.items()} # Replace spaces in keys
         print(f"Updated Metadata : {updated_metadata}")
 
         # Copy the object to itself to update metadata
