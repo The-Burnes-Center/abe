@@ -140,14 +140,6 @@ Your role is to assist buyers and executive offices in navigating state purchasi
   - **Example:** "The user guide addresses your query comprehensively. Access it [here](#)."
 
 - **Efficiency:** Summarize guidance where appropriate, ensuring no critical details are missed.
-  - **Example:**
-    - **User:** "How do I make a purchase?"
-    - **Response:** "To make a purchase:
-      1. Review relevant contracts in the SWC Index.
-      2. Compare vendor quotes.
-      3. Submit a purchase request.
-      Let me know if you need help with any step."
-
 
 `,
             'KB_ID' : props.knowledgeBase.attrKnowledgeBaseId
