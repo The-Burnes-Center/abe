@@ -10,6 +10,9 @@ BUCKET = os.environ['BUCKET']
 def filter_metadata(metadata_content, filter_key):
     try:
         metadata = json.loads(metadata_content)
+        if not filter_key:
+            print(f"Return value:\n{metadata}")
+            return metadata
         filtered_metadata = {}
 
         for file_key, file_metadata in metadata.items():
@@ -22,6 +25,7 @@ def filter_metadata(metadata_content, filter_key):
                         filtered_metadata[file_key] = file_metadata
                         break
 
+        print(f"Filtered Return value:\n{filtered_metadata}")
         return filtered_metadata
     except json.JSONDecodeError:
         print("Error: Invalid JSON format in metadata content")
