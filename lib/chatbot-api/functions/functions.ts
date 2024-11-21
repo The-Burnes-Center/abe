@@ -271,6 +271,14 @@ metadataRetrievalFunction.addToRolePolicy(new iam.PolicyStatement({
 }));
 
 websocketAPIFunction.addEnvironment("METADATA_RETRIEVAL_FUNCTION", metadataRetrievalFunction.functionArn);
-
+websocketAPIFunction.addToRolePolicy(new iam.PolicyStatement({
+  effect: iam.Effect.ALLOW,
+  actions: [
+    'lambda:InvokeFunction',
+  ],
+  resources: [
+    metadataRetrievalFunction.functionArn,
+  ],
+}));
   }
 }
