@@ -144,9 +144,19 @@ def summarize_and_categorize(key,content):
         # Validate the tags
         all_tags = get_all_tags()
         for tag, value in summary_and_tags['tags'].items():
+
             if tag == "creation_date":
-                # Skip validation for creation_date
+                try:
+                    datetime.strptime(value, "%Y-%m-%d")
+                except ValueError:
+                    print(f"Invalid creation_date format for {key}, resetting to blank.")
+                    summary_and_tags['tags'][tag] = ""
                 continue
+
+            if not value or not value.strip():
+                summary_and_tags['tags'][tag] = "unknown"
+                continue
+
             if tag in all_tags:
                 if all_tags[tag] and value not in all_tags[tag]:
                     summary_and_tags['tags'][tag] = 'unknown'
