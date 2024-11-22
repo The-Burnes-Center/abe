@@ -251,7 +251,7 @@ export class LambdaFunctionStack extends cdk.Stack {
     this.metadataHandlerFunction = metadataHandlerFunction;
 
       metadataHandlerFunction.addEventSource(new S3EventSource(props.knowledgeBucket, {
-        events: [s3.EventType.OBJECT_CREATED],
+        events: [s3.EventType.OBJECT_CREATED, s3.EventType.OBJECT_REMOVED],
       }));
 
 const metadataRetrievalFunction = new lambda.Function(scope, 'MetadataRetrievalFunction', {
