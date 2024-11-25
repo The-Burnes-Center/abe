@@ -12,7 +12,7 @@ import { ApiClient } from "../../common/api-client/api-client";
 import ChatMessage from "./chat-message";
 import ChatInputPanel, { ChatScrollState } from "./chat-input-panel";
 import styles from "../../styles/chat.module.scss";
-import { CHATBOT_NAME } from "../../common/constants";
+import { CHATBOT_NAME, WELCOME_PAGE } from "../../common/constants";
 import { useNotifications } from "../notif-manager";
 
 export default function Chat(props: { sessionId?: string}) {
@@ -138,7 +138,7 @@ export default function Chat(props: { sessionId?: string}) {
       </SpaceBetween>
       <div className={styles.welcome_text}>
         {messageHistory.length == 0 && !session?.loading && (
-          <center>{CHATBOT_NAME}</center>
+          <center>{WELCOME_PAGE}</center>
         )}
         {session?.loading && (
           <center>

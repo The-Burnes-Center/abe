@@ -10,7 +10,7 @@ import {
 import BaseAppLayout from "../components/base-app-layout";
 import RouterButton from "../components/wrappers/router-button";
 import useOnFollow from "../common/hooks/use-on-follow";
-import { CHATBOT_NAME } from "../common/constants";
+import { CHATBOT_NAME, WELCOME_PAGE } from "../common/constants";
 
 export default function Welcome() {
   const onFollow = useOnFollow();

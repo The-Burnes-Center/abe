@@ -55,7 +55,9 @@ export default function ChatMessage(props: ChatMessageProps) {
       : "";
 
   const showSources = props.message.metadata?.Sources && (props.message.metadata.Sources as any[]).length > 0;
-  
+
+  console.log("Sources:", props.message.metadata.Sources);
+
 
   return (
     <div>
@@ -121,10 +123,25 @@ export default function ChatMessage(props: ChatMessageProps) {
           footer={
             showSources && (
               <SpaceBetween direction="horizontal" size="s">
-              <ButtonDropdown
+              {/* <ButtonDropdown
               items={(props.message.metadata.Sources as any[]).map((item) => { return {id: "id", disabled: false, text : item.title, href : item.uri, external : true, externalIconAriaLabel: "(opens in new tab)"}})}
         
-              >Sources</ButtonDropdown>              
+              >Sources</ButtonDropdown>               */}
+              <ButtonDropdown
+                items={(props.message.metadata.Sources as any[]).map((item) => {
+                  const s3Url = item.uri;
+                  const httpsUrl = s3Url.replace(/^s3:\/\//, "https://s3.amazonaws.com/");
+                  return {
+                    id: "id",
+                    disabled: false,
+                    text: item.title,
+                    href: httpsUrl,
+                    external: true,
+                    externalIconAriaLabel: "(opens in new tab)",
+                  };
+                })}
+              />
+
               </SpaceBetween>
             )
           }

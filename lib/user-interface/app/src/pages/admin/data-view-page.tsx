@@ -133,9 +133,9 @@ export default function DataPage() {
                   // dismissible
                   onDismiss={() => setShowUnsyncedAlert(false)}
                 >
-                  Some files have been added or modified since the last sync.
-                  Please sync the data to ensure the chatbot has the latest
-                  information.
+                  Some files may have been added or modified since the last sync.
+                  Please sync the data with the 'Sync data now' button to ensure that the chatbot
+                  has access to the latest information.
                 </Alert>
               )}
               </SpaceBetween>
