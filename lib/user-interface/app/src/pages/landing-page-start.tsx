@@ -14,7 +14,7 @@ const fadeIn = keyframes`
 
 const PageContainer = styled.div`
     position: relative;
-    background: linear-gradient(to bottom, #0c1622, rgb(2, 101, 200)); 
+    background: linear-gradient(to bottom, #0A2B48, #14558F); 
     width: 100vw;
     height: 100vh;
     box-sizing: border-box;
@@ -33,7 +33,7 @@ const Circle = styled.div`
     z-index: 0;
 
     &.darkBlue {
-        background-color: #05386B;
+        background-color: #0A2B48;
         width: 160vw;
         height: 95vw;
         bottom: -100%;
@@ -42,7 +42,7 @@ const Circle = styled.div`
     }
 
     &.lightBlue {
-        background-color: rgb(24, 123, 205, 0.8);
+        background-color: #14558F;
         width: 95vw;
         height: 50vw;
         bottom: -52%;
@@ -63,7 +63,7 @@ const HeaderBar = styled.div`
 `;
 
 const SkipButton = styled.div`
-    color: rgb(220, 220, 220);
+    color: rgb(240, 240, 240);
     font-size: 14px;
     transition: 0.3s ease-in-out all;
     font-weight: 600;
@@ -71,25 +71,38 @@ const SkipButton = styled.div`
 
     &:hover {
         cursor: pointer;
-        color: rgb(140, 140, 140);
+        color: rgb(160, 160, 160);
     }
 `;
 
 const TextContainer = styled.div`
-    font-size: 70px;
+    font-size: 38px;
     font-weight: 700;
-    color: rgb(220, 220, 220);
+    color: rgb(240, 240, 240);
     animation: ${fadeIn} 0.75s ease-in-out;
     z-index: 2;
     text-align: center;
-    padding: 0 90px 23px 90px;
+    padding: 0 90px;
+    margin-bottom: 5px;
     box-sizing: border-box;
     transition: 0.3s ease-in-out all;
+    line-height: 1.6;
+`;
 
+const ArrowContainer = styled.span`
+    font-size: 38px;
+    font-weight: 700;
+    color: rgb(240, 240, 240);
+    margin-bottom: 0px;
+    animation: ${fadeIn} 0.75s ease-in-out;
+    z-index: 2;
+    text-align: center;
+    padding-left: 10px;
+    transition: 0.3s ease-in-out all;
 
     &:hover {
         cursor: pointer;
-        color: rgb(140, 140, 140);
+        color: rgb(160, 160, 160);
     }
 `;
 
@@ -126,8 +139,10 @@ const LandingPageStart = () => {
             {/* <HeaderBar>
                 <SkipButton onClick={handleButtonClick}>Skip to Chat {'>'}</SkipButton>
             </HeaderBar> */}
-            <TextContainer onClick={handleButtonClick}>
-                Let's get started →
+            <TextContainer>
+                The more specific your questions, the better I can help you!
+                Ready to get started?
+                <ArrowContainer onClick={handleButtonClick}>→</ArrowContainer>
             </TextContainer>
             <Circle className="darkBlue" />
             <Circle className="lightBlue" />

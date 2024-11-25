@@ -91,7 +91,7 @@ export default function DataPage() {
           items={[
             {
               text: CHATBOT_NAME,
-              href: "/",
+              href: "/*",
             },
             {
               text: "View Data",

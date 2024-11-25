@@ -14,7 +14,7 @@ const fadeIn = keyframes`
 
 const PageContainer = styled.div`
     position: relative;
-    background: linear-gradient(to bottom, #0c1622, rgb(2, 101, 200)); 
+    background: linear-gradient(to bottom, #0A2B48, #14558F); 
     width: 100vw;
     height: 100vh;
     box-sizing: border-box;
@@ -33,7 +33,7 @@ const Circle = styled.div`
     z-index: 0;
 
     &.darkBlue {
-        background-color: #05386B;
+        background-color: #0A2B48;
         width: 160vw;
         height: 95vw;
         bottom: -100%;
@@ -42,7 +42,7 @@ const Circle = styled.div`
     }
 
     &.lightBlue {
-        background-color: rgb(24, 123, 205, 0.8);
+        background-color: #14558F;
         width: 95vw;
         height: 50vw;
         bottom: -52%;
@@ -69,32 +69,32 @@ const Icon = styled.img`
 `;
 
 const SkipButton = styled.div`
-    color: rgb(220, 220, 220);
-    font-size: 14px;
+    color: rgb(240, 240, 240);
+    font-size: 16px;
     transition: 0.3s ease-in-out all;
     font-weight: 600;
     animation: ${fadeIn} 0.75s ease-in-out;
 
     &:hover {
         cursor: pointer;
-        color: rgb(140, 140, 140);
+        color: rgb(160, 160, 160);
     }
 `;
 
 const TextContainer = styled.div`
-    font-size: 105px;
+    font-size: 90px;
     font-weight: 700;
-    color: rgb(220, 220, 220);
+    color: rgb(240, 240, 240);
     padding-bottom: 0px;
     animation: ${fadeIn} 0.75s ease-in-out;
     z-index: 2;
 `;
 
 const SmallTextContainer = styled.div`
-    font-size: 28px;
+    font-size: 30px;
     font-weight: 600;
-    color: rgb(220, 220, 220);
-    margin-top: -10px;
+    color: rgb(240, 240, 240);
+    margin-top: -2px;
     margin-bottom: 50px;
     animation: ${fadeIn} 0.75s ease-in-out;
     z-index: 2;
@@ -102,7 +102,7 @@ const SmallTextContainer = styled.div`
 
     &:hover {
         cursor: pointer;
-        color: rgb(140, 140, 140);
+        color: rgb(160, 160, 160);
     }
 `;
 

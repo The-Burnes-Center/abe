@@ -13,6 +13,7 @@ import HowToUse from "./pages/help/how-to-use";
 import LandingPage from "./pages/landing-page";
 import LandingPageInfo from "./pages/landing-page-info";
 import LandingPageStart from "./pages/landing-page-start";
+import TipsAndQuestions from "./pages/tips-and-questions";
 import { v4 as uuidv4 } from "uuid";
 import "./styles/app.scss";
 
@@ -42,6 +43,7 @@ function App() {
             <Route path="/chatbot">
               <Route path="playground/:sessionId" element={<Playground />} />
               <Route path="sessions" element={<SessionPage />} />
+              <Route path="tips" element={<TipsAndQuestions />} />
             </Route>
 
             {/* Admin Routes */}

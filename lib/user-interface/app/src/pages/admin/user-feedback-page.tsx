@@ -80,7 +80,7 @@ export default function UserFeedbackPage() {
           items={[
             {
               text: CHATBOT_NAME,
-              href: "/",
+              href: "/*",
             },
 
             {
