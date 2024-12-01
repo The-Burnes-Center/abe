@@ -9,9 +9,17 @@ BUCKET = os.environ['BUCKET']
 
 
 # Can be modified later to add filter to work well with agent setup
-def filter_metadata(metadata_content):
+def filter_metadata(metadata_content, category="memos"):
     try:
         metadata = json.loads(metadata_content)
+        if category:
+            filtered_metadata = {
+                k: v for k, v in metadata.items() 
+                if v.get('tag_category') == category
+            }
+            print(f"Returning filtered metadata for category '{category}':\n{filtered_metadata}")
+            return filtered_metadata
+        
         print(f"Returning full metadata:\n{metadata}")
         return metadata
     except json.JSONDecodeError:
@@ -22,15 +30,15 @@ def filter_metadata(metadata_content):
         return {}
 
 def lambda_handler(event, context):
-    filter_key = event.get('filter_key', '')
+    filter_key = event.get('filter_key', 'memos')  # Default to 'memos' if no filter provided
     try:
         response = s3.get_object(Bucket=BUCKET, Key='metadata.txt')
         metadata_content = response['Body'].read().decode('utf-8')
-        # Apply filtering logic here based on filter_key
-        full_metadata = filter_metadata(metadata_content)
+        # Apply filtering logic based on filter_key
+        filtered_metadata = filter_metadata(metadata_content, category=filter_key)
         return {
             'statusCode': 200,
-            'body': json.dumps({'metadata': full_metadata})
+            'body': json.dumps({'metadata': filtered_metadata})
         }
     except Exception as e:
         return {
