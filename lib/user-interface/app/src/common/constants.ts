@@ -28,8 +28,8 @@ export const languageList = [
 ];
 
 export const feedbackCategories = [
-  {label: "Example 1", value:"rp", disabled: false},
-  {label: "Example 2", value:"rf", disabled: false},  
+  {label: "General", value:"rp", disabled: false},
+  {label: "Procurement", value:"rf", disabled: false},  
 ]
 
 export const feedbackTypes = [
