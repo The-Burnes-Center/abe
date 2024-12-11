@@ -39,6 +39,10 @@ Clone the repository and check all pre-requisites.
 3. Configure Cognito using the CDK outputs
 
 
+## Architecture
+![Architecture Flow](https://github.com/user-attachments/assets/e36f3313-b345-4e0d-8403-31e9b0473854)
+
+
 ## Contributing
 
 Contributions are welcome! Please follow these steps:
@@ -49,4 +53,6 @@ Contributions are welcome! Please follow these steps:
 4. Push to the branch (`git push origin feature/YourFeature`).
 5. Open a pull request.
 
-
+## Developers
+  - [Prasoon Raj](https://www.linkedin.com/in/prasoon-raj-902/)
+  - Rui Ge
