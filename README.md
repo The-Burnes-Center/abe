@@ -39,6 +39,9 @@ Clone the repository and check all pre-requisites.
 3. Configure Cognito using the CDK outputs
 
 
+## Implementation Playbook
+[Playbook (Contains all required information)](https://drive.google.com/file/d/1VGy9SLVDIfwF0VHEA8sdsHzm85cuEeG_/view?usp=sharing)
+
 ## Architecture
 ![Architecture Flow](https://github.com/user-attachments/assets/e36f3313-b345-4e0d-8403-31e9b0473854)
 
