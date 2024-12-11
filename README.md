@@ -4,6 +4,8 @@
 
 The Assistive Buyers Engine (ABE) is a serverless application designed to assist users in navigating procurement processes effectively. Built using AWS CDK (Cloud Development Kit), it integrates AWS Cognito for user management and AWS Lambda for custom authorization logic. ABE provides clear, tailored guidance to users while maintaining a professional and approachable tone.
 
+## Implementation Playbook
+[Playbook (Contains all required information)](https://drive.google.com/file/d/1VGy9SLVDIfwF0VHEA8sdsHzm85cuEeG_/view?usp=sharing)
 
 ## Getting Started
 
@@ -37,10 +39,6 @@ Clone the repository and check all pre-requisites.
 1. Change the constants in lib/constants.ts!
 2. Deploy with `npm run build && npx cdk deploy [stack name from constants.ts]`
 3. Configure Cognito using the CDK outputs
-
-
-## Implementation Playbook
-[Playbook (Contains all required information)](https://drive.google.com/file/d/1VGy9SLVDIfwF0VHEA8sdsHzm85cuEeG_/view?usp=sharing)
 
 ## Architecture
 ![Architecture Flow](https://github.com/user-attachments/assets/e36f3313-b345-4e0d-8403-31e9b0473854)
