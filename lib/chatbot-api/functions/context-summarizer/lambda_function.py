@@ -42,7 +42,7 @@ class ConversationSummary(BaseModel):
 SUMMARY_SCHEMA = ConversationSummary.model_json_schema()
 
 SYSTEM_PROMPT = (
-    "You are a conversation summarizer for a procurement chatbot. "
+    "You are a conversation summarizer for an AI assistant. "
     "Summarize the conversation into a structured JSON object that preserves all key facts, "
     "questions asked, answers given, data retrieved from tools, and the user's current focus. "
     "Be thorough but concise. Output ONLY valid JSON matching this schema:\n"

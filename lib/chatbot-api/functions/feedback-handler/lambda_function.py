@@ -403,7 +403,7 @@ def analyze_feedback_record(record: dict[str, Any], trace: dict[str, Any]) -> di
         }
 
     system_prompt = """
-You analyze user feedback for an internal government procurement chatbot.
+You analyze user feedback for an internal AI assistant.
 Return JSON only with these keys:
 - summary
 - likelyRootCause
@@ -1064,7 +1064,7 @@ def ai_suggest_prompt(event: dict[str, Any], version_id: str):
             }
         ]
 
-    system_prompt = """You are an expert prompt engineer editing the system prompt for Sonar, an internal RAG chatbot that helps government procurement professionals.
+    system_prompt = """You are an expert prompt engineer editing the system prompt for Sonar, an internal RAG chatbot that helps users find answers grounded in a knowledge base.
 
 Your job: apply TARGETED, MINIMAL edits to the current prompt based on user feedback. Do NOT rewrite from scratch. Preserve the original structure, tone, section ordering, and wording as much as possible. Only change lines directly related to the feedback issues.
 

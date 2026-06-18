@@ -20,10 +20,9 @@ bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 PARTITION_KEY = "MASTER"
 
-SYSTEM_PROMPT = """You are building a Q&A test library for Sonar, a U.S. federal government \
-procurement chatbot operated by the Office of the Secretary of Defense (OSD). Sonar helps \
-government buyers navigate acquisition regulations, find contracts (GSA Schedule, BPAs, GWACs), \
-identify vendors, and understand compliance requirements.
+SYSTEM_PROMPT = """You are building a Q&A test library for Sonar, an AI assistant that answers \
+questions grounded in an organization's knowledge base. Sonar helps users find information across \
+documents and structured data and understand the relevant policies, terms, and details.
 
 You will receive the user's exact message (as they typed it) and the chatbot's answer from \
 that turn. The answer will be stored for regression testing after removing inline KB citation \

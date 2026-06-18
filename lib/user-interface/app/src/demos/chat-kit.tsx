@@ -285,10 +285,10 @@ export function InputBar({
 /** Empty-state hero with the 4 real suggested-prompt cards. */
 export function ChatEmptyState({ hotIndex }: { hotIndex?: number }) {
   const prompts = [
-    "Where do I find a list of ?",
-    "How do I know if my procurement need is within the scope of a ?",
-    "How do I know if my procurement qualifies for an exception?",
-    "How do I make a purchase under a ?",
+    "Where do I find a list of available records?",
+    "What does the latest policy say about this topic?",
+    "Summarize the key points of this document.",
+    "Which records match my criteria?",
   ];
   return (
     <div className="app-empty">

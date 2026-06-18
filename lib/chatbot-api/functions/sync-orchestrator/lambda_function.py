@@ -120,7 +120,7 @@ def _is_placeholder_summary(summary: str) -> bool:
       the knowledge base." to the model as the document, and the model wrote a
       fluent paragraph about the document being unretrievable. Those summaries
       all reference the knowledge base plus a retrieval-failure phrase, which
-      real procurement-document summaries don't.
+      real document summaries don't.
     """
     s = (summary or "").strip().lower()
     if not s:

@@ -45,17 +45,16 @@ PLACEHOLDER_SUMMARIES = [
     "Error generating summary",
     "Error parsing nested JSON in 'text'",
     "No relevant document content was found in the knowledge base for the "
-    "file 'CUG_ENE53.pdf'. The document could not be retrieved or analyzed, "
+    "file 'guide_ENE53.pdf'. The document could not be retrieved or analyzed, "
     "as no text or data was available for processing.",
     "The document '801cmr21.pdf' could not be retrieved or analyzed as no "
     "relevant content was found in the knowledge base.",
 ]
 
 REAL_SUMMARY = (
-    "This document is a Contract User Guide for ITT72 Category 1 Public "
-    "Safety Grade Wireless (PSGW), a Massachusetts Statewide Contract for "
-    "Cellular Services & Devices. It covers the contract term, eligible "
-    "organizations, pricing options, and purchasing procedures via COMMBUYS."
+    "This document is a user guide for the ENE53 wireless service catalog. "
+    "It covers the term, eligible organizations, pricing options, and "
+    "ordering procedures."
 )
 
 

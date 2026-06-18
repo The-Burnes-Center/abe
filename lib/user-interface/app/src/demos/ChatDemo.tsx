@@ -1,5 +1,5 @@
 /**
- * ChatDemo — flagship flow: a procurement question → agentic tool use
+ * ChatDemo — flagship flow: a user question → agentic tool use
  * (query_db over the Bedrock Knowledge Base) → streamed answer with [N]
  * citations → expandable Sources panel.
  *

@@ -78,12 +78,12 @@ function renderMessage(message: ReturnType<typeof makeAiMessage | typeof makeHum
 
 describe("ChatMessage", () => {
   it("renders AI message markdown content", () => {
-    renderMessage(makeAiMessage("**Procurement** is handled by OSD."));
+    renderMessage(makeAiMessage("**Billing** is handled by Finance."));
 
-    const article = screen.getByRole("article", { name: /message from abe/i });
+    const article = screen.getByRole("article", { name: /message from/i });
     expect(article).toBeInTheDocument();
     // ReactMarkdown renders **text** as <strong>
-    expect(article.querySelector("strong")).toHaveTextContent("Procurement");
+    expect(article.querySelector("strong")).toHaveTextContent("Billing");
   });
 
   it("renders citation badge for a [N] reference that matches a source", () => {
@@ -111,10 +111,10 @@ describe("ChatMessage", () => {
   });
 
   it("renders a human message with the user's text", () => {
-    renderMessage(makeHumanMessage("What vendors are on statewide contract?"));
+    renderMessage(makeHumanMessage("What's covered in the employee handbook?"));
 
     expect(
       screen.getByRole("article", { name: /message from you/i })
-    ).toHaveTextContent("What vendors are on statewide contract?");
+    ).toHaveTextContent("What's covered in the employee handbook?");
   });
 });

@@ -1,5 +1,5 @@
 /**
- * ExcelDemo — structured contract lookup: a procurement question → agentic tool
+ * ExcelDemo — structured contract lookup: a user question → agentic tool
  * use (query_excel_index over the DynamoDB Excel index) → streamed answer that
  * resolves to a clean markdown TABLE, visibly different from semantic RAG (which
  * returns prose). The single Excel source carries excel:true so the Sources panel

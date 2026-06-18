@@ -30,31 +30,28 @@ const prompts = [
 
 const sampleQuestions = [
   {
-    topic: "Procurement Basics",
+    topic: "Getting started",
     items: [
-      "How do I get started with the procurement process?",
-      "What is considered a large procurement, and what rules apply?",
-      "What is the difference between a Request for Response (RFR) and a Request for Quote (RFQ)?",
-      "What are Statewide Contracts, and how do they work?",
+      "What kinds of questions can you help with?",
+      "What documents and data do you have access to?",
+      "How do I get the most accurate answers?",
     ],
   },
   {
-    topic: "Contracts and Vendors",
+    topic: "Finding information",
     items: [
-      "Is the good or service I need available on a Statewide Contract?",
-      "What Statewide Contracts are available for [product or service]?",
-      "Which vendors are on the [contract name] contract?",
-      "Where can I find the price list for the [contract name] contract?",
-      "Can my agency buy from the [contract name] contract?",
-      "Is [company name] a certified small business?",
+      "Summarize the key points of [document name].",
+      "What does our policy say about [topic]?",
+      "Where can I find information about [subject]?",
+      "Which records match [criteria]?",
     ],
   },
   {
-    topic: "Training and Resources",
+    topic: "Going deeper",
     items: [
-      "Where can I download the Best Value Procurement Handbook?",
-      "Where can I find job aids for executive agency buyers?",
-      "What training and resources are available for new buyers?",
+      "Show me the sources behind that answer.",
+      "Can you explain that in simpler terms?",
+      "What related documents should I look at next?",
     ],
   },
 ];
@@ -69,7 +66,7 @@ function TipsTab() {
       <Paper sx={{ p: 3 }}>
         <Typography variant="body1" color="text.secondary" sx={{ lineHeight: 1.7 }}>
           Learn how to phrase your questions effectively and explore examples to guide
-          your interactions for quick and accurate procurement assistance.
+          your interactions for quick and accurate answers.
         </Typography>
       </Paper>
 
@@ -201,9 +198,9 @@ function AboutTab() {
           How It Works
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Sonar uses Retrieval-Augmented Generation (RAG) to search through official
-          procurement documents and provide contextually relevant answers. Source
-          documents are linked with each response so you can verify the information.
+          Sonar uses Retrieval-Augmented Generation (RAG) to search through your
+          organization's documents and data and provide contextually relevant answers.
+          Source documents are linked with each response so you can verify the information.
         </Typography>
       </Paper>
 
@@ -213,8 +210,8 @@ function AboutTab() {
         </Typography>
         <Typography variant="body1" color="text.secondary">
           Sonar provides guidance based on available documentation. Always verify
-          critical procurement decisions with official policies and consult with
-          your procurement team for complex situations.
+          critical decisions against the official source documents, and consult the
+          appropriate team for complex situations.
         </Typography>
       </Paper>
     </Stack>
