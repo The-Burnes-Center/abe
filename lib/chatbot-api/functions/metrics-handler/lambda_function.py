@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import boto3
 from boto3.dynamodb.conditions import Key
 
-from abe_utils import DecimalJSONEncoder, get_logger, is_admin_request, json_response, safe_int
+from common_utils import DecimalJSONEncoder, get_logger, is_admin_request, json_response, safe_int
 
 
 DDB_TABLE_NAME = os.environ["DDB_TABLE_NAME"]

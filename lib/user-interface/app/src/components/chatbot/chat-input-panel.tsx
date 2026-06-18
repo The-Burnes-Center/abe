@@ -13,15 +13,18 @@ import {
   Dispatch,
   SetStateAction,
   forwardRef,
+  useCallback,
   useContext,
   useEffect,
   useRef,
   useState,
 } from "react";
-import SpeechRecognition, {
-  useSpeechRecognition,
-} from "react-speech-recognition";
-import { Auth } from "aws-amplify";
+import {
+  useTranscribeDictation,
+  transcribeDictationSupported,
+} from "../../hooks/useTranscribeDictation";
+import { AppContext } from "../../common/app-context";
+import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import TextareaAutosize from "react-textarea-autosize";
 import styles from "../../styles/chat.module.scss";
 
@@ -52,25 +55,57 @@ export interface ChatInputPanelProps {
 const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
   function ChatInputPanel(props, ref) {
   const { setNeedsRefresh } = useContext(SessionRefreshContext);
-  const { transcript, listening, browserSupportsSpeechRecognition } =
-    useSpeechRecognition();
+  const appConfig = useContext(AppContext);
   const [state, setState] = useState<ChatInputState>({
     value: "",
   });
   const { addNotification } = useNotifications();
   const messageHistoryRef = useRef<ChatBotHistoryItem[]>([]);
   const handleSendRef = useRef<(msg?: string) => Promise<void>>();
+  // Text already in the box when dictation started, so live speech is appended
+  // to it rather than overwriting it.
+  const dictationBaseRef = useRef("");
   const { send } = useWebSocketChat();
+
+  // Live dictation via Amazon Transcribe streaming. The backend mints a
+  // short-lived presigned WebSocket URL (no AWS creds in the browser); audio
+  // streams browser→Transcribe directly. Works on the OSD network, unlike the
+  // old browser Web Speech API which routed audio through Google.
+  const dictationSupported = transcribeDictationSupported();
+  const getPresignedUrl = useCallback(async () => {
+    const auth = await Utils.authenticate();
+    const base = (appConfig?.httpEndpoint ?? "").replace(/\/$/, "");
+    const res = await fetch(`${base}/transcribe-stream-url`, {
+      headers: { Authorization: auth },
+    });
+    if (!res.ok) throw new Error("Failed to get dictation URL");
+    return res.json();
+  }, [appConfig]);
+  const {
+    listening,
+    toggle: toggleDictation,
+    stop: stopDictation,
+  } = useTranscribeDictation({
+    getPresignedUrl,
+    onTranscript: (text) => {
+      const base = dictationBaseRef.current;
+      setState((s) => ({ ...s, value: base ? `${base} ${text}` : text }));
+    },
+    onError: (message) => addNotification("error", message),
+  });
 
   useEffect(() => {
     messageHistoryRef.current = props.messageHistory;
   }, [props.messageHistory]);
 
-  useEffect(() => {
-    if (transcript) {
-      setState((s) => ({ ...s, value: transcript }));
+  // Capture whatever's already typed before starting so dictation appends to
+  // it rather than replacing it; toggling again stops the stream.
+  const handleToggleDictation = () => {
+    if (!listening) {
+      dictationBaseRef.current = state.value.trim();
     }
-  }, [transcript]);
+    toggleDictation();
+  };
 
   const handleSendMessage = async (overrideMessage?: string) => {
     if (props.running) return;
@@ -79,14 +114,17 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
     let displayName = "";
     let agency = "";
     try {
-      const user = await Auth.currentAuthenticatedUser();
+      const user = await getCurrentUser();
       username = user.username;
-      const rawName = user?.signInUserSession?.idToken?.payload?.name ?? "";
+      const session = await fetchAuthSession();
+      const rawName = (session.tokens?.idToken?.payload?.name as string) ?? "";
       const identity = Utils.parseUserIdentity(rawName);
       displayName = identity.displayName;
       agency = identity.agency;
     } catch {
-      addNotification("error", "Please sign in to continue.");
+      // Session is gone/expired — bounce the user to re-authenticate rather than
+      // stranding them with a notification they can't act on.
+      Utils.redirectToLogin();
       return;
     }
     if (!username) return;
@@ -99,6 +137,9 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
     if (!overrideMessage) {
       setState({ value: "" });
     }
+    // Stop any in-progress dictation so it doesn't bleed into the next message.
+    if (listening) stopDictation();
+    dictationBaseRef.current = "";
 
     props.setRunning(true);
     props.setStreamingStatus({ text: "", active: false });
@@ -237,17 +278,13 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
             aria-multiline="true"
           />
           <Stack direction="row" spacing={0.5} alignItems="center" sx={{ ml: 1 }}>
-            {browserSupportsSpeechRecognition && (
+            {dictationSupported && (
               <Tooltip title={listening ? "Stop dictation" : "Start dictation"}>
                 <IconButton
                   size="small"
                   aria-label={listening ? "Stop dictation" : "Start dictation"}
                   aria-pressed={listening}
-                  onClick={() =>
-                    listening
-                      ? SpeechRecognition.stopListening()
-                      : SpeechRecognition.startListening()
-                  }
+                  onClick={handleToggleDictation}
                   color={listening ? "primary" : "default"}
                 >
                   {listening ? (
@@ -265,6 +302,14 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
                     props.onStop?.();
                     props.setRunning(false);
                     props.setStreamingStatus({ text: "", active: false });
+                    // The answer arrives in one frame at the end, so on stop the
+                    // assistant bubble is still empty — drop it instead of leaving
+                    // a blank response on screen.
+                    const hist = props.messageHistory;
+                    const last = hist[hist.length - 1];
+                    if (last && last.type === ChatBotMessageType.AI && !last.content?.trim()) {
+                      props.setMessageHistory(hist.slice(0, -1));
+                    }
                   }}
                   aria-label="Stop response"
                   color="error"

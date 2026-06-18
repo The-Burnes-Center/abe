@@ -26,7 +26,6 @@
  *     - UploadS3TestCasesFilesHandlerFunction — Uploads test case files
  *     - EvalResultsHandlerFunction      — Reads/manages evaluation results + can stop runs
  *     - TestLibraryHandlerFunction      — CRUD for reusable test cases
- *     - FeedbackToTestLibraryEnqueue    — Enqueues positive feedback for test case generation
  *     - FeedbackToTestLibraryProcess    — SQS consumer: LLM-rewrites feedback into test cases
  *     - StepFunctionsStack              — Orchestrates batch RAGAS evaluation
  *
@@ -122,9 +121,9 @@ export class LambdaFunctionStack extends Construct {
   public readonly excelIndexQueryFunction: lambda.Function;
   public readonly excelIndexApiFunction: lambda.Function;
   public readonly testLibraryFunction: lambda.Function;
-  public readonly feedbackToTestLibraryEnqueueFunction: lambda.Function;
   public readonly feedbackToTestLibraryProcessFunction: lambda.Function;
   public readonly sourcePresignFunction: lambda.Function;
+  public readonly transcribePresignFunction: lambda.Function;
   public readonly syncOrchestratorFunction: lambda.Function;
   public readonly syncScheduleFunction: lambda.Function;
 
@@ -478,6 +477,11 @@ export class LambdaFunctionStack extends Construct {
       handler: 'lambda_function.lambda_handler',
       layers: [pythonCommonLayer],
       timeout: cdk.Duration.seconds(30),
+      // A backfill sweep or bulk sync can fire one async invocation per
+      // document (200+ at once), each calling Bedrock. Cap concurrency so
+      // those sweeps drain gradually instead of tripping Bedrock throttles;
+      // the Lambda service automatically retries throttled async events.
+      reservedConcurrentExecutions: 5,
       environment: {
         "BUCKET": props.knowledgeBucket.bucketName,
         "KB_ID": props.knowledgeBase.attrKnowledgeBaseId,
@@ -906,29 +910,11 @@ testLibraryFunction.addToRolePolicy(new iam.PolicyStatement({
 }));
 this.testLibraryFunction = testLibraryFunction;
 
-// Feedback-to-test-library pipeline: two Lambdas connected by SQS.
-// Enqueue: sends positive feedback messages to the SQS queue.
-const feedbackToTestLibraryEnqueueFunction = new lambda.Function(scope, 'FeedbackToTestLibraryEnqueueFunction', {
-  ...LAMBDA_DEFAULTS,
-  runtime: lambda.Runtime.PYTHON_3_12,
-  code: lambda.Code.fromAsset(path.join(__dirname, 'llm-eval/feedback-to-test-library')),
-  handler: 'enqueue.lambda_handler',
-  layers: [pythonCommonLayer],
-  environment: {
-    "QUEUE_URL": props.feedbackToTestLibraryQueue.queueUrl,
-  },
-  timeout: cdk.Duration.seconds(15),
-});
-feedbackToTestLibraryEnqueueFunction.addToRolePolicy(new iam.PolicyStatement({
-  effect: iam.Effect.ALLOW,
-  actions: ['sqs:SendMessage'],
-  resources: [props.feedbackToTestLibraryQueue.queueArn],
-}));
-this.feedbackToTestLibraryEnqueueFunction = feedbackToTestLibraryEnqueueFunction;
-
-// Process: SQS consumer that rewrites the Q&A pair via LLM and inserts
-// into TestLibraryTable. 90s timeout for LLM calls; 256 MB for payloads.
-// Batch size 1 ensures each feedback item gets individual LLM attention.
+// Feedback-to-test-library pipeline: the feedback handler enqueues admin-
+// promoted positive feedback to the SQS queue (see promote_to_candidate); this
+// consumer rewrites the Q&A pair via LLM and inserts into TestLibraryTable. 90s
+// timeout for LLM calls; 256 MB for payloads. Batch size 1 ensures each
+// feedback item gets individual LLM attention.
 const feedbackToTestLibraryProcessFunction = new lambda.Function(scope, 'FeedbackToTestLibraryProcessFunction', {
   ...LAMBDA_DEFAULTS,
   runtime: lambda.Runtime.PYTHON_3_12,
@@ -983,6 +969,35 @@ sourcePresignFunction.addToRolePolicy(new iam.PolicyStatement({
   resources: [props.knowledgeBucket.bucketArn + '/*'],
 }));
 this.sourcePresignFunction = sourcePresignFunction;
+
+// Mints short-lived presigned Amazon Transcribe streaming WebSocket URLs for
+// the chat input's dictation mic (the browser Web Speech API is blocked on the
+// OSD network, so audio streams to Transcribe instead). 10s timeout — it only
+// signs a URL. The browser opens a *WebSocket* stream, so the role needs
+// transcribe:StartStreamTranscriptionWebSocket — the HTTP/2
+// StartStreamTranscription action does NOT authorize the WebSocket endpoint.
+// Neither action has resource-level ARNs, so the resource must be "*" (covered
+// by the stack's Resource::* nag suppression).
+const transcribePresignFunction = new lambda.Function(scope, 'TranscribePresignFunction', {
+  ...LAMBDA_DEFAULTS,
+  runtime: lambda.Runtime.NODEJS_20_X,
+  code: lambda.Code.fromAsset(path.join(__dirname, 'transcribe-presign')),
+  handler: 'index.handler',
+  environment: {
+    "LANGUAGE_CODE": "en-US",
+    "SAMPLE_RATE": "16000",
+  },
+  timeout: cdk.Duration.seconds(10),
+});
+transcribePresignFunction.addToRolePolicy(new iam.PolicyStatement({
+  effect: iam.Effect.ALLOW,
+  actions: [
+    'transcribe:StartStreamTranscription',
+    'transcribe:StartStreamTranscriptionWebSocket',
+  ],
+  resources: ['*'],
+}));
+this.transcribePresignFunction = transcribePresignFunction;
 
 this.stepFunctionsStack = new StepFunctionsStack(scope, 'StepFunctionsStack', {
   knowledgeBase: props.knowledgeBase,
@@ -1127,6 +1142,27 @@ const syncSchedule = new scheduler.CfnSchedule(scope, 'WeeklySyncSchedule', {
   },
 });
 syncSchedule.addDependency(scheduleGroup);
+
+// Hourly metadata backfill. KB ingestion completes minutes-to-hours after the
+// S3 upload events have already fired, so document summaries can't be
+// generated at upload time (no chunks exist in the KB yet). This schedule
+// re-invokes the orchestrator in backfill-only mode -- no staging moves, no
+// ingestion job, no sync-history record -- to summarize any document still
+// missing a real summary once its chunks have been ingested. A no-op when
+// every document already has one.
+const metadataBackfillSchedule = new scheduler.CfnSchedule(scope, 'MetadataBackfillSchedule', {
+  name: `${cdk.Stack.of(scope).stackName}-MetadataBackfillSchedule`,
+  groupName: scheduleGroup.name!,
+  scheduleExpression: 'rate(1 hour)',
+  state: 'ENABLED',
+  flexibleTimeWindow: { mode: 'OFF' },
+  target: {
+    arn: syncOrchestratorFunction.functionArn,
+    roleArn: schedulerRole.roleArn,
+    input: JSON.stringify({ backfillOnly: true }),
+  },
+});
+metadataBackfillSchedule.addDependency(scheduleGroup);
 
 // Admin API for viewing/updating the sync schedule (enable, disable,
 // change cron expression) and viewing sync history.

@@ -24,7 +24,7 @@ import os
 import boto3
 from pydantic import BaseModel, Field, ValidationError
 
-from abe_utils import extract_json_object, get_logger
+from common_utils import extract_json_object, get_logger
 
 MODEL_ID = os.environ.get("FAST_MODEL_ID", "us.anthropic.claude-3-5-haiku-20241022-v1:0")
 

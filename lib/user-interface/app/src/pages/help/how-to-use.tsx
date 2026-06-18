@@ -17,9 +17,10 @@ import ExpandLess from "@mui/icons-material/ExpandLess";
 import { Link as RouterLink } from "react-router-dom";
 import { CHATBOT_NAME } from "../../common/constants";
 import { useDocumentTitle } from "../../common/hooks/use-document-title";
+import DemoVideo from "../../components/onboarding/demo-video";
 
 const prompts = [
-  { title: "Spell out acronyms", details: "Avoid using abbreviations. For example, instead of 'RFP,' use 'Request for Proposal'." },
+  { title: "Spell out acronyms", details: "Avoid abbreviations. For example, write 'Request for Proposal' instead of 'RFP'." },
   { title: "Be specific and concise", details: "Provide clear and precise questions to help Sonar give accurate responses." },
   { title: "Use keywords", details: "Include important terms in your query, such as 'vendor' or 'contract'." },
   { title: "Ask one question at a time", details: "Breaking down complex questions ensures better answers." },
@@ -29,30 +30,31 @@ const prompts = [
 
 const sampleQuestions = [
   {
-    topic: "General Procurement Questions",
+    topic: "Procurement Basics",
     items: [
-      "How can I get started with the procurement process?",
-      "What is large procurement?",
-      "What is the difference between an RFP and an RFQ?",
-      "What are statewide contracts, and how do they work?",
+      "How do I get started with the procurement process?",
+      "What is considered a large procurement, and what rules apply?",
+      "What is the difference between a Request for Response (RFR) and a Request for Quote (RFQ)?",
+      "What are Statewide Contracts, and how do they work?",
     ],
   },
   {
     topic: "Contracts and Vendors",
     items: [
-      "What contracts are available for [some product or service]?",
-      "Where can I find a list of all vendors on this contract?",
-      "Where is the price list for a certain contract?",
-      "Can my agency use this contract?",
-      "How can I check if this company is a small business?",
+      "Is the good or service I need available on a Statewide Contract?",
+      "What Statewide Contracts are available for [product or service]?",
+      "Which vendors are on the [contract name] contract?",
+      "Where can I find the price list for the [contract name] contract?",
+      "Can my agency buy from the [contract name] contract?",
+      "Is [company name] a certified small business?",
     ],
   },
   {
     topic: "Training and Resources",
     items: [
-      "Where can I download the best value procurement handbook?",
-      "Where can I locate job aids for executive agency buyers?",
-      "What training or resources are available for new buyers?",
+      "Where can I download the Best Value Procurement Handbook?",
+      "Where can I find job aids for executive agency buyers?",
+      "What training and resources are available for new buyers?",
     ],
   },
 ];
@@ -69,6 +71,16 @@ function TipsTab() {
           Learn how to phrase your questions effectively and explore examples to guide
           your interactions for quick and accurate procurement assistance.
         </Typography>
+      </Paper>
+
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="h4" component="h2" sx={{ mb: 1 }}>
+          See ABE in action
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          A quick walkthrough of asking a question and getting an answer with sources.
+        </Typography>
+        <DemoVideo />
       </Paper>
 
       <Paper sx={{ p: 3 }}>
@@ -115,8 +127,13 @@ function TipsTab() {
       </Paper>
 
       <Paper sx={{ p: 3 }}>
-        <Typography variant="h4" component="h2" sx={{ mb: 2 }}>
+        <Typography variant="h4" component="h2" sx={{ mb: 1 }}>
           Sample Questions
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          These are examples to get you started. Replace anything in [brackets] with
+          your own details &mdash; like the product, contract, or company you&apos;re
+          asking about.
         </Typography>
         <Divider />
         <List disablePadding>
@@ -172,10 +189,10 @@ function AboutTab() {
           Sonar
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Sonar is an AI-powered assistant designed for the Massachusetts Executive Office
-          to provide guidance on state procurement processes. It uses advanced language
-          models and a curated knowledge base of procurement documentation to help users
-          find answers quickly and accurately.
+          Sonar is an AI-powered assistant that answers questions from your
+          organization's knowledge base. It uses advanced language models and
+          retrieval over your curated documents to help users find answers
+          quickly and accurately, with links to the sources.
         </Typography>
       </Paper>
 

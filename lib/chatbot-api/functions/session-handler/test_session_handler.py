@@ -89,9 +89,9 @@ def _make_table(dynamodb):
 
 def _load_lf(dynamodb_resource):
     """Load lambda_function.py and patch its module-level DynamoDB resource/table."""
-    # Evict stale cached abe_utils sub-modules
+    # Evict stale cached common_utils sub-modules
     for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith("abe_utils"):
+        if mod_name.startswith("common_utils"):
             sys.modules.pop(mod_name)
 
     spec = importlib.util.spec_from_file_location("session_handler_lf", _LF_PATH)

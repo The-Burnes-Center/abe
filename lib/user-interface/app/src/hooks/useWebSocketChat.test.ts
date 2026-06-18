@@ -26,6 +26,12 @@ vi.mock("../components/chatbot/utils", () => ({
 }));
 
 class MockWebSocket {
+  // Mirror the real WebSocket readyState constants so production code that
+  // checks `WebSocket.OPEN` / `WebSocket.CONNECTING` behaves the same here.
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
   static lastInstance: MockWebSocket | null = null;
   url: string;
   readyState = 0;
@@ -86,6 +92,7 @@ const mockAppConfig: AppConfig = {
       domain: "test.auth.com",
       scope: ["openid"],
       redirectSignIn: "http://localhost:3000",
+      redirectSignOut: "http://localhost:3000",
       responseType: "code",
     },
   },
@@ -206,6 +213,48 @@ describe("useWebSocketChat", () => {
     expect(onStreamChunk).toHaveBeenLastCalledWith("Hello world");
   });
 
+  it("streams text deltas, then replaces them with the citation-finalized text", async () => {
+    const onStreamChunk = vi.fn();
+    const { result } = renderHook(() => useWebSocketChat(), { wrapper });
+
+    await act(async () => {
+      await result.current.send(makeOpts({ onStreamChunk }));
+    });
+
+    const ws = MockWebSocket.lastInstance!;
+    act(() => {
+      ws.simulateOpen();
+      ws.simulateMessage("Hello ");
+      ws.simulateMessage("world");
+      // End-of-turn flush: raw text replaced by the citation-finalized version.
+      ws.simulateMessage("!<|REPLACE|>!Hello world [1]");
+    });
+
+    expect(onStreamChunk).toHaveBeenNthCalledWith(1, "Hello ");
+    expect(onStreamChunk).toHaveBeenNthCalledWith(2, "Hello world");
+    expect(onStreamChunk).toHaveBeenLastCalledWith("Hello world [1]");
+  });
+
+  it("clears streamed text on an empty REPLACE frame (intermediate tool-round text)", async () => {
+    const onStreamChunk = vi.fn();
+    const { result } = renderHook(() => useWebSocketChat(), { wrapper });
+
+    await act(async () => {
+      await result.current.send(makeOpts({ onStreamChunk }));
+    });
+
+    const ws = MockWebSocket.lastInstance!;
+    act(() => {
+      ws.simulateOpen();
+      ws.simulateMessage("let me check that");   // intermediate pre-tool text
+      ws.simulateMessage("!<|REPLACE|>!");         // cleared on tool transition
+      ws.simulateMessage("The answer is 42.");     // final answer streams fresh
+    });
+
+    expect(onStreamChunk).toHaveBeenCalledWith("");
+    expect(onStreamChunk).toHaveBeenLastCalledWith("The answer is 42.");
+  });
+
   it("calls onComplete after streamed text plus the EOF marker followed by a clean close", async () => {
     const onComplete = vi.fn();
     const { result } = renderHook(() => useWebSocketChat(), { wrapper });
@@ -224,6 +273,69 @@ describe("useWebSocketChat", () => {
     });
 
     expect(onComplete).toHaveBeenCalledWith(true);
+  });
+
+  it("completes via the EOF grace timer even if the server never closes the socket", async () => {
+    // Regression: the backend sends EOF + metadata, then keeps the socket open
+    // while it does post-response work (title generation, session save). If
+    // that work is slow or fails, the close never arrives — the UI must still
+    // leave the streaming state instead of hanging on the stop button.
+    const onComplete = vi.fn();
+    const { result } = renderHook(() => useWebSocketChat(), { wrapper });
+
+    vi.useFakeTimers();
+    await act(async () => {
+      await result.current.send(makeOpts({ onComplete }));
+    });
+
+    const ws = MockWebSocket.lastInstance!;
+    act(() => {
+      ws.simulateOpen();
+      ws.simulateMessage("Hello world");
+      ws.simulateMessage("!<|EOF_STREAM|>!");
+      ws.simulateMessage(
+        JSON.stringify([{ chunkIndex: 0, title: "Doc", uri: "s3://x/Doc.pdf" }])
+      );
+    });
+
+    // No close frame from the server. Completion must come from the grace timer.
+    expect(onComplete).not.toHaveBeenCalled();
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(onComplete).toHaveBeenCalledWith(true);
+    expect(ws.readyState).toBe(3); // hook closed the socket itself
+    vi.useRealTimers();
+  });
+
+  it("completes exactly once when EOF, metadata, and a server close all arrive", async () => {
+    const onComplete = vi.fn();
+    const { result } = renderHook(() => useWebSocketChat(), { wrapper });
+
+    vi.useFakeTimers();
+    await act(async () => {
+      await result.current.send(makeOpts({ onComplete }));
+    });
+
+    const ws = MockWebSocket.lastInstance!;
+    act(() => {
+      ws.simulateOpen();
+      ws.simulateMessage("Hello world");
+      ws.simulateMessage("!<|EOF_STREAM|>!");
+      ws.simulateMessage(
+        JSON.stringify([{ chunkIndex: 0, title: "Doc", uri: "s3://x/Doc.pdf" }])
+      );
+      ws.simulateClose(1000);
+    });
+
+    // The pending grace timer must be cancelled so it can't double-complete.
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+    });
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 
   it("calls onError when EOF arrives with no streamed text (empty Bedrock response)", async () => {
@@ -268,9 +380,9 @@ describe("useWebSocketChat", () => {
   });
 
   it("does not time out while data is actively arriving", async () => {
-    // TIMEOUT_MS = 90_000; interval fires every 5_000
+    // TIMEOUT_MS = 120_000; interval fires every 5_000
     // If a message arrives at t=85s, lastActivity resets to 85s.
-    // At t=170s the interval fires again: Date.now()-lastActivity = 85s < 90s → no timeout.
+    // At t=170s the interval fires again: Date.now()-lastActivity = 85s < 120s → no timeout.
     const onError = vi.fn();
     const { result } = renderHook(() => useWebSocketChat(), { wrapper });
 
@@ -315,5 +427,35 @@ describe("useWebSocketChat", () => {
     act(() => result.current.abort());
 
     expect(ws.readyState).toBe(3);
+  });
+
+  it("does not reconnect or resend the message after the user aborts", async () => {
+    // Regression: pressing stop closes the socket; the close handler must treat
+    // that as a deliberate cancel, not an unexpected disconnect — otherwise it
+    // reconnects and resends the same message a second later.
+    const onError = vi.fn();
+    const { result } = renderHook(() => useWebSocketChat(), { wrapper });
+
+    vi.useFakeTimers();
+    await act(async () => {
+      await result.current.send(makeOpts({ onError }));
+    });
+
+    const ws = MockWebSocket.lastInstance!;
+    act(() => {
+      ws.simulateOpen();
+      ws.simulateMessage("partial answer"); // mid-stream, before any EOF
+    });
+
+    act(() => result.current.abort());
+
+    // Past the reconnect back-off window: no retry socket, no error surfaced.
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(MockWebSocket.lastInstance).toBe(ws); // no new socket = no reconnect/resend
+    vi.useRealTimers();
   });
 });

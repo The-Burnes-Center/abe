@@ -278,7 +278,7 @@ export default function DataIndexesTab() {
             />
             <TextField
               label="Description (optional - AI will generate if left blank)"
-              placeholder="e.g. Contains vendor contract data for statewide procurement"
+              placeholder="e.g. What this dataset contains (e.g. product catalog or vendor records)"
               value={newDescription}
               onChange={(e) => setNewDescription(e.target.value)}
               fullWidth

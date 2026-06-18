@@ -7,7 +7,7 @@ from boto3.dynamodb.conditions import Key, Attr
 from datetime import datetime
 from decimal import Decimal
 
-from abe_utils import is_admin_request
+from common_utils import is_admin_request
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

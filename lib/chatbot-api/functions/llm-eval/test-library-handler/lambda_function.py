@@ -8,8 +8,8 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 from datetime import datetime
 from decimal import Decimal
-from abe_utils import is_admin_request
-from abe_utils.text import strip_kb_citation_markers
+from common_utils import is_admin_request
+from common_utils.text import strip_kb_citation_markers
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

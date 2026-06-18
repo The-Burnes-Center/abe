@@ -1,4 +1,3 @@
-import "regenerator-runtime/runtime";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import AppConfigured from "./components/app-configured";
@@ -19,8 +18,20 @@ if (import.meta.env.DEV) {
   });
 }
 
-root.render(
-  <React.StrictMode>
-    <AppConfigured />
-  </React.StrictMode>
-);
+if (import.meta.env.DEV && window.location.pathname.startsWith("/demo-animation")) {
+  // Recording-only UI mockups (see scripts/record-demo.mjs), mounted BEFORE
+  // AppConfigured so the headless recorder bypasses the Cognito auth gate.
+  // Gated behind import.meta.env.DEV: in production this branch is dead code,
+  // so Vite tree-shakes the route AND the entire demo bundle out — nothing
+  // demo-related ships or is reachable. Rendered without StrictMode so the
+  // looping useSteps() timers fire exactly once per step.
+  void import("./demos/DemoGallery").then(({ default: DemoGallery }) => {
+    root.render(<DemoGallery />);
+  });
+} else {
+  root.render(
+    <React.StrictMode>
+      <AppConfigured />
+    </React.StrictMode>
+  );
+}

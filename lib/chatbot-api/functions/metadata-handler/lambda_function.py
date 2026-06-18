@@ -6,7 +6,7 @@ import unicodedata
 from datetime import datetime
 from botocore.exceptions import ClientError
 from config import get_full_prompt, get_all_tags, CATEGORIES, CUSTOM_TAGS
-from abe_utils import extract_json_object, get_logger
+from common_utils import extract_json_object, get_logger
 
 
 # S3 object metadata (the head-metadata map written via copy_object with
@@ -62,6 +62,10 @@ bedrock = boto3.client('bedrock-agent-runtime', region_name = 'us-east-1') #For 
 bedrock_invoke =boto3.client('bedrock-runtime', region_name = 'us-east-1') #For using invoke function
 kb_id = os.environ['KB_ID']
 logger = get_logger(__name__)
+
+# Upper bound on document text sent to the summarization model (~40K tokens),
+# leaving ample headroom in the context window for the prompt scaffolding.
+MAX_SUMMARIZATION_CHARS = 150_000
 
 
 # Using Knowledge Base to fetch document contents
@@ -121,11 +125,14 @@ def retrieve_kb_docs(bucket, file_name, knowledge_base_id):
         if all_chunks:
             return {'content': all_chunks, 'uri': file_uri}
 
+        # Empty list, not a sentinel string: a truthy "no relevant document
+        # found" message here used to flow into the summarization prompt as if
+        # it were the document text, and the model produced fluent filler
+        # ("The document could not be retrieved or analyzed...") that got
+        # persisted as the real summary. The caller checks truthiness of
+        # 'content' to decide whether to summarize at all.
         print(f"No KB chunks found for {file_name}; document may not yet be ingested")
-        return {
-            'content': "No relevant document found in the knowledge base.",
-            'uri': None,
-        }
+        return {'content': [], 'uri': None}
     except ClientError as e:
         print(f"Error fetching knowledge base docs: {e}")
         return {'content': [], 'uri': None}
@@ -193,13 +200,20 @@ def summarize_and_categorize(key,content):
                 "summary": "Error parsing nested JSON in 'text'",
                 "tags": {"category": "unknown"}
             }
-        creation_date = datetime.utcnow().strftime('%Y-%m-%d')
-
         # Validate the tags
         all_tags = get_all_tags()
         for tag, value in summary_and_tags['tags'].items():
 
             if tag == "creation_date":
+                # The prompt tells the model to answer "unknown" when the
+                # document doesn't state a verifiable date, so that sentinel
+                # (and a blank value) is an expected outcome, not an anomaly
+                # worth a warning. Normalize to blank. Never substitute
+                # today's date -- that made the metadata-generation date
+                # masquerade as the document's age.
+                if not value or not value.strip() or value.strip().lower() == "unknown":
+                    summary_and_tags['tags'][tag] = ""
+                    continue
                 try:
                     datetime.strptime(value, "%Y-%m-%d")
                 except ValueError:
@@ -217,9 +231,6 @@ def summarize_and_categorize(key,content):
             else:
                 summary_and_tags['tags'][tag] = 'unknown'
 
-        if not summary_and_tags['tags'].get('creation_date') or not summary_and_tags['tags']['creation_date'].strip():
-            summary_and_tags['tags']['creation_date'] = creation_date
-
         return summary_and_tags
     except Exception as e:
         logger.exception("Error generating summary and tags")
@@ -234,6 +245,9 @@ def get_metadata(bucket,key):
 #Getting metadata information of all files in a single document
 def get_complete_metadata(bucket):
     all_metadata = {}
+    # The inventory file this function writes. It must never list itself: a
+    # "metadata.txt": {} self-entry is useless noise for the model.
+    metadata_file = "metadata.txt"
     try:
         paginator = s3.get_paginator('list_objects_v2')
         current_files = set()
@@ -241,14 +255,13 @@ def get_complete_metadata(bucket):
             if 'Contents' in page:
                 for obj in page['Contents']:
                     key = obj['Key']
+                    if key == metadata_file:
+                        continue
                     current_files.add(key)
                     try:
                         all_metadata[key] = get_metadata(bucket,key)
                     except Exception as e:
                         print(f"Error in fetching complete metadata for {key}: {e}")
-
-        # Upload to S3 with a specific key
-        metadata_file = r"metadata.txt"
 
         # Removing deleted files
         updated_metadata = {
@@ -327,14 +340,25 @@ def lambda_handler(event, context):
             print(f"file : {key}, kb_id : {kb_id}")
             document_content = retrieve_kb_docs(bucket, key, kb_id)
             if not document_content['content']:
+                # No chunks in the KB, almost always because the ingestion job
+                # hasn't run since this file landed (S3 events fire at upload
+                # time; ingestion happens minutes-to-hours later). Don't ask
+                # the model to summarize nothing -- leave head metadata alone
+                # so the orchestrator's backfill retries once chunks exist.
                 return {
                     'statusCode': 404,
-                    'body': json.dumps("No relevant content found")
+                    'body': json.dumps(f"{key} has no chunks in the knowledge base yet; skipping summary until after ingestion")
                 }
-            else:
-                print(f"Content : {document_content}")
+            print(f"Retrieved {len(document_content['content'])} KB chunk(s) for {key}")
 
-            summary_and_tags = summarize_and_categorize(key,document_content)
+            # Join the chunks into one document body and cap its size so a very
+            # large document can't blow past the model context window.
+            document_text = "\n\n".join(document_content['content'])
+            if len(document_text) > MAX_SUMMARIZATION_CHARS:
+                print(f"Document text truncated from {len(document_text)} to {MAX_SUMMARIZATION_CHARS} chars for summarization")
+                document_text = document_text[:MAX_SUMMARIZATION_CHARS]
+
+            summary_and_tags = summarize_and_categorize(key, document_text)
             # Any of the sentinel error summaries returned by
             # summarize_and_categorize means we did NOT get a usable response
             # from the model. Don't persist the sentinel to S3 head metadata
@@ -367,7 +391,11 @@ def lambda_handler(event, context):
             # leave the file with empty metadata.
             new_metadata = {
                 'summary': to_ascii(summary_and_tags['summary']),
-                **{f"tag_{k}": to_ascii(v) for k, v in summary_and_tags['tags'].items()}
+                **{f"tag_{k}": to_ascii(v) for k, v in summary_and_tags['tags'].items()},
+                # When this summary was generated -- deliberately separate
+                # from tag_creation_date, which is the document's own date
+                # (blank when unverifiable, never filled with today's date).
+                'tag_metadata_generated_at': datetime.utcnow().strftime('%Y-%m-%d'),
             }
 
             # Merge new metadata with any existing metadata

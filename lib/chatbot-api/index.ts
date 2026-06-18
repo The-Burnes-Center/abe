@@ -659,20 +659,20 @@ export class ChatBotApi extends Construct {
       authorizer: httpAuthorizer,
     });
 
-    const feedbackToTestLibraryIntegration = new HttpLambdaIntegration(
-      'FeedbackToTestLibraryIntegration',
-      lambdaFunctions.feedbackToTestLibraryEnqueueFunction
-    );
+    // Live dictation: hands the chat input a short-lived presigned Amazon
+    // Transcribe streaming WebSocket URL (audio streams browser→Transcribe).
+    const transcribePresignIntegration = new HttpLambdaIntegration('TranscribePresignIntegration', lambdaFunctions.transcribePresignFunction);
     restBackend.restAPI.addRoutes({
-      path: "/test-library-from-feedback",
+      path: "/transcribe-stream-url",
       methods: [apigwv2.HttpMethod.OPTIONS],
       integration: corsHandlerIntegration,
     });
     restBackend.restAPI.addRoutes({
-      path: "/test-library-from-feedback",
-      methods: [apigwv2.HttpMethod.POST],
-      integration: feedbackToTestLibraryIntegration,
+      path: "/transcribe-stream-url",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: transcribePresignIntegration,
       authorizer: httpAuthorizer,
     });
+
   }
 }

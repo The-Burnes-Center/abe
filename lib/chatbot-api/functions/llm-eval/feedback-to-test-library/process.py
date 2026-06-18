@@ -6,7 +6,7 @@ import logging
 import boto3
 from datetime import datetime
 from boto3.dynamodb.conditions import Key
-from abe_utils.text import strip_kb_citation_markers
+from common_utils.text import strip_kb_citation_markers
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -55,7 +55,7 @@ Example output:
 
 Example (fragment disambiguated, still short):
 User Question: vendors?
-Chatbot Response: For statewide carpet, MRO001 lists 12 approved vendors including …
+Chatbot Response: For carpet, MRO001 lists 12 approved vendors including …
 
 Example output:
 {"question": "Which vendors are on MRO001 for carpet?"}"""

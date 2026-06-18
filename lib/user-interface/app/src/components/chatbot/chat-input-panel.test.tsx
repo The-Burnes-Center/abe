@@ -9,28 +9,25 @@ import { ChatBotMessageType } from "./types";
 // Mocks
 // ---------------------------------------------------------------------------
 
-vi.mock("react-speech-recognition", () => ({
-  default: { startListening: vi.fn(), stopListening: vi.fn() },
-  useSpeechRecognition: () => ({
-    transcript: "",
+vi.mock("../../hooks/useTranscribeDictation", () => ({
+  useTranscribeDictation: () => ({
     listening: false,
-    browserSupportsSpeechRecognition: false,
+    start: vi.fn(),
+    stop: vi.fn(),
+    toggle: vi.fn(),
   }),
+  transcribeDictationSupported: () => false,
 }));
 
 vi.mock("../../hooks/useWebSocketChat", () => ({
   useWebSocketChat: () => ({ send: vi.fn(), abort: vi.fn() }),
 }));
 
-vi.mock("aws-amplify", () => ({
-  Auth: {
-    currentAuthenticatedUser: vi.fn().mockResolvedValue({
-      username: "test-user",
-      signInUserSession: {
-        idToken: { payload: { name: "Smith, Jane (OSD)" } },
-      },
-    }),
-  },
+vi.mock("aws-amplify/auth", () => ({
+  getCurrentUser: vi.fn().mockResolvedValue({ username: "test-user" }),
+  fetchAuthSession: vi.fn().mockResolvedValue({
+    tokens: { idToken: { payload: { name: "Smith, Jane (OSD)" } } },
+  }),
 }));
 
 vi.mock("../../common/utils", () => ({

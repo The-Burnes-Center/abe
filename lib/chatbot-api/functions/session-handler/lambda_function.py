@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
 
-from abe_utils import get_claims, get_logger, json_response, parse_json_body, truncate_text
+from common_utils import get_claims, get_logger, json_response, parse_json_body, truncate_text
 
 
 DDB_TABLE_NAME = os.environ["DDB_TABLE_NAME"]

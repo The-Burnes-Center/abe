@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import boto3
 
-from abe_utils import extract_json_object, get_logger, truncate_text
+from common_utils import extract_json_object, get_logger, truncate_text
 
 
 ANALYTICS_TABLE = os.environ["ANALYTICS_TABLE_NAME"]

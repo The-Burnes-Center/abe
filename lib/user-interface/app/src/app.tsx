@@ -5,6 +5,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import BaseAppLayout from "./components/base-app-layout";
 import ErrorBoundary from "./components/error-boundary";
 import SkipLink from "./components/skip-link";
+import OnboardingDialog from "./components/onboarding/onboarding-dialog";
 import LandingPage from "./pages/landing-page";
 import LandingPageInfo from "./pages/landing-page-info";
 import LandingPageStart from "./pages/landing-page-start";
@@ -44,6 +45,7 @@ function PageLoader() {
 function AppShell() {
   return (
     <BaseAppLayout>
+      <OnboardingDialog />
       <ErrorBoundary>
         <Suspense fallback={<PageLoader />}>
           <Outlet />

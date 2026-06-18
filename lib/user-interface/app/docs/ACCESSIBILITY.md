@@ -1,8 +1,6 @@
 # Sonar Accessibility (WCAG 2.1 AA)
 
-Sonar is built to live as a `.mass.gov` sub-domain. Per the
-[Massachusetts Web Design Guidelines](https://www.mass.gov/policy-advisory/web-design-guidelines)
-constituent-facing sites must meet **WCAG 2.1 AA**. This document captures
+Sonar targets **WCAG 2.1 AA**. This document captures
 the accessibility patterns we follow, how to test changes, and known
 limitations.
 
@@ -126,10 +124,6 @@ Legacy routes that redirect (no titled page):
 
 ## Known limitations
 
-- The Mayflower `<BrandBanner />` is an upstream Massachusetts Digital
-  Service component. Its collapsed "Here's how you know" section emits a
-  `region` landmark without a label; we accept this as upstream behaviour
-  and re-evaluate when Mayflower ships an update.
 - MUI `x-charts` on the metrics page describe series but not individual
   data points to screen readers; consider adding a tabular alternative if
   data fidelity is required for users of assistive technology.
@@ -151,6 +145,5 @@ Legacy routes that redirect (no titled page):
 ## References
 
 - [WCAG 2.1 AA quick reference](https://www.w3.org/WAI/WCAG21/quickref/?versions=2.1&levels=aa)
-- [Mass.gov Web Design Guidelines](https://www.mass.gov/policy-advisory/web-design-guidelines)
-- [Massachusetts Design System (Mayflower)](https://mayflower.digital.mass.gov/)
-- [Mass.gov Accessibility Statement](https://www.mass.gov/info-details/commonwealth-of-massachusetts-executive-department-digital-accessibility-statement)
+- [WAI-ARIA Authoring Practices](https://www.w3.org/WAI/ARIA/apg/)
+- [MDN Web Accessibility](https://developer.mozilla.org/en-US/docs/Web/Accessibility)

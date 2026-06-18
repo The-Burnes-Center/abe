@@ -1,6 +1,6 @@
 # Sonar
 
-AI-powered procurement chatbot for Massachusetts OSD. Combines Bedrock Knowledge Base (semantic RAG over PDFs/policies) with structured Excel indexes (vendor/contract data) through an agentic tool-use loop.
+Configurable, white-label AI assistant — a grounded RAG + agentic chatbot you can point at any knowledge base. Combines a Bedrock Knowledge Base (semantic RAG over your documents) with structured Excel/tabular indexes through an agentic tool-use loop. Brand, copy, and domain are set in [config/brand.ts](config/brand.ts).
 
 ## Stack
 
@@ -8,7 +8,7 @@ AI-powered procurement chatbot for Massachusetts OSD. Combines Bedrock Knowledge
 |-------|------|
 | IaC | AWS CDK v2 (TypeScript) |
 | Chat Lambda | Node.js 20 ESM + Bedrock streaming |
-| Other Lambdas | Python 3.12 (30 total) |
+| Other Lambdas | Python 3.12 (29 total) |
 | LLM | Claude Opus 4.6 (primary), Claude Sonnet 4.6 (fast) |
 | Vector DB | OpenSearch Serverless (Titan Embed v2, 1024-dim) |
 | Data | DynamoDB (13 tables), S3 (8 buckets), SQS (1 queue + DLQ) |
@@ -68,6 +68,7 @@ npx cdk deploy SonarStack -c alarmEmail=you@example.com  # With alerts
 3. Triggers Bedrock KB ingestion job
 4. Records history in `SyncHistoryTable` (TTL auto-cleanup via `expiresAt`)
 5. Scheduled via EventBridge Scheduler (default: Sunday 1 AM America/New_York); configurable from admin UI
+6. Hourly EventBridge schedule re-invokes the orchestrator in backfill-only mode (`{"backfillOnly": true}`): generates LLM summaries for documents whose KB chunks now exist. Summaries can't be created at upload time — ingestion completes minutes-to-hours after the S3 events fire — so this pass is what actually fills them in. No staging moves, no ingestion job, no history record.
 
 ### Key Files
 | File | Role |
@@ -76,7 +77,7 @@ npx cdk deploy SonarStack -c alarmEmail=you@example.com  # With alerts
 | [lib/constants.ts](lib/constants.ts) | Stack name, Cognito domain, OIDC name |
 | [lib/gen-ai-mvp-stack.ts](lib/gen-ai-mvp-stack.ts) | Root stack — orchestrates all constructs, applies tags, CDK nag suppressions |
 | [lib/chatbot-api/index.ts](lib/chatbot-api/index.ts) | ChatBotApi construct — wires tables, buckets, OpenSearch, KB, APIs, Lambdas, routes, monitoring |
-| [lib/chatbot-api/functions/functions.ts](lib/chatbot-api/functions/functions.ts) | All 24 Lambda definitions with `LAMBDA_DEFAULTS` (ARM64, X-Ray, 1-month logs) |
+| [lib/chatbot-api/functions/functions.ts](lib/chatbot-api/functions/functions.ts) | All 23 Lambda definitions with `LAMBDA_DEFAULTS` (ARM64, X-Ray, 1-month logs) |
 | [lib/chatbot-api/functions/websocket-chat/index.mjs](lib/chatbot-api/functions/websocket-chat/index.mjs) | Chat handler + agentic tool-use loop (max 20 rounds, streaming, context compression) |
 | [lib/chatbot-api/functions/websocket-chat/prompt.mjs](lib/chatbot-api/functions/websocket-chat/prompt.mjs) | System prompt (cached at Bedrock ~4K tokens) |
 | [lib/chatbot-api/functions/websocket-chat/tools.mjs](lib/chatbot-api/functions/websocket-chat/tools.mjs) | Tool definitions (static + dynamic Excel tool from registry), token estimation, result capping |
@@ -212,7 +213,6 @@ npx cdk deploy SonarStack -c alarmEmail=you@example.com  # With alerts
 | Function | Memory | Timeout | Purpose |
 |----------|--------|---------|---------|
 | TestLibraryHandlerFunction | default | 30s | Test library CRUD with versioning |
-| FeedbackToTestLibraryEnqueueFunction | default | 15s | Queue positive feedback for rewriting |
 | FeedbackToTestLibraryProcessFunction | 256 MB | 90s | LLM-rewrite questions → test library (SQS-triggered) |
 | EvalResultsHandlerFunction | default | 60s | Read eval summaries/results for admin dashboard |
 | MetricsHandlerFunction (Python) | default | 30s | Analytics: sessions, agencies, FAQ breakdown |
@@ -246,6 +246,7 @@ RAG_ENABLED=true
 ## Constraints & Gotchas
 
 - **KB sync is manual:** No auto-sync when files are uploaded to the knowledge bucket. Admin must click "Sync data now" in the UI (or wait for Sunday 1 AM ET scheduled sync).
+- **Metadata summaries lag ingestion:** Document summaries (metadata.txt) require chunks in the KB, which only exist after ingestion completes. At upload time the metadata handler returns 404 without writing anything; the hourly backfill schedule fills the summary in afterward. Never summarize when retrieval returns no chunks — historically that produced "could not be retrieved" filler persisted as real summaries.
 - **Excel index path:** Must be exactly `indexes/{index_id}/latest.xlsx` — other S3 paths are ignored by the parser.
 - **DynamoDB schema changes:** Changing partition/sort keys requires table recreation. Use the `scope` pattern to avoid unintended logical ID changes.
 - **System prompt caching:** Prompt is ~4K tokens, cached at Bedrock (5-min TTL). Modifying [prompt.mjs](lib/chatbot-api/functions/websocket-chat/prompt.mjs) invalidates the cache temporarily.
@@ -258,7 +259,9 @@ RAG_ENABLED=true
 - **Tool result size:** Capped at 60K chars via binary search truncation; rows removed with "results truncated" note.
 - **Excel query scans:** Full partition scan with in-code filtering — works for current data volumes but not indexed for scale.
 - **WebSocket timeout:** Client-side 90s timeout hardcoded in `useWebSocketChat` hook; no server-side configuration.
+- **Stop vs. network drop:** `$disconnect` writes a TTL'd `WSDISCONNECT#<connId>` marker to `ResponseTraceTable`. On a mid-stream `GoneException` the chat handler polls for it: marker found ⇒ deliberate stop (abort, discard, no save — a stopped answer must never reappear on reload); absent ⇒ silent network drop (finish generating with sends suppressed and save the exchange, so a reload shows the full answer).
 - **CORS origin:** Uses Lazy CDK token pattern — CloudFront domain resolved at synth time, not construct time.
+- **Custom domain is deploy-time config, not a console toggle:** Binding the app to a custom domain (e.g. `app.example.gov`) is driven entirely by per-deployment values — `CUSTOM_DOMAIN` (GitHub Actions Variable) + `CERTIFICATE_ARN` (Secret, ACM cert in **us-east-1**) + `OIDC_PROVIDER_NAME` (Variable, if SSO). [gen-ai-mvp-stack.ts](lib/gen-ai-mvp-stack.ts) computes one `siteUrl` from these and feeds it via Lazy tokens into **four** places: CloudFront alias+cert, Cognito app client callback/sign-out URLs, HTTP API + S3 CORS origin, and `aws-exports.json` redirect URLs. A deploy missing the domain values reverts all of them to the `*.cloudfront.net` fallback; a deploy missing `OIDC_PROVIDER_NAME` drops the SSO provider and breaks sign-in. **The Cognito app client is fully CDK-managed** ([authorization/index.ts](lib/authorization/index.ts)) — do **not** hand-edit callback URLs / scopes / providers in the console or patch `aws-exports.json` in S3; those are drift the next deploy silently overwrites. Symptom of a domain bound only via console+DNS (no redeploy): the page loads (HTTP 200) but the UI hangs on a spinner and/or chat hits CORS errors, because auth+CORS still target the old domain. Full runbook + troubleshooting: [docs/custom-domain.md](docs/custom-domain.md).
 
 ## Monitoring
 
@@ -301,7 +304,7 @@ Split Test Cases → [Map: parallel eval, max 2 concurrent] → Aggregate Result
 7. Cleanup: delete chunks/, partial_results/, aggregated_results/ from S3
 
 ### Feedback-to-Test-Library Pipeline
-Positive user feedback (thumbs-up) → SQS queue → LLM rewrites question to be standalone → upsert to `TestLibraryTable` with normalized question deduplication and version history.
+An admin promotes a piece of positive (thumbs-up) feedback from the Feedback Manager (`POST /admin/feedback/{id}/promote-to-candidate`, admin-gated) → the feedback handler enqueues it to the SQS queue → consumer LLM-rewrites the question to be standalone → upsert to `TestLibraryTable` with normalized question deduplication and version history. The question/answer are read server-side from the stored response trace, not supplied by the client.
 
 ## CI/CD
 
@@ -331,7 +334,8 @@ Positive user feedback (thumbs-up) → SQS queue → LLM rewrites question to be
 | websocket-api-authorizer | pytest (JWT validation) | Covered |
 | feedback-handler | — | Not tested |
 | evaluation pipeline (5 Lambdas) | — | Not tested |
-| sync orchestrator/schedule | — | Not tested |
+| sync-orchestrator | pytest (backfill + placeholder detection) | Covered |
+| sync-schedule | — | Not tested |
 | metrics-handler | — | Not tested |
 | context-summarizer | — | Not tested |
 
