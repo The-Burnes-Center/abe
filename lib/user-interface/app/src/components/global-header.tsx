@@ -19,6 +19,7 @@ import { StorageHelper, ThemeMode } from "../common/helpers/storage-helper";
 import { Auth } from "aws-amplify";
 import { CHATBOT_NAME } from "../common/constants";
 import { tokens } from "../common/theme";
+import { brand } from "../common/brand";
 import { v4 as uuidv4 } from "uuid";
 
 interface GlobalHeaderProps {
@@ -94,7 +95,7 @@ export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeader
         <Box
           component="button"
           onClick={() => navigate(`/chatbot/playground/${uuidv4()}`)}
-          aria-label="Open ABE chat in a new session"
+          aria-label={`Open ${CHATBOT_NAME} chat in a new session`}
           sx={{
             display: "flex",
             alignItems: "center",
@@ -113,9 +114,9 @@ export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeader
         >
           <Box
             component="img"
-            src="/images/stateseal-color.png"
-            alt="Massachusetts state seal"
-            sx={{ height: { xs: 32, sm: 36 } }}
+            src={brand.assets.icon}
+            alt={`${CHATBOT_NAME} logo`}
+            sx={{ height: { xs: 28, sm: 32 } }}
           />
           <Typography
             variant="subtitle1"

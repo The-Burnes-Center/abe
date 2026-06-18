@@ -1,5 +1,5 @@
 /**
- * S3 buckets for the ABE chatbot backend.
+ * S3 buckets for the chatbot backend.
  *
  * 7 buckets grouped by purpose:
  *

@@ -1,5 +1,5 @@
 /**
- * Operational monitoring for the ABE chatbot stack.
+ * Operational monitoring for the chatbot stack.
  *
  * Creates an SNS alert topic, CloudWatch alarms, and an operations dashboard.
  *

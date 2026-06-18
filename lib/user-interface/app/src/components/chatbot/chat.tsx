@@ -20,7 +20,7 @@ import { ApiClient } from "../../common/api-client/api-client";
 import ChatMessage from "./chat-message";
 import ChatInputPanel from "./chat-input-panel";
 import styles from "../../styles/chat.module.scss";
-import { WELCOME_PAGE, SUGGESTED_PROMPTS } from "../../common/constants";
+import { CHATBOT_NAME, WELCOME_PAGE, SUGGESTED_PROMPTS } from "../../common/constants";
 import { useNotifications } from "../notif-manager";
 import { Utils } from "../../common/utils";
 import { useWebSocketChat, StreamingStatus } from "../../hooks/useWebSocketChat";
@@ -107,12 +107,12 @@ export default function Chat(props: { sessionId?: string }) {
     }
   }, [messageHistory, running]);
 
-  // Announce when ABE finishes responding (accessibility)
+  // Announce when the assistant finishes responding (accessibility)
   useEffect(() => {
     if (!running && messageHistory.length > 0) {
       const lastMsg = messageHistory[messageHistory.length - 1];
       if (lastMsg.type === ChatBotMessageType.AI) {
-        setAnnouncement("ABE has responded");
+        setAnnouncement(`${CHATBOT_NAME} has responded`);
         const timer = setTimeout(() => setAnnouncement(""), 1000);
         return () => clearTimeout(timer);
       }
@@ -212,7 +212,7 @@ export default function Chat(props: { sessionId?: string }) {
 
   return (
     <div className={styles.chat_container} style={{ position: "relative" }}>
-      <Typography variant="h1" className="sr-only">ABE Chat</Typography>
+      <Typography variant="h1" className="sr-only">{CHATBOT_NAME} Chat</Typography>
       {/* Scroll-jump FAB — direction depends on current scroll position */}
       {scrollFab && (
         <div className={styles.scrollToBottom}>
@@ -223,7 +223,7 @@ export default function Chat(props: { sessionId?: string }) {
             sx={{
               bgcolor: "background.paper",
               color: "text.secondary",
-              boxShadow: "var(--abe-shadow-md)",
+              boxShadow: "var(--app-shadow-md)",
               "&:hover": { bgcolor: "background.paper", color: "text.primary" },
             }}
           >
@@ -246,9 +246,8 @@ export default function Chat(props: { sessionId?: string }) {
           <Stack direction="column" spacing={2}>
             {isEmpty && (
               <Alert severity="info" sx={{ mb: 1 }}>
-                This tool is for Executive Office use only. While AI can assist,
-                always validate critical information and confirm permissions before
-                procuring goods or services.
+                While AI can assist, always validate important information before
+                acting on it.
               </Alert>
             )}
 
@@ -328,7 +327,7 @@ export default function Chat(props: { sessionId?: string }) {
                 letterSpacing: "-0.02em",
               }}
             >
-              ABE
+              {CHATBOT_NAME.charAt(0)}
             </Avatar>
             <Typography
               variant="h2"
@@ -344,8 +343,8 @@ export default function Chat(props: { sessionId?: string }) {
               variant="body2"
               sx={{ color: "text.secondary", mb: 3, maxWidth: 420 }}
             >
-              Ask me about Massachusetts procurement processes, statewide
-              contracts, bidding, and more.
+              Ask me anything — I'll answer from the documents and data
+              available to me.
             </Typography>
             <div className={styles.suggestedPrompts}>
               {SUGGESTED_PROMPTS.map((prompt, idx) => (

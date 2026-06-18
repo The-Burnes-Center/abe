@@ -1,4 +1,5 @@
 import Button from "@mui/material/Button";
+import { CHATBOT_NAME } from "../../common/constants";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
@@ -200,21 +201,21 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
         sx={{
           p: 1.5,
           borderRadius: 3,
-          boxShadow: "var(--abe-shadow-md)",
-          borderColor: "var(--abe-border)",
-          transition: "border-color var(--abe-transition-fast), box-shadow var(--abe-transition-fast)",
+          boxShadow: "var(--app-shadow-md)",
+          borderColor: "var(--app-border)",
+          transition: "border-color var(--app-transition-fast), box-shadow var(--app-transition-fast)",
           "&:focus-within": {
             borderColor: "primary.main",
-            boxShadow: "var(--abe-shadow-lg)",
+            boxShadow: "var(--app-shadow-lg)",
           },
         }}
       >
         <div className={styles.input_textarea_container}>
-          <label htmlFor="abe-chat-input" className="sr-only">
-            Message ABE
+          <label htmlFor="chat-input" className="sr-only">
+            Message {CHATBOT_NAME}
           </label>
           <TextareaAutosize
-            id="abe-chat-input"
+            id="chat-input"
             ref={ref}
             className={styles.input_textarea}
             maxRows={6}
@@ -231,8 +232,8 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
               }
             }}
             value={state.value}
-            placeholder="Ask ABE a question..."
-            aria-label="Message ABE"
+            placeholder={`Ask ${CHATBOT_NAME} a question...`}
+            aria-label={`Message ${CHATBOT_NAME}`}
             aria-multiline="true"
           />
           <Stack direction="row" spacing={0.5} alignItems="center" sx={{ ml: 1 }}>

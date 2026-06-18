@@ -15,18 +15,21 @@ table = dynamodb.Table(ANALYTICS_TABLE)
 bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 logger = get_logger(__name__)
 
-CATEGORIES = [
-    "General Procurement",
-    "Contract Search",
-    "Vendor Information",
-    "Bidding & Solicitation",
-    "Pricing & Cost",
-    "Compliance & Regulations",
-    "Forms & Documentation",
-    "IT Procurement",
+# Topic taxonomy for analytics. Override per deployment with the FAQ_CATEGORIES
+# env var (comma-separated). Keep "Greeting/Small Talk" and "Other" — the
+# handler logic below references them.
+DEFAULT_CATEGORIES = [
+    "General Question",
+    "How-To / Guidance",
+    "Document Lookup",
+    "Data / Records",
+    "Account & Access",
+    "Technical Issue",
     "Greeting/Small Talk",
     "Other",
 ]
+_env_categories = os.environ.get("FAQ_CATEGORIES", "").strip()
+CATEGORIES = [c.strip() for c in _env_categories.split(",") if c.strip()] or DEFAULT_CATEGORIES
 
 CLASSIFICATION_PROMPT = f"""Classify the following user question into exactly one category from this list:
 {json.dumps(CATEGORIES)}

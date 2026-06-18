@@ -156,7 +156,7 @@ export default function LandingPage() {
           Skip to Chat &rarr;
         </SkipButton>
       </HeaderBar>
-      <Heading>Welcome to ABE</Heading>
+      <Heading>Welcome to Sonar</Heading>
       <SubText onClick={handleNext}>
         Learn more about what I can do for you &rarr;
       </SubText>

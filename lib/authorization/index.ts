@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { MANAGED_LOGIN_BRANDING_SETTINGS } from './managed-login-branding';
 
-// The Cognito Managed Login screen shows the OSD logo (not the state seal
+// The Cognito Managed Login screen shows the brand logo (not the state seal
 // used in the in-app header) so users see the brand of the agency that owns
 // the tool at sign-in.
 const LOGIN_LOGO_PATH = path.join(

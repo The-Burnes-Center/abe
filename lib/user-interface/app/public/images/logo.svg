@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 56" role="img" aria-label="Sonar">
+  <g fill="none" stroke-width="4" stroke-linecap="round" transform="translate(8,8)">
+    <path d="M18 6 a 18 18 0 0 0 0 28" stroke="#0C3354"/>
+    <path d="M12 12 a 11 11 0 0 0 0 16" stroke="#0C3354"/>
+    <path d="M28 6 a 18 18 0 0 1 0 28" stroke="#C8102E"/>
+    <path d="M34 12 a 11 11 0 0 1 0 16" stroke="#C8102E"/>
+  </g>
+  <text x="66" y="38" font-family="'Libre Franklin','Helvetica Neue',Arial,sans-serif" font-size="30" font-weight="700" fill="#0C3354">Sonar</text>
+</svg>

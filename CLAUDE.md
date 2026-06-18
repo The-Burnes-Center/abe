@@ -1,4 +1,4 @@
-# ABE — Assistive Buyers Engine
+# Sonar
 
 AI-powered procurement chatbot for Massachusetts OSD. Combines Bedrock Knowledge Base (semantic RAG over PDFs/policies) with structured Excel indexes (vendor/contract data) through an agentic tool-use loop.
 
@@ -33,10 +33,10 @@ npm run dev          # Local dev server (port 3000)
 npm run build        # Production build
 
 # Deploy
-npx cdk synth ABEStackNonProd          # Preview CloudFormation
-npx cdk diff ABEStackNonProd           # Diff against deployed
-npx cdk deploy ABEStackNonProd         # Deploy stack
-npx cdk deploy ABEStackNonProd -c alarmEmail=you@example.com  # With alerts
+npx cdk synth SonarStack          # Preview CloudFormation
+npx cdk diff SonarStack           # Diff against deployed
+npx cdk deploy SonarStack         # Deploy stack
+npx cdk deploy SonarStack -c alarmEmail=you@example.com  # With alerts
 ```
 
 ## Architecture
@@ -107,7 +107,7 @@ npx cdk deploy ABEStackNonProd -c alarmEmail=you@example.com  # With alerts
 - Resources are separated by concern: `functions.ts`, `tables.ts`, `buckets.ts`
 - cdk-nag compliance checks run on every synth; add suppressions with explicit reasons
 - All DynamoDB tables: PAY_PER_REQUEST billing, PITR enabled, RETAIN removal policy
-- Tags applied stack-wide: `Project: ABE`, `Environment: {stackId}`, `ManagedBy: CDK`, `DataClass: Sensitive`
+- Tags applied stack-wide: `Project: Sonar`, `Environment: {stackId}`, `ManagedBy: CDK`, `DataClass: Sensitive`
 
 ### Python Lambdas
 - Use Pydantic models for request/response validation
@@ -229,7 +229,7 @@ npx cdk deploy ABEStackNonProd -c alarmEmail=you@example.com  # With alerts
 | `KB_ID` | *(set by CDK)* | Knowledge Base ID |
 | `TABLE_NAME` | *(set by CDK)* | Excel index DynamoDB table |
 | `PROMPT_REGISTRY_TABLE` | *(set by CDK)* | Versioned prompt storage |
-| `PROMPT_FAMILY` | `ABE_CHAT` | Prompt registry partition key |
+| `PROMPT_FAMILY` | `ASSISTANT_CHAT` | Prompt registry partition key |
 | `RESPONSE_TRACE_TABLE` | *(set by CDK)* | Audit trail table |
 | `INDEX_REGISTRY_TABLE` | *(set by CDK)* | Excel index metadata/schema registry |
 
@@ -262,7 +262,7 @@ RAG_ENABLED=true
 
 ## Monitoring
 
-CloudWatch dashboard: `ABEStackNonProd-Operations`
+CloudWatch dashboard: `SonarStack-Operations`
 
 43 active alarms (trigger SNS email):
 - **Lambda** (per function): errors >= 3 in 5 min | throttles >= 1 in 5 min | chat avg duration > 60s

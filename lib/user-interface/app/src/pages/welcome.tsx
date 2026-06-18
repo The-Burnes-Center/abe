@@ -50,7 +50,7 @@ export default function Welcome() {
 
         <Paper sx={{ p: 3 }}>
           <Typography variant="h4" component="h2" gutterBottom>
-            What ABE Can Help With
+            What Sonar Can Help With
           </Typography>
           <Stack component="ul" spacing={1} sx={{ pl: 2, m: 0 }}>
             <li><Typography variant="body1">Finding statewide contracts and vendor information</Typography></li>
@@ -65,7 +65,7 @@ export default function Welcome() {
             Important Notice
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            This tool is for Executive Office use only. While ABE can provide
+            This tool is for Executive Office use only. While Sonar can provide
             guidance based on official procurement documentation, always validate
             critical decisions with official policies and confirm permissions before
             procuring goods or services.

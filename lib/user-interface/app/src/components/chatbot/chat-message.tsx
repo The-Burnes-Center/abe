@@ -1,4 +1,5 @@
 import * as React from "react";
+import { CHATBOT_NAME } from "../../common/constants";
 import { useState, useMemo, useCallback, useRef } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -357,7 +358,7 @@ function ChatMessage(props: ChatMessageProps) {
     // Drop it here so it disappears from both the inline [N] badges and the
     // sources panel; chunkIndex-based lookups in renderWithCitations gracefully
     // omit any [N] whose source got filtered out. Only KB sources are filtered
-    // — Excel index lookups (statewide contracts, etc.) always pass through.
+    // — Excel index lookups (structured records, etc.) always pass through.
     return (props.message.metadata.Sources as SourceItem[]).filter((s) => {
       if (s.sourceType !== "knowledgeBase") return true;
       const name = (s.title || s.s3Key || "").toLowerCase();
@@ -489,7 +490,7 @@ function ChatMessage(props: ChatMessageProps) {
       {props.message?.type === ChatBotMessageType.AI && (
         <article
           className={styles.aiMessage}
-          aria-label="Message from ABE"
+          aria-label={`Message from ${CHATBOT_NAME}`}
           aria-busy={Boolean(
             props.isLastAiMessage &&
               (props.streamingStatus?.active || props.message.content.length === 0)
@@ -508,15 +509,15 @@ function ChatMessage(props: ChatMessageProps) {
               letterSpacing: "-0.02em",
             }}
           >
-            ABE
+            {CHATBOT_NAME.slice(0, 3).toUpperCase()}
           </Avatar>
           <Box className={`${styles.aiContent} ${styles.messageWrapper}`} sx={{ minWidth: 0, flex: 1 }}>
             <Paper
               variant="outlined"
               sx={{
                 p: 2,
-                bgcolor: "var(--abe-chatAiBg)",
-                borderColor: "var(--abe-chatAiBorder)",
+                bgcolor: "var(--app-chatAiBg)",
+                borderColor: "var(--app-chatAiBorder)",
               }}
             >
               {content.length === 0 && !props.streamingStatus?.active ? (
@@ -524,7 +525,7 @@ function ChatMessage(props: ChatMessageProps) {
                   className={styles.statusIndicator}
                   role="status"
                   aria-live="polite"
-                  aria-label="ABE is thinking"
+                  aria-label={`${CHATBOT_NAME} is thinking`}
                 >
                   <CircularProgress size={14} sx={{ color: "primary.main" }} aria-hidden="true" />
                   <Typography variant="body2" sx={{ color: "text.secondary", fontStyle: "italic" }}>
@@ -538,7 +539,7 @@ function ChatMessage(props: ChatMessageProps) {
                   className={styles.statusIndicator}
                   role="status"
                   aria-live="off"
-                  aria-label={`ABE: ${props.streamingStatus.text || "responding"}`}
+                  aria-label={`${CHATBOT_NAME}: ${props.streamingStatus.text || "responding"}`}
                 >
                   <CircularProgress size={14} sx={{ color: "primary.main" }} aria-hidden="true" />
                   <Typography variant="body2" sx={{ color: "text.secondary", fontStyle: "italic" }}>
@@ -607,7 +608,7 @@ function ChatMessage(props: ChatMessageProps) {
                     aria-label="Mark response as not helpful and provide feedback"
                     aria-pressed={selectedIcon === 0}
                     aria-expanded={feedbackOpen}
-                    aria-controls={feedbackOpen ? "abe-feedback-form-panel" : undefined}
+                    aria-controls={feedbackOpen ? "feedback-form-panel" : undefined}
                     sx={{
                       borderRadius: 1.5,
                       px: 1,
@@ -640,7 +641,7 @@ function ChatMessage(props: ChatMessageProps) {
                 >
                   <CheckCircleOutlineIcon sx={{ fontSize: 18, color: "success.main" }} />
                   <Typography variant="body2" sx={{ fontSize: "0.8125rem", color: "success.dark" }}>
-                    {regenerateRequested ? "Thanks! ABE is retrying your question." : "Thanks for your feedback!"}
+                    {regenerateRequested ? `Thanks! ${CHATBOT_NAME} is retrying your question.` : "Thanks for your feedback!"}
                   </Typography>
                 </Stack>
               </Collapse>
@@ -648,7 +649,7 @@ function ChatMessage(props: ChatMessageProps) {
               {/* Inline feedback form — replaces bottom drawer */}
               <Collapse in={feedbackOpen} timeout={200}>
                 <Box
-                  id="abe-feedback-form-panel"
+                  id="feedback-form-panel"
                   sx={{
                     mt: 1.5,
                     pt: 1.5,
@@ -696,7 +697,7 @@ function ChatMessage(props: ChatMessageProps) {
                       sx={{ "& .MuiInputBase-root": { fontSize: "0.875rem" } }}
                     />
                     <Typography id="feedback-hint" variant="caption" color="text.secondary" sx={{ fontSize: "0.75rem" }}>
-                      Your feedback helps us improve ABE for everyone.
+                      Your feedback helps us improve {CHATBOT_NAME} for everyone.
                     </Typography>
 
                     <FormControlLabel

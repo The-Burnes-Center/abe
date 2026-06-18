@@ -53,7 +53,7 @@ class Key:
 
     def wrap_key(self, key_data):
         """
-        Wrap the the plain text key data
+        Wrap the plain text key data
 
         Args:
             key_data (bytes): Key data to wrap
@@ -65,7 +65,7 @@ class Key:
 
     def unwrap_key(self, wrapped_key):
         """
-        Unwrap the the wrapped key data
+        Unwrap the wrapped key data
 
         Args:
             wrapped_key (bytes): Wrapped key data to unwrap

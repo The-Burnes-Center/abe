@@ -1,3 +1,5 @@
+import { brand } from "./brand";
+
 export const languageList = [
   { value: "simple", label: "Simple" },
   { value: "arabic", label: "Arabic" },
@@ -29,7 +31,7 @@ export const languageList = [
 
 export const feedbackCategories = [
   {label: "General", value:"rp", disabled: false},
-  {label: "Procurement", value:"rf", disabled: false},  
+  {label: "Specific", value:"rf", disabled: false},
 ]
 
 export const feedbackTypes = [
@@ -41,12 +43,7 @@ export const feedbackTypes = [
   {label: "Other", value:"other", disabled: false}
 ]
 
-export const CHATBOT_NAME = "ABE - Assistive Buyer Engine";
-export const WELCOME_PAGE = "What can I help you with?";
+export const CHATBOT_NAME = brand.assistantName;
+export const WELCOME_PAGE = brand.welcomeMessage;
 
-export const SUGGESTED_PROMPTS = [
-  "Where do I find a list of Statewide Contracts?",
-  "How do I know if my procurement need is within the scope of a Statewide Contract?",
-  "How do I know if my procurement qualifies for an exception?",
-  "How do I make a purchase under a Statewide Contract?",
-];
+export const SUGGESTED_PROMPTS = [...brand.suggestedPrompts];

@@ -184,7 +184,7 @@ export class KnowledgeBaseStack extends Construct {
         // Use a vision-capable Claude model to parse PDFs at ingestion time.
         // The default Bedrock parser is text-only and drops form-field state
         // (e.g. RFR section 1.4.6 acquisition-method checkboxes), which made
-        // ABE unable to identify which option was marked. Multimodal parsing
+        // the model is unable to identify which option was marked. Multimodal parsing
         // renders each page as an image and transcribes form fields with
         // their state preserved.
         parsingConfiguration: {

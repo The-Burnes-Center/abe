@@ -4,9 +4,7 @@ import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
 import BaseAppLayout from "./components/base-app-layout";
 import ErrorBoundary from "./components/error-boundary";
-import BrandBanner from "./components/mds/BrandBanner";
-import MdsFooter from "./components/mds/MdsFooter";
-import SkipLink from "./components/mds/SkipLink";
+import SkipLink from "./components/skip-link";
 import LandingPage from "./pages/landing-page";
 import LandingPageInfo from "./pages/landing-page-info";
 import LandingPageStart from "./pages/landing-page-start";
@@ -67,7 +65,6 @@ function App() {
       }}
     >
       <BrowserRouter>
-        <BrandBanner />
         <SkipLink />
         <Box
           component="div"
@@ -137,7 +134,6 @@ function App() {
             </Suspense>
           </ErrorBoundary>
         </Box>
-        <MdsFooter />
       </BrowserRouter>
     </Box>
   );

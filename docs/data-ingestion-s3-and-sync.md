@@ -1,6 +1,6 @@
 # Data ingestion: S3, knowledge base sync, and Excel indexes
 
-Reference for how document and Excel data flow through the ABE chatbot stack—upload via admin UI vs direct S3, what updates automatically, and how the staging/sync pipeline routes files.
+Reference for how document and Excel data flow through the chatbot stack—upload via admin UI vs direct S3, what updates automatically, and how the staging/sync pipeline routes files.
 
 ---
 

@@ -1,4 +1,4 @@
-"""Generate ABE architecture diagram using the Python diagrams DSL.
+"""Generate Sonar architecture diagram using the Python diagrams DSL.
 
 Render with:
     python -m venv .venv && . .venv/bin/activate
@@ -42,7 +42,7 @@ node_attr = {
 }
 
 with Diagram(
-    "ABE — Assistive Buyers Engine",
+    "Sonar",
     show=False,
     filename="architecture",
     outformat="png",

@@ -127,7 +127,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
       const result = await apiClient.userFeedback.createPrompt({
         title: livePrompt ? `Copy of ${livePrompt.title || "current instructions"}` : "New instructions",
         parentVersionId: livePrompt?.versionId,
-        template: livePrompt?.template || "# ABE Instructions\n\n{{current_date}}",
+        template: livePrompt?.template || "# Sonar Instructions\n\n{{current_date}}",
       });
       await onRefresh();
       setSelectedPromptId(result.prompt.versionId);
@@ -216,7 +216,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
       )}
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        These are the instructions ABE follows when answering. Editing and publishing them changes how ABE responds
+        These are the instructions Sonar follows when answering. Editing and publishing them changes how Sonar responds
         for <strong>everyone</strong>, so changes are saved as a draft first and only go live when you publish.
       </Typography>
 
@@ -234,7 +234,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
             {livePrompt ? (
               <>
                 <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                  {livePrompt.title || "ABE instructions"}
+                  {livePrompt.title || "Sonar instructions"}
                 </Typography>
                 <Box
                   sx={{
@@ -275,7 +275,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
             </Typography>
             {drafts.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
-                No drafts yet. Click “Edit a copy” above to start changing ABE's instructions.
+                No drafts yet. Click “Edit a copy” above to start changing Sonar's instructions.
               </Typography>
             ) : (
               <Stack spacing={1}>
@@ -306,7 +306,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
                           {item.title || "Untitled draft"}
                         </Typography>
                         {item.isSystemDefault && (
-                          <Chip size="small" variant="outlined" label="ABE's original" sx={{ height: 20, fontSize: "0.7rem" }} />
+                          <Chip size="small" variant="outlined" label="Sonar's original" sx={{ height: 20, fontSize: "0.7rem" }} />
                         )}
                       </Stack>
                       <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
@@ -335,7 +335,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
             <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} flexWrap="wrap">
               <Stack direction="row" gap={1} alignItems="center">
                 <Typography variant="h6" sx={{ fontSize: "1.0625rem", fontWeight: 600 }}>
-                  {isSystemDefault ? "ABE's original instructions" : "Edit draft"}
+                  {isSystemDefault ? "Sonar's original instructions" : "Edit draft"}
                 </Typography>
                 {isSystemDefault && (
                   <Chip size="small" variant="outlined" label="Read-only" sx={{ height: 22, fontSize: "0.75rem" }} />
@@ -383,7 +383,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
               disabled={isReadOnly}
             />
             <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block" }}>
-              Tip: leave <code>{"{{current_date}}"}</code> in place — ABE replaces it with today's date when it answers.
+              Tip: leave <code>{"{{current_date}}"}</code> in place — Sonar replaces it with today's date when it answers.
             </Typography>
             <TextField
               fullWidth
@@ -450,7 +450,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
         <DialogTitle>Make these instructions live?</DialogTitle>
         <DialogContent>
           <Typography variant="body2" gutterBottom>
-            <strong>{currentPrompt?.title || "This draft"}</strong> will immediately become the instructions ABE uses
+            <strong>{currentPrompt?.title || "This draft"}</strong> will immediately become the instructions Sonar uses
             for <strong>all users</strong>.
           </Typography>
           {livePrompt && (
@@ -518,7 +518,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
               multiline
               minRows={3}
               maxRows={6}
-              label="What should ABE do better? (optional)"
+              label="What should Sonar do better? (optional)"
               placeholder="e.g. Be more concise, always cite the source document, avoid legal advice…"
               value={aiNote}
               onChange={(e) => setAiNote(e.target.value)}

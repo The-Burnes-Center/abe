@@ -1,12 +1,18 @@
+import { brand } from "../config/brand";
+
 export const AUTHENTICATION = true;
 
-// change these as needed
+// All deployment identifiers derive from the brand slug (config/brand.ts) and
+// can be overridden per-deployment via environment variables.
 
-// must be unique globally or the deployment will fail
-export const cognitoDomainName = "abe-nonprod-osd-auth"
-// this can be anything that would be understood easily, but you must use the same name
-// when setting up a sign-in provider in Cognito
-// make sure to leave it blank if you do not actually have an SSO provider configured in Cognito!
-export const OIDCIntegrationName = "ANF-AI-OSD-Sandbox"
-// this MUST be unique to your account
-export const stackName = "ABEStackNonProd"
+// Cognito hosted-UI domain PREFIX — must be globally unique across all AWS
+// accounts. Override with COGNITO_DOMAIN_PREFIX if "<slug>-auth" is taken.
+export const cognitoDomainName = process.env.COGNITO_DOMAIN_PREFIX || `${brand.slug}-auth`;
+
+// Federated OIDC provider name configured in Cognito. Leave blank ("") if you
+// have no SSO provider — username/password sign-in & sign-up still work.
+export const OIDCIntegrationName = process.env.OIDC_PROVIDER_NAME || "";
+
+// CloudFormation stack name — must be unique within your AWS account/region.
+export const stackName =
+  process.env.STACK_NAME || `${brand.slug.charAt(0).toUpperCase()}${brand.slug.slice(1)}Stack`;

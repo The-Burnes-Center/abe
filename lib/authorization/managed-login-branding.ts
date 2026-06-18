@@ -1,14 +1,20 @@
-// Mass.gov-themed Cognito Managed Login branding.
-// Colors are 8-digit hex (RGBA, no leading #). Brand primary 14558f mirrors
-// the React app's theme.ts so the login UI matches the post-login experience.
+// Cognito Managed Login (hosted UI) branding — white-labeled.
+// Colors derive from config/brand.ts so the login screen matches the app.
+// Cognito expects 8-digit hex (RGBA, no leading "#").
+import { brand } from "../../config/brand";
 
-const BRAND_PRIMARY = "14558fff";
-const BRAND_PRIMARY_DARK = "0a3d6bff";
-const BRAND_PRIMARY_TINT = "e8f2fcff";
-const BRAND_PRIMARY_TINT_DEEP = "cce0f4ff";
-const BRAND_PRIMARY_DM = "6db3f2ff";
-const BRAND_PRIMARY_DM_HOVER = "8fc6f5ff";
-const BRAND_PRIMARY_DM_ACTIVE = "4a9be8ff";
+/** "#RRGGBB" -> "rrggbbaa" (Cognito's hex form, no leading #). */
+const hex8 = (hex: string, alpha = "ff"): string =>
+  hex.replace(/^#/, "").toLowerCase() + alpha;
+
+const BRAND_PRIMARY = hex8(brand.colorsLight.primary);
+const BRAND_PRIMARY_DARK = hex8(brand.colorsLight.primaryDark);
+const BRAND_PRIMARY_TINT = hex8(brand.colorsLight.primaryLight);
+// Deeper tints/shades for active+hover fills — shades of the brand primary.
+const BRAND_PRIMARY_TINT_DEEP = hex8("#F6D0D6");
+const BRAND_PRIMARY_DM = hex8(brand.colorsDark.primary);
+const BRAND_PRIMARY_DM_HOVER = hex8("#F47E8E");
+const BRAND_PRIMARY_DM_ACTIVE = hex8(brand.colorsDark.primaryDark);
 
 export const MANAGED_LOGIN_BRANDING_SETTINGS = {
   categories: {

@@ -51,7 +51,7 @@ export default class ErrorBoundary extends Component<Props, State> {
               p: 4,
               maxWidth: 480,
               textAlign: "center",
-              bgcolor: "var(--abe-surface)",
+              bgcolor: "var(--app-surface)",
             }}
           >
             <ErrorOutlineIcon

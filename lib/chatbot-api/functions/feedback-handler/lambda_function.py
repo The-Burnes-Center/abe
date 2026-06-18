@@ -31,7 +31,7 @@ prompt_registry_table = dynamodb.Table(os.environ["PROMPT_REGISTRY_TABLE"])
 monitoring_cases_table = dynamodb.Table(os.environ["MONITORING_CASES_TABLE"])
 bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
-PROMPT_FAMILY = os.environ.get("PROMPT_FAMILY", "ABE_CHAT")
+PROMPT_FAMILY = os.environ.get("PROMPT_FAMILY", "ASSISTANT_CHAT")
 ANALYSIS_MODEL_ID = os.environ.get(
     "FEEDBACK_ANALYSIS_MODEL_ID",
     os.environ.get("FAST_MODEL_ID", "us.anthropic.claude-3-5-haiku-20241022-v1:0"),
@@ -255,7 +255,7 @@ def build_follow_up_questions(issue_tags: list[str]) -> list[dict[str, str]]:
             {
                 "id": "userComment",
                 "label": "What were you trying to do?",
-                "prompt": "Tell us the real goal so ABE can be corrected.",
+                "prompt": "Tell us the real goal so Sonar can be corrected.",
             }
         )
     if "bad_source" in tag_set:
@@ -279,7 +279,7 @@ def build_follow_up_questions(issue_tags: list[str]) -> list[dict[str, str]]:
             {
                 "id": "userComment",
                 "label": "Additional context",
-                "prompt": "Share any details that will help us improve ABE.",
+                "prompt": "Share any details that will help us improve Sonar.",
             }
         )
     return follow_ups
@@ -1055,7 +1055,7 @@ def ai_suggest_prompt(event: dict[str, Any], version_id: str):
             }
         ]
 
-    system_prompt = """You are an expert prompt engineer editing the system prompt for ABE, an internal RAG chatbot that helps government procurement professionals.
+    system_prompt = """You are an expert prompt engineer editing the system prompt for Sonar, an internal RAG chatbot that helps government procurement professionals.
 
 Your job: apply TARGETED, MINIMAL edits to the current prompt based on user feedback. Do NOT rewrite from scratch. Preserve the original structure, tone, section ordering, and wording as much as possible. Only change lines directly related to the feedback issues.
 

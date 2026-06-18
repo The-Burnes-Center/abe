@@ -1,5 +1,5 @@
 /**
- * DynamoDB tables and SQS queues for the ABE chatbot backend.
+ * DynamoDB tables and SQS queues for the chatbot backend.
  *
  * 13 tables grouped by domain:
  *
@@ -176,7 +176,7 @@ export class TableStack extends Construct {
 
     this.responseTraceTable = responseTraceTable;
 
-    // Versioned system prompts. PromptFamily (e.g. "ABE_CHAT") + VersionId
+    // Versioned system prompts. PromptFamily (e.g. "ASSISTANT_CHAT") + VersionId
     // allows A/B testing and rollback of prompt changes without redeploying.
     const promptRegistryTable = new Table(scope, 'PromptRegistryTable', {
       partitionKey: { name: 'PromptFamily', type: AttributeType.STRING },

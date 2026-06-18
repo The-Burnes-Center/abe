@@ -20,8 +20,8 @@ bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 PARTITION_KEY = "MASTER"
 
-SYSTEM_PROMPT = """You are building a Q&A test library for ABE, a U.S. federal government \
-procurement chatbot operated by the Office of the Secretary of Defense (OSD). ABE helps \
+SYSTEM_PROMPT = """You are building a Q&A test library for Sonar, a U.S. federal government \
+procurement chatbot operated by the Office of the Secretary of Defense (OSD). Sonar helps \
 government buyers navigate acquisition regulations, find contracts (GSA Schedule, BPAs, GWACs), \
 identify vendors, and understand compliance requirements.
 

@@ -16,8 +16,8 @@ export default function Support() {
             Need Help?
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            If you encounter any issues or have questions about using ABE,
-            please reach out to your system administrator or the ABE support team.
+            If you encounter any issues or have questions about using Sonar,
+            please reach out to your system administrator or the Sonar support team.
           </Typography>
         </Paper>
 
@@ -27,7 +27,7 @@ export default function Support() {
           </Typography>
           <Typography variant="body1" color="text.secondary">
             Use the thumbs-down feedback button on any response to report
-            inaccurate or unhelpful answers. Your feedback helps improve ABE&apos;s
+            inaccurate or unhelpful answers. Your feedback helps improve Sonar&apos;s
             accuracy over time.
           </Typography>
         </Paper>

@@ -215,8 +215,8 @@ export default function DataFileUpload({
         aria-label="Drop zone for files"
         onDragOver={(e) => {
           e.preventDefault();
-          e.currentTarget.style.borderColor = "var(--abe-primary)";
-          e.currentTarget.style.backgroundColor = "var(--abe-primaryLight)";
+          e.currentTarget.style.borderColor = "var(--app-primary)";
+          e.currentTarget.style.backgroundColor = "var(--app-primaryLight)";
         }}
         onDragLeave={(e) => {
           e.currentTarget.style.borderColor = "";
@@ -241,7 +241,7 @@ export default function DataFileUpload({
           p: inline ? 3 : 5,
           textAlign: "center",
           cursor: "pointer",
-          transition: "all var(--abe-transition-fast, 150ms)",
+          transition: "all var(--app-transition-fast, 150ms)",
           "&:hover": {
             borderColor: "primary.main",
             bgcolor: "primary.light",

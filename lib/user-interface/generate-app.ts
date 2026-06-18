@@ -30,7 +30,7 @@ export class Website extends Construct {
       scope: "CLOUDFRONT",
       visibilityConfig: {
         cloudWatchMetricsEnabled: true,
-        metricName: "ABECloudFrontWebACL",
+        metricName: "CloudFrontWebACL",
         sampledRequestsEnabled: true,
       },
       rules: [

@@ -18,7 +18,7 @@ import { useDocumentTitle } from "../common/hooks/use-document-title";
 
 const prompts = [
   { title: "Spell out acronyms", details: "Avoid using abbreviations. For example, instead of 'RFP,' use 'Request for Proposal'." },
-  { title: "Be specific and concise", details: "Provide clear and precise questions to help ABE give accurate responses." },
+  { title: "Be specific and concise", details: "Provide clear and precise questions to help Sonar give accurate responses." },
   { title: "Use keywords", details: "Include important terms in your query, such as 'vendor' or 'contract'." },
   { title: "Ask one question at a time", details: "Breaking down complex questions ensures better answers." },
   { title: "Include relevant details", details: "Specify important context, like names, dates, or locations, to guide the chatbot's response." },
@@ -81,7 +81,7 @@ export default function TipsAndQuestions() {
       <Stack spacing={3}>
         <Paper sx={{ p: 3 }}>
           <Typography variant="body1" color="text.secondary" sx={{ lineHeight: 1.7 }}>
-            This page provides tips and sample questions to help you get the most out of ABE.
+            This page provides tips and sample questions to help you get the most out of Sonar.
             Learn how to phrase your questions effectively and explore examples to guide your
             interactions for quick and accurate procurement assistance.
           </Typography>

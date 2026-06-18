@@ -20,7 +20,7 @@ import { useDocumentTitle } from "../../common/hooks/use-document-title";
 
 const prompts = [
   { title: "Spell out acronyms", details: "Avoid using abbreviations. For example, instead of 'RFP,' use 'Request for Proposal'." },
-  { title: "Be specific and concise", details: "Provide clear and precise questions to help ABE give accurate responses." },
+  { title: "Be specific and concise", details: "Provide clear and precise questions to help Sonar give accurate responses." },
   { title: "Use keywords", details: "Include important terms in your query, such as 'vendor' or 'contract'." },
   { title: "Ask one question at a time", details: "Breaking down complex questions ensures better answers." },
   { title: "Include relevant details", details: "Specify important context, like names, dates, or locations, to guide the chatbot's response." },
@@ -169,10 +169,10 @@ function AboutTab() {
     <Stack spacing={3} sx={{ mt: 3 }}>
       <Paper sx={{ p: 3 }}>
         <Typography variant="h4" component="h2" gutterBottom>
-          Assistive Buyer Engine
+          Sonar
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          ABE is an AI-powered assistant designed for the Massachusetts Executive Office
+          Sonar is an AI-powered assistant designed for the Massachusetts Executive Office
           to provide guidance on state procurement processes. It uses advanced language
           models and a curated knowledge base of procurement documentation to help users
           find answers quickly and accurately.
@@ -184,7 +184,7 @@ function AboutTab() {
           How It Works
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          ABE uses Retrieval-Augmented Generation (RAG) to search through official
+          Sonar uses Retrieval-Augmented Generation (RAG) to search through official
           procurement documents and provide contextually relevant answers. Source
           documents are linked with each response so you can verify the information.
         </Typography>
@@ -195,7 +195,7 @@ function AboutTab() {
           Important Notes
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          ABE provides guidance based on available documentation. Always verify
+          Sonar provides guidance based on available documentation. Always verify
           critical procurement decisions with official policies and consult with
           your procurement team for complex situations.
         </Typography>
@@ -212,8 +212,8 @@ function SupportTab() {
           Need Help?
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          If you encounter any issues or have questions about using ABE,
-          please reach out to your system administrator or the ABE support team.
+          If you encounter any issues or have questions about using Sonar,
+          please reach out to your system administrator or the Sonar support team.
         </Typography>
       </Paper>
 
@@ -223,7 +223,7 @@ function SupportTab() {
         </Typography>
         <Typography variant="body1" color="text.secondary">
           Use the thumbs-down feedback button on any response to report
-          inaccurate or unhelpful answers. Your feedback helps improve ABE&apos;s
+          inaccurate or unhelpful answers. Your feedback helps improve Sonar&apos;s
           accuracy over time.
         </Typography>
       </Paper>
@@ -257,7 +257,7 @@ export default function HelpPage() {
         sx={{ borderBottom: 1, borderColor: "divider" }}
       >
         <Tab label="Tips & Questions" id="help-tab-0" aria-controls="help-tabpanel-0" />
-        <Tab label="About ABE" id="help-tab-1" aria-controls="help-tabpanel-1" />
+        <Tab label="About Sonar" id="help-tab-1" aria-controls="help-tabpanel-1" />
         <Tab label="Support" id="help-tab-2" aria-controls="help-tabpanel-2" />
       </Tabs>
 

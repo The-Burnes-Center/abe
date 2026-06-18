@@ -7,16 +7,16 @@ export default function AboutChatbot() {
   return (
     <Box component="section" aria-labelledby="about-chatbot-heading">
       <Typography id="about-chatbot-heading" variant="h4" component="h2" gutterBottom>
-        About ABE
+        About Sonar
       </Typography>
 
       <Stack spacing={3}>
         <Paper sx={{ p: 3 }}>
           <Typography variant="h5" component="h3" gutterBottom>
-            Assistive Buyer Engine
+            Sonar
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            ABE is an AI-powered assistant designed for the Massachusetts Executive Office
+            Sonar is an AI-powered assistant designed for the Massachusetts Executive Office
             to provide guidance on state procurement processes. It uses advanced language
             models and a curated knowledge base of procurement documentation to help users
             find answers quickly and accurately.
@@ -28,7 +28,7 @@ export default function AboutChatbot() {
             How It Works
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            ABE uses Retrieval-Augmented Generation (RAG) to search through official
+            Sonar uses Retrieval-Augmented Generation (RAG) to search through official
             procurement documents and provide contextually relevant answers. Source
             documents are linked with each response so you can verify the information.
           </Typography>

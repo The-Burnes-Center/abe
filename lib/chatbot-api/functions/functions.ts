@@ -1,5 +1,5 @@
 /**
- * Lambda functions, event sources, and IAM policies for the ABE chatbot.
+ * Lambda functions, event sources, and IAM policies for the chatbot.
  *
  * Functions are grouped by domain:
  *
@@ -56,6 +56,10 @@ import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import { S3EventSource, SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { StepFunctionsStack } from './step-functions/step-functions';
+import { brand } from '../../../config/brand';
+
+/** Prompt-registry partition key, derived from the brand slug (e.g. "SONAR_CHAT"). */
+const PROMPT_FAMILY = `${brand.slug.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_CHAT`;
 
 interface LambdaFunctionStackProps {
   readonly wsApiEndpoint: string;
@@ -134,7 +138,7 @@ export class LambdaFunctionStack extends Construct {
     const pythonCommonLayer = new lambda.LayerVersion(scope, 'PythonCommonLayer', {
       code: lambda.Code.fromAsset(path.join(__dirname, 'layers/python-common')),
       compatibleRuntimes: [lambda.Runtime.PYTHON_3_12],
-      description: 'Shared Python utilities for ABE Lambda handlers',
+      description: 'Shared Python utilities for Lambda handlers',
     });
 
     // ─── Chat Domain ────────────────────────────────────────────────────
@@ -187,7 +191,11 @@ export class LambdaFunctionStack extends Construct {
             'FAST_MODEL_ID': process.env.FAST_MODEL_ID || 'us.anthropic.claude-sonnet-4-6',
             'PROMPT_REGISTRY_TABLE': props.promptRegistryTable.tableName,
             'RESPONSE_TRACE_TABLE': props.responseTraceTable.tableName,
-            'PROMPT_FAMILY': 'ABE_CHAT',
+            'PROMPT_FAMILY': PROMPT_FAMILY,
+            'ASSISTANT_NAME': brand.assistantName,
+            'ORGANIZATION': brand.organizationName,
+            'SUPPORT_CONTACT': brand.supportContact,
+            'DOMAIN_CONTEXT': brand.domainContext,
           },
           // 15 min is the AWS Lambda max. Long agentic loops (e.g. exhaustive
           // KB sweeps for "list all X" questions) can legitimately use most of
@@ -269,7 +277,7 @@ export class LambdaFunctionStack extends Construct {
         "RESPONSE_TRACE_TABLE": props.responseTraceTable.tableName,
         "PROMPT_REGISTRY_TABLE": props.promptRegistryTable.tableName,
         "MONITORING_CASES_TABLE": props.monitoringCasesTable.tableName,
-        "PROMPT_FAMILY": "ABE_CHAT",
+        "PROMPT_FAMILY": PROMPT_FAMILY,
         "FEEDBACK_ANALYSIS_MODEL_ID": process.env.FAST_MODEL_ID || "us.anthropic.claude-sonnet-4-6",
         "PROMPT_REWRITE_MODEL_ID": process.env.PRIMARY_MODEL_ID || "us.anthropic.claude-opus-4-6-v1",
         "FEEDBACK_TO_TEST_LIBRARY_QUEUE_URL": props.feedbackToTestLibraryQueue.queueUrl,
@@ -1102,7 +1110,7 @@ schedulerRole.addToPolicy(new iam.PolicyStatement({
   resources: [syncOrchestratorFunction.functionArn],
 }));
 
-const scheduleGroup = new scheduler.CfnScheduleGroup(scope, 'ABESyncScheduleGroup', {
+const scheduleGroup = new scheduler.CfnScheduleGroup(scope, 'SyncScheduleGroup', {
   name: `${cdk.Stack.of(scope).stackName}-SyncScheduleGroup`,
 });
 

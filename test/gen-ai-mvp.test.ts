@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { GenAiMvpStack } from '../lib/gen-ai-mvp-stack';
+import { brand } from '../config/brand';
 
 // Instantiate the stack once; synth is triggered lazily by Template.fromStack.
 function buildTemplate(): Template {
@@ -164,11 +165,11 @@ describe('Lambda functions', () => {
     });
   });
 
-  test('chat handler has 300-second timeout', () => {
-    // websocketAPIFunction is given a 300 s timeout
+  test('chat handler has a 15-minute timeout', () => {
+    // ChatHandlerFunction uses the 15-min (900 s) Lambda max for long agentic loops
     template.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs20.x',
-      Timeout: 300,
+      Timeout: 900,
     });
   });
 
@@ -421,9 +422,9 @@ describe('SQS queues', () => {
 describe('Stack tags', () => {
   // Tags are applied via cdk.Tags.of(this).add() and appear in the
   // CloudFormation template under each resource's Tags array.
-  test('Project=ABE tag is applied to Lambda functions', () => {
+  test('Project tag is applied to Lambda functions', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
-      Tags: Match.arrayWith([{ Key: 'Project', Value: 'ABE' }]),
+      Tags: Match.arrayWith([{ Key: 'Project', Value: brand.slug }]),
     });
   });
 

@@ -122,7 +122,7 @@ export class StepFunctionsStack extends Construct {
                 'METADATA_RETRIEVAL_FUNCTION': process.env.METADATA_RETRIEVAL_FUNCTION || '',
                 'PRIMARY_MODEL_ID': process.env.PRIMARY_MODEL_ID || 'us.anthropic.claude-sonnet-4-20250514-v1:0',
                 'PROMPT_REGISTRY_TABLE': props.promptRegistryTable.tableName,
-                'PROMPT_FAMILY': 'ABE_CHAT',
+                'PROMPT_FAMILY': 'ASSISTANT_CHAT',
             },
             timeout: cdk.Duration.seconds(60),
         });

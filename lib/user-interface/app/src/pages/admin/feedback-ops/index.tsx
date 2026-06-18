@@ -361,7 +361,7 @@ export default function FeedbackOpsPage() {
   return (
     <AdminPageLayout
       title="Feedback Manager"
-      description="Review user feedback, spot trends, and improve ABE's responses."
+      description="Review user feedback, spot trends, and improve Sonar's responses."
       breadcrumbLabel="Feedback Manager"
     >
       {feedbackId ? (

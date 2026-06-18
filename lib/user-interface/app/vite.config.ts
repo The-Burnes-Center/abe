@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 import fs from "fs";
 import path from "path";
 import react from "@vitejs/plugin-react";
+import { brand } from "./src/common/brand";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -12,6 +13,20 @@ export default defineConfig({
     "process.env": {},
   },
   plugins: [
+    {
+      // Inject brand identity (from config/brand.ts via the generated brand.ts)
+      // into index.html placeholders, at dev and build time.
+      name: "brand-html",
+      transformIndexHtml(html: string) {
+        return html
+          .replace(/%APP_TITLE%/g, brand.assistantName)
+          .replace(/%APP_DESCRIPTION%/g, brand.tagline)
+          .replace(/%APP_FONT_URL%/g, brand.fontUrl)
+          .replace(/%APP_FAVICON%/g, brand.assets.favicon)
+          .replace(/%APP_THEME_LIGHT%/g, brand.themeColorLight)
+          .replace(/%APP_THEME_DARK%/g, brand.themeColorDark);
+      },
+    },
     isDev && {
       name: "aws-exports",
       writeBundle() {

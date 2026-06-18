@@ -1,5 +1,5 @@
 /**
- * AppConfigured -- Authentication gate and theme bootstrap for the ABE app.
+ * AppConfigured -- Authentication gate and theme bootstrap for the Sonar app.
  *
  * This component controls the entire initialization sequence before the
  * main `<App />` tree is rendered:

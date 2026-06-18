@@ -4,7 +4,7 @@ import { axe } from "vitest-axe";
 import { MemoryRouter } from "react-router-dom";
 
 import NotFoundPage from "../../pages/not-found";
-import SkipLink from "../../components/mds/SkipLink";
+import SkipLink from "../../components/skip-link";
 import LandingPage from "../../pages/landing-page";
 import LandingPageInfo from "../../pages/landing-page-info";
 import LandingPageStart from "../../pages/landing-page-start";

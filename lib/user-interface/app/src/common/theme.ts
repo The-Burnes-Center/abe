@@ -1,5 +1,9 @@
 /**
- * theme.ts -- Design-token system and MUI theme factory for ABE.
+ * theme.ts -- Design-token system and MUI theme factory.
+ *
+ * Brand-identity colors and the font family come from `config/brand.ts`
+ * (via the generated `./brand` module) and overlay the neutral default
+ * tokens below, so re-skinning is a single-file change.
  *
  * All visual primitives (colors, radii, shadows, transitions) are
  * defined in the `tokens` object as a single source of truth. The
@@ -11,7 +15,7 @@
  * Every time the theme is built via `buildTheme()`, the helper
  * `applyTokensAsCSSVars()` writes the active token values onto
  * `document.documentElement` as CSS custom properties prefixed with
- * `--abe-` (e.g. `--abe-primary`, `--abe-radius-sm`). This allows
+ * `--app-` (e.g. `--app-primary`, `--app-radius-sm`). This allows
  * non-MUI code (plain CSS, Amplify UI, third-party components) to
  * consume the same palette without importing this module.
  *
@@ -24,10 +28,11 @@
  *
  * The returned MUI `Theme` wires tokens into `palette`, `typography`,
  * `shadows`, `shape`, and per-component style overrides so that
- * standard MUI components render consistently with the ABE design.
+ * standard MUI components render consistently with the app design.
  */
 import { createTheme, type Theme } from "@mui/material/styles";
 import type { ThemeMode } from "./helpers/storage-helper";
+import { brand } from "./brand";
 
 /** Width (px) of the navigation drawer, shared between theme and layout. */
 export const DRAWER_WIDTH = 280;
@@ -153,32 +158,32 @@ export const tokens = {
  *
  * Called internally by `buildTheme()` every time the mode changes. This
  * makes the palette available to plain CSS and non-React components via
- * variables like `var(--abe-primary)`, `var(--abe-radius-sm)`, etc.
+ * variables like `var(--app-primary)`, `var(--app-radius-sm)`, etc.
  *
  * Only color, radius, shadow, and transition tokens are injected -- the
  * full typography scale lives exclusively in the MUI theme object.
  */
 function applyTokensAsCSSVars(mode: ThemeMode) {
-  const c = tokens.colors[mode];
+  // Brand-driven colors (config/brand.ts) overlay the neutral default tokens.
+  const c = { ...tokens.colors[mode], ...(mode === "dark" ? brand.colorsDark : brand.colorsLight) };
   const root = document.documentElement;
-  // Surface the active mode to plain CSS so non-MUI components (e.g. the
-  // Mayflower footer, which ships with hardcoded light-mode styles) can
-  // override their colors via `[data-theme="dark"]` selectors in app.scss.
+  // Surface the active mode to plain CSS via the [data-theme] attribute so
+  // non-MUI / third-party components can override their colors for dark mode.
   root.setAttribute("data-theme", mode);
   Object.entries(c).forEach(([key, value]) => {
-    root.style.setProperty(`--abe-${key}`, value);
+    root.style.setProperty(`--app-${key}`, value);
   });
-  root.style.setProperty("--abe-radius-xs", `${tokens.radii.xs}px`);
-  root.style.setProperty("--abe-radius-sm", `${tokens.radii.sm}px`);
-  root.style.setProperty("--abe-radius-md", `${tokens.radii.md}px`);
-  root.style.setProperty("--abe-radius-lg", `${tokens.radii.lg}px`);
-  root.style.setProperty("--abe-radius-xl", `${tokens.radii.xl}px`);
-  root.style.setProperty("--abe-shadow-xs", tokens.shadows.xs);
-  root.style.setProperty("--abe-shadow-sm", tokens.shadows.sm);
-  root.style.setProperty("--abe-shadow-md", tokens.shadows.md);
-  root.style.setProperty("--abe-shadow-lg", tokens.shadows.lg);
-  root.style.setProperty("--abe-transition-fast", tokens.transitions.fast);
-  root.style.setProperty("--abe-transition-normal", tokens.transitions.normal);
+  root.style.setProperty("--app-radius-xs", `${tokens.radii.xs}px`);
+  root.style.setProperty("--app-radius-sm", `${tokens.radii.sm}px`);
+  root.style.setProperty("--app-radius-md", `${tokens.radii.md}px`);
+  root.style.setProperty("--app-radius-lg", `${tokens.radii.lg}px`);
+  root.style.setProperty("--app-radius-xl", `${tokens.radii.xl}px`);
+  root.style.setProperty("--app-shadow-xs", tokens.shadows.xs);
+  root.style.setProperty("--app-shadow-sm", tokens.shadows.sm);
+  root.style.setProperty("--app-shadow-md", tokens.shadows.md);
+  root.style.setProperty("--app-shadow-lg", tokens.shadows.lg);
+  root.style.setProperty("--app-transition-fast", tokens.transitions.fast);
+  root.style.setProperty("--app-transition-normal", tokens.transitions.normal);
 }
 
 /**
@@ -193,7 +198,8 @@ function applyTokensAsCSSVars(mode: ThemeMode) {
  */
 export function buildTheme(mode: ThemeMode): Theme {
   applyTokensAsCSSVars(mode);
-  const c = tokens.colors[mode];
+  // Brand-driven colors (config/brand.ts) overlay the neutral default tokens.
+  const c = { ...tokens.colors[mode], ...(mode === "dark" ? brand.colorsDark : brand.colorsLight) };
 
   return createTheme({
     palette: {
@@ -209,8 +215,7 @@ export function buildTheme(mode: ThemeMode): Theme {
     },
     shape: { borderRadius: tokens.radii.sm },
     typography: {
-      fontFamily:
-        '"Inter", "Open Sans", "Helvetica Neue", Roboto, Arial, sans-serif',
+      fontFamily: brand.fontFamily,
       h1: { fontSize: "2rem", fontWeight: 700, lineHeight: 1.25, letterSpacing: "-0.02em" },
       h2: { fontSize: "1.5rem", fontWeight: 700, lineHeight: 1.3, letterSpacing: "-0.01em" },
       h3: { fontSize: "1.25rem", fontWeight: 600, lineHeight: 1.4 },
@@ -491,7 +496,7 @@ export function buildTheme(mode: ThemeMode): Theme {
               backgroundColor: c.tableStripeBg,
             },
             "&:hover": {
-              backgroundColor: mode === "light" ? "rgba(20,85,143,0.04)" : "rgba(109,179,242,0.06)",
+              backgroundColor: c.hoverBg,
             },
           },
         },

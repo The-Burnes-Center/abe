@@ -51,8 +51,8 @@
 
 ### Strengths
 
-- Visually hidden `h1` “ABE Chat”; message region `aria-live="polite"`; completion `aria-live="assertive"` sr-only span.
-- Input `aria-label="Type your message to ABE"`; send / mic / stop buttons labeled.
+- Visually hidden `h1` “Sonar Chat”; message region `aria-live="polite"`; completion `aria-live="assertive"` sr-only span.
+- Input `aria-label="Type your message to Sonar"`; send / mic / stop buttons labeled.
 - Suggested prompts use `aria-label` including full prompt text.
 - Errors use `addNotification` (not raw stack traces in UI).
 

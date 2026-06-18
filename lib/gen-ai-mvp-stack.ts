@@ -5,6 +5,7 @@ import { ChatBotApi } from "./chatbot-api";
 import { cognitoDomainName } from "./constants";
 import { AuthorizationStack } from "./authorization";
 import { UserInterface } from "./user-interface";
+import { brand } from "../config/brand";
 
 export class GenAiMvpStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -35,10 +36,10 @@ export class GenAiMvpStack extends cdk.Stack {
     const tagOpts = {
       excludeResourceTypes: ['AWS::OpenSearchServerless::Collection'],
     };
-    cdk.Tags.of(this).add('Project', 'ABE', tagOpts);
-    cdk.Tags.of(this).add('Environment', id, tagOpts); // e.g. ABEStackNonProd
+    cdk.Tags.of(this).add('Project', brand.slug, tagOpts);
+    cdk.Tags.of(this).add('Environment', id, tagOpts); // e.g. SonarStack
     cdk.Tags.of(this).add('ManagedBy', 'CDK', tagOpts);
-    cdk.Tags.of(this).add('DataClass', 'Sensitive', tagOpts); // government procurement data
+    cdk.Tags.of(this).add('DataClass', 'Sensitive', tagOpts); // application data
 
     this.addNagSuppressions();
   }

@@ -1,14 +1,18 @@
 {
-  "name": "gen-ai-mvp",
+  "name": "sonar",
   "version": "0.1.0",
   "bin": {
     "gen-ai-mvp": "bin/gen-ai-mvp.js"
   },
   "scripts": {
+    "brand:sync": "ts-node scripts/sync-brand.ts",
+    "prebuild": "ts-node scripts/sync-brand.ts",
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
     "test:lambda": "vitest run lib/chatbot-api/functions/websocket-chat",
+    "synth": "ts-node scripts/sync-brand.ts && cdk synth",
+    "deploy": "ts-node scripts/sync-brand.ts && cdk deploy",
     "cdk": "cdk"
   },
   "devDependencies": {
@@ -26,7 +30,6 @@
     "@aws-sdk/s3-request-presigner": "^3.689.0",
     "@emotion/react": "^11.13.5",
     "@emotion/styled": "^11.13.5",
-    "@massds/mayflower-assets": "^13.1.0",
     "@mui/icons-material": "^6.4.7",
     "@mui/material": "^6.1.8",
     "@mui/styled-engine-sc": "^6.1.8",
