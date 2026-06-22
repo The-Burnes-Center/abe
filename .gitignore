@@ -20,3 +20,6 @@ cdk.out
 # regenerable; the final GIFs the README embeds live in docs/demos/ (tracked).
 demo-recordings/
 _preview*.png
+
+# AWS CLI installer (downloaded binary, not needed in repo)
+awscliv2.zip
