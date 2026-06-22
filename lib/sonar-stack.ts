@@ -7,7 +7,7 @@ import { AuthorizationStack } from "./authorization";
 import { UserInterface } from "./user-interface";
 import { brand } from "../config/brand";
 
-export interface GenAiMvpStackProps extends cdk.StackProps {
+export interface SonarStackProps extends cdk.StackProps {
   // Custom domain (CloudFront alternate domain name) + its ACM certificate ARN (us-east-1).
   // Supplied per-deployment via CDK context / env vars (never hardcoded), so each branch and
   // account that deploys this code provides its own values — or none, in which case the app
@@ -16,8 +16,8 @@ export interface GenAiMvpStackProps extends cdk.StackProps {
   readonly certificateArn?: string;
 }
 
-export class GenAiMvpStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: GenAiMvpStackProps) {
+export class SonarStack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props?: SonarStackProps) {
     super(scope, id, props);
 
     const alarmEmail = this.node.tryGetContext('alarmEmail') as string | undefined;
@@ -74,10 +74,11 @@ export class GenAiMvpStack extends cdk.Stack {
     const tagOpts = {
       excludeResourceTypes: ['AWS::OpenSearchServerless::Collection'],
     };
+    const env = process.env.ENVIRONMENT === 'prod' ? 'prod' : 'dev';
     cdk.Tags.of(this).add('Project', brand.slug, tagOpts);
-    cdk.Tags.of(this).add('Environment', id, tagOpts); // e.g. SonarStack
-    cdk.Tags.of(this).add('ManagedBy', 'CDK', tagOpts);
-    cdk.Tags.of(this).add('DataClass', 'Sensitive', tagOpts); // application data
+    cdk.Tags.of(this).add('Environment', env, tagOpts);
+    cdk.Tags.of(this).add('ManagedBy', 'cdk', tagOpts);
+    cdk.Tags.of(this).add('Owner', 'burnes-center', tagOpts);
 
     this.addNagSuppressions();
   }
