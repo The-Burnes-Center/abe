@@ -100,7 +100,7 @@ scripts/sync-brand.ts            # generates the frontend brand module + manifes
 bin/                             # CDK app entry point
 lib/
   constants.ts                   # stack / Cognito / OIDC names (derived from brand.slug)
-  gen-ai-mvp-stack.ts            # root CDK stack + tags
+  sonar-stack.ts            # root CDK stack + tags
   authorization/                 # Cognito user pool + hosted-login branding + WS JWT authorizer
   chatbot-api/                   # tables, buckets, OpenSearch, Bedrock KB, monitoring, Lambdas
     functions/websocket-chat/    # chat handler: agentic loop, prompt, tools, citations

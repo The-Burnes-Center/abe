@@ -2,7 +2,7 @@
   "name": "sonar",
   "version": "0.1.0",
   "bin": {
-    "gen-ai-mvp": "bin/gen-ai-mvp.js"
+    "sonar": "bin/sonar.js"
   },
   "scripts": {
     "brand:sync": "ts-node scripts/sync-brand.ts",

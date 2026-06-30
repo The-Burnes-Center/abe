@@ -3,7 +3,7 @@ import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
 import { Aspects } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
-import { GenAiMvpStack } from '../lib/gen-ai-mvp-stack';
+import { SonarStack } from '../lib/sonar-stack';
 import { stackName } from "../lib/constants";
 
 const app = new cdk.App();
@@ -17,7 +17,7 @@ const customDomain =
 const certificateArn =
   (app.node.tryGetContext('certificateArn') as string | undefined) ?? process.env.CERTIFICATE_ARN;
 
-new GenAiMvpStack(app, stackName, {
+new SonarStack(app, stackName, {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION,
