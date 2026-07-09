@@ -1,8 +1,8 @@
 {
   "id": "/",
   "start_url": "/",
-  "name": "Sonar",
-  "short_name": "Sonar",
+  "name": "ABE - Assistive Buyers Engine",
+  "short_name": "ABE - Assistive Buyers Engine",
   "description": "Ask anything about your knowledge base.",
   "theme_color": "#FFFFFF",
   "background_color": "#FFFFFF",

@@ -1,18 +1,18 @@
 {
-  "name": "sonar",
+  "name": "abe",
   "version": "0.1.0",
   "bin": {
-    "sonar": "bin/sonar.js"
+    "abe": "bin/abe.js"
   },
   "scripts": {
-    "brand:sync": "ts-node scripts/sync-brand.ts",
-    "prebuild": "ts-node scripts/sync-brand.ts",
+    "brand:sync": "ts-node --prefer-ts-exts scripts/sync-brand.ts",
+    "prebuild": "ts-node --prefer-ts-exts scripts/sync-brand.ts",
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
     "test:lambda": "vitest run lib/chatbot-api/functions/websocket-chat",
-    "synth": "ts-node scripts/sync-brand.ts && cdk synth",
-    "deploy": "ts-node scripts/sync-brand.ts && cdk deploy",
+    "synth": "ts-node --prefer-ts-exts scripts/sync-brand.ts && cdk synth",
+    "deploy": "ts-node --prefer-ts-exts scripts/sync-brand.ts && cdk deploy",
     "cdk": "cdk",
     "record-demo": "node scripts/record-demo.mjs"
   },

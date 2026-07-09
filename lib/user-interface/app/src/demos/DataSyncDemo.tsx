@@ -177,7 +177,7 @@ export default function DataSyncDemo() {
             <Box sx={{ mb: 2.5 }}>
               <Typography sx={{ fontSize: "0.8125rem", mb: 0.75 }}>
                 <Box component="span" sx={{ color: "text.secondary" }}>
-                  Sonar
+                  ABE
                 </Box>
                 <Box component="span" sx={{ color: "text.secondary", mx: 0.75 }}>
                   ›

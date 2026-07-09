@@ -7,7 +7,7 @@ import { AuthorizationStack } from "./authorization";
 import { UserInterface } from "./user-interface";
 import { brand } from "../config/brand";
 
-export interface SonarStackProps extends cdk.StackProps {
+export interface ABEStackProps extends cdk.StackProps {
   // Custom domain (CloudFront alternate domain name) + its ACM certificate ARN (us-east-1).
   // Supplied per-deployment via CDK context / env vars (never hardcoded), so each branch and
   // account that deploys this code provides its own values — or none, in which case the app
@@ -16,8 +16,8 @@ export interface SonarStackProps extends cdk.StackProps {
   readonly certificateArn?: string;
 }
 
-export class SonarStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: SonarStackProps) {
+export class ABEStack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props?: ABEStackProps) {
     super(scope, id, props);
 
     const alarmEmail = this.node.tryGetContext('alarmEmail') as string | undefined;

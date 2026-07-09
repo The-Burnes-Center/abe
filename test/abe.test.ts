@@ -1,12 +1,12 @@
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { SonarStack } from '../lib/sonar-stack';
+import { ABEStack } from '../lib/abe-stack';
 import { brand } from '../config/brand';
 
 // Instantiate the stack once; synth is triggered lazily by Template.fromStack.
 function buildTemplate(): Template {
   const app = new cdk.App();
-  const stack = new SonarStack(app, 'TestStack');
+  const stack = new ABEStack(app, 'TestStack');
   return Template.fromStack(stack);
 }
 
@@ -428,9 +428,9 @@ describe('Stack tags', () => {
     });
   });
 
-  test('ManagedBy=CDK tag is applied to Lambda functions', () => {
+  test('ManagedBy=cdk tag is applied to Lambda functions', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
-      Tags: Match.arrayWith([{ Key: 'ManagedBy', Value: 'CDK' }]),
+      Tags: Match.arrayWith([{ Key: 'ManagedBy', Value: 'cdk' }]),
     });
   });
 });

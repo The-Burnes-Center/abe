@@ -157,7 +157,7 @@ export default function MetricsDemo() {
             {/* Header */}
             <Box className="app-metrics-head">
               <Box className="app-crumb">
-                <span>Sonar</span>
+                <span>ABE</span>
                 <span className="sep">›</span>
                 <span className="leaf">Analytics</span>
               </Box>

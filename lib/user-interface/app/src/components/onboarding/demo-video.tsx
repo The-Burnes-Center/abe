@@ -11,7 +11,7 @@ import Box from "@mui/material/Box";
 import useMediaQuery from "@mui/material/useMediaQuery";
 
 /** Served from lib/user-interface/app/public/. Record with `npm run record-demo`. */
-const DEFAULT_SRC = "/demos/sonar-chat.mp4";
+const DEFAULT_SRC = "/demos/abe-chat.mp4";
 /** Recorded at 1100×898 — pin the box so layout doesn't jump before load. */
 const ASPECT_RATIO = "1100 / 898";
 const DEFAULT_LABEL =

@@ -57,7 +57,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { StepFunctionsStack } from './step-functions/step-functions';
 import { brand } from '../../../config/brand';
 
-/** Prompt-registry partition key, derived from the brand slug (e.g. "SONAR_CHAT"). */
+/** Prompt-registry partition key, derived from the brand slug (e.g. "ABE_CHAT"). */
 const PROMPT_FAMILY = `${brand.slug.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_CHAT`;
 
 interface LambdaFunctionStackProps {

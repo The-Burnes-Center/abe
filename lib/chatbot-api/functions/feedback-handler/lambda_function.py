@@ -255,7 +255,7 @@ def build_follow_up_questions(issue_tags: list[str]) -> list[dict[str, str]]:
             {
                 "id": "userComment",
                 "label": "What were you trying to do?",
-                "prompt": "Tell us the real goal so Sonar can be corrected.",
+                "prompt": "Tell us the real goal so ABE can be corrected.",
             }
         )
     if "bad_source" in tag_set:
@@ -279,7 +279,7 @@ def build_follow_up_questions(issue_tags: list[str]) -> list[dict[str, str]]:
             {
                 "id": "userComment",
                 "label": "Additional context",
-                "prompt": "Share any details that will help us improve Sonar.",
+                "prompt": "Share any details that will help us improve ABE.",
             }
         )
     return follow_ups
@@ -1064,7 +1064,7 @@ def ai_suggest_prompt(event: dict[str, Any], version_id: str):
             }
         ]
 
-    system_prompt = """You are an expert prompt engineer editing the system prompt for Sonar, an internal RAG chatbot that helps users find answers grounded in a knowledge base.
+    system_prompt = """You are an expert prompt engineer editing the system prompt for ABE, an internal RAG chatbot that helps users find answers grounded in a knowledge base.
 
 Your job: apply TARGETED, MINIMAL edits to the current prompt based on user feedback. Do NOT rewrite from scratch. Preserve the original structure, tone, section ordering, and wording as much as possible. Only change lines directly related to the feedback issues.
 

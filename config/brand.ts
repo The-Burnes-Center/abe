@@ -1,7 +1,7 @@
 /**
  * config/brand.ts — Single source of truth for all white-label brand identity.
  *
- * This is the ONE file to edit when deploying Sonar under a new brand. It is
+ * This is the ONE file to edit when deploying under a new brand. It is
  * imported directly by the CDK/backend code. The frontend (a separately
  * bundled Vite app) cannot import files outside its own directory, so a
  * generated copy is written to `lib/user-interface/app/src/common/brand.ts`
@@ -46,7 +46,7 @@ export interface BrandColors {
 export interface BrandConfig {
   /** Lowercase, URL/resource-safe id. Drives stack name, Cognito domain, tags, dashboards. */
   slug: string;
-  /** The assistant's display name (replaces "Sonar"). */
+  /** The assistant's display name. */
   assistantName: string;
   /** Owning organization, shown in UI and used in the system prompt. */
   organizationName: string;
@@ -92,8 +92,8 @@ const palette: BrandPalette = {
 };
 
 export const brand: BrandConfig = {
-  slug: env("BRAND_SLUG", "sonar"),
-  assistantName: env("ASSISTANT_NAME", "Sonar"),
+  slug: env("BRAND_SLUG", "abe"),
+  assistantName: env("ASSISTANT_NAME", "ABE - Assistive Buyers Engine"),
   organizationName: env("ORGANIZATION_NAME", "Burnes Center for Social Change"),
   parentOrg: env("PARENT_ORG", "Northeastern University"),
   tagline: env("BRAND_TAGLINE", "Ask anything about your knowledge base."),

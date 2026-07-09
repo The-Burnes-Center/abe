@@ -118,7 +118,7 @@ interface SendOpts {
 
 function makeOpts(overrides: Partial<SendOpts> = {}): SendOpts {
   return {
-    userMessage: "Hello Sonar",
+    userMessage: "Hello ABE",
     userId: "user-123",
     sessionId: "session-456",
     messageHistory: [],
@@ -172,7 +172,7 @@ describe("useWebSocketChat", () => {
     expect(ws.sent).toHaveLength(1);
     const payload = JSON.parse(ws.sent[0]);
     expect(payload.action).toBe("getChatbotResponse");
-    expect(payload.data.userMessage).toBe("Hello Sonar");
+    expect(payload.data.userMessage).toBe("Hello ABE");
     expect(payload.data.user_id).toBe("user-123");
     expect(payload.data.session_id).toBe("session-456");
   });

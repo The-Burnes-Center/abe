@@ -1,6 +1,6 @@
-# Sonar Accessibility (WCAG 2.1 AA)
+# ABE Accessibility (WCAG 2.1 AA)
 
-Sonar targets **WCAG 2.1 AA**. This document captures
+ABE targets **WCAG 2.1 AA**. This document captures
 the accessibility patterns we follow, how to test changes, and known
 limitations.
 
@@ -31,7 +31,7 @@ limitations.
 - Tab from page load. Expected order:
   1. Mass.gov BrandBanner expansion toggle
   2. "Skip to main content" link (`components/mds/SkipLink.tsx`)
-  3. Sonar GlobalHeader items (logo, help, theme, account)
+  3. ABE GlobalHeader items (logo, help, theme, account)
   4. NavigationPanel items (sidebar routes only)
   5. Main content interactive elements
   6. Mass.gov Footer links
@@ -55,23 +55,23 @@ limitations.
 ## Routes covered
 
 Document titles are produced by `useDocumentTitle(...)` in
-`src/common/hooks/use-document-title.ts`, which appends ` | Sonar`.
+`src/common/hooks/use-document-title.ts`, which appends ` | ABE`.
 
 | Route | Document title | Notes |
 | ----- | -------------- | ----- |
-| `/` | Home \| Sonar | Public landing page |
-| `/about` | About \| Sonar | Public about page |
-| `/get-started` | Get started \| Sonar | Public CTA page |
-| `/chatbot/playground/:sessionId` | Chat \| Sonar | Streaming responses use `role="log"` + `aria-live="polite"` |
-| `/chatbot/sessions` | Chat sessions \| Sonar | List with `aria-current` on active row |
-| `/admin/data` | Admin · Data \| Sonar | Tables with `aria-sort` |
-| `/admin/metrics` | Admin · Metrics \| Sonar | MUI charts have `aria-label`; consider tabular alternative |
-| `/admin/user-feedback` | Admin · User feedback \| Sonar | Drawer dialogs with `role="dialog"` + `aria-modal` |
-| `/admin/user-feedback/:feedbackId` | Admin · User feedback \| Sonar | Detail view |
-| `/admin/llm-evaluation` | Admin · LLM evaluation \| Sonar | Sortable result tables |
-| `/admin/llm-evaluation/:evaluationId` | Admin · Evaluation details \| Sonar | |
-| `/help` | Help \| Sonar | Single `<h1>`, semantic sections, tabbed panels with `role="tabpanel"` |
-| `*` (wildcard) | Page not found \| Sonar | Clear "Return to home" CTA |
+| `/` | Home \| ABE | Public landing page |
+| `/about` | About \| ABE | Public about page |
+| `/get-started` | Get started \| ABE | Public CTA page |
+| `/chatbot/playground/:sessionId` | Chat \| ABE | Streaming responses use `role="log"` + `aria-live="polite"` |
+| `/chatbot/sessions` | Chat sessions \| ABE | List with `aria-current` on active row |
+| `/admin/data` | Admin · Data \| ABE | Tables with `aria-sort` |
+| `/admin/metrics` | Admin · Metrics \| ABE | MUI charts have `aria-label`; consider tabular alternative |
+| `/admin/user-feedback` | Admin · User feedback \| ABE | Drawer dialogs with `role="dialog"` + `aria-modal` |
+| `/admin/user-feedback/:feedbackId` | Admin · User feedback \| ABE | Detail view |
+| `/admin/llm-evaluation` | Admin · LLM evaluation \| ABE | Sortable result tables |
+| `/admin/llm-evaluation/:evaluationId` | Admin · Evaluation details \| ABE | |
+| `/help` | Help \| ABE | Single `<h1>`, semantic sections, tabbed panels with `role="tabpanel"` |
+| `*` (wildcard) | Page not found \| ABE | Clear "Return to home" CTA |
 
 Legacy routes that redirect (no titled page):
 

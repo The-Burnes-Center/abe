@@ -284,7 +284,7 @@ export default function EvalDemo() {
         <AppShell active="quality">
           <Box sx={{ height: "100%", overflow: "hidden" }}>
             <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mb: 0.5 }}>
-              Sonar&nbsp;&nbsp;›&nbsp;&nbsp;Quality Monitoring
+              ABE&nbsp;&nbsp;›&nbsp;&nbsp;Quality Monitoring
             </Typography>
             <Typography variant="h2" component="h1">
               Quality Monitoring

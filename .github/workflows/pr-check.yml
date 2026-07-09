@@ -129,7 +129,7 @@ jobs:
       - name: CDK diff
         id: diff
         run: |
-          npx cdk diff SonarStack 2>&1 | head -300 > cdk-diff.txt || true
+          npx cdk diff ABEStack 2>&1 | head -300 > cdk-diff.txt || true
 
       - name: Post CDK diff as PR comment
         uses: actions/github-script@v7

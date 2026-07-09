@@ -1,4 +1,4 @@
-# Sonar
+# ABE
 
 Configurable, white-label AI assistant — a grounded RAG + agentic chatbot you can point at any knowledge base. Combines a Bedrock Knowledge Base (semantic RAG over your documents) with structured Excel/tabular indexes through an agentic tool-use loop. Brand, copy, and domain are set in [config/brand.ts](config/brand.ts).
 
@@ -33,10 +33,10 @@ npm run dev          # Local dev server (port 3000)
 npm run build        # Production build
 
 # Deploy
-npx cdk synth SonarStack          # Preview CloudFormation
-npx cdk diff SonarStack           # Diff against deployed
-npx cdk deploy SonarStack         # Deploy stack
-npx cdk deploy SonarStack -c alarmEmail=you@example.com  # With alerts
+npx cdk synth ABEStack          # Preview CloudFormation
+npx cdk diff ABEStack           # Diff against deployed
+npx cdk deploy ABEStack         # Deploy stack
+npx cdk deploy ABEStack -c alarmEmail=you@example.com  # With alerts
 ```
 
 ## Architecture
@@ -73,9 +73,9 @@ npx cdk deploy SonarStack -c alarmEmail=you@example.com  # With alerts
 ### Key Files
 | File | Role |
 |------|------|
-| [bin/sonar.ts](bin/sonar.ts) | CDK app entry point + cdk-nag AwsSolutionsChecks |
+| [bin/abe.ts](bin/abe.ts) | CDK app entry point + cdk-nag AwsSolutionsChecks |
 | [lib/constants.ts](lib/constants.ts) | Stack name, Cognito domain, OIDC name |
-| [lib/sonar-stack.ts](lib/sonar-stack.ts) | Root stack — orchestrates all constructs, applies tags, CDK nag suppressions |
+| [lib/abe-stack.ts](lib/abe-stack.ts) | Root stack — orchestrates all constructs, applies tags, CDK nag suppressions |
 | [lib/chatbot-api/index.ts](lib/chatbot-api/index.ts) | ChatBotApi construct — wires tables, buckets, OpenSearch, KB, APIs, Lambdas, routes, monitoring |
 | [lib/chatbot-api/functions/functions.ts](lib/chatbot-api/functions/functions.ts) | All 23 Lambda definitions with `LAMBDA_DEFAULTS` (ARM64, X-Ray, 1-month logs) |
 | [lib/chatbot-api/functions/websocket-chat/index.mjs](lib/chatbot-api/functions/websocket-chat/index.mjs) | Chat handler + agentic tool-use loop (max 20 rounds, streaming, context compression) |
@@ -108,7 +108,7 @@ npx cdk deploy SonarStack -c alarmEmail=you@example.com  # With alerts
 - Resources are separated by concern: `functions.ts`, `tables.ts`, `buckets.ts`
 - cdk-nag compliance checks run on every synth; add suppressions with explicit reasons
 - All DynamoDB tables: PAY_PER_REQUEST billing, PITR enabled, RETAIN removal policy
-- Tags applied stack-wide: `Project: Sonar`, `Environment: {stackId}`, `ManagedBy: CDK`, `DataClass: Sensitive`
+- Tags applied stack-wide: `Project: ABE`, `Environment: {stackId}`, `ManagedBy: CDK`, `DataClass: Sensitive`
 
 ### Python Lambdas
 - Use Pydantic models for request/response validation
@@ -261,11 +261,11 @@ RAG_ENABLED=true
 - **WebSocket timeout:** Client-side 90s timeout hardcoded in `useWebSocketChat` hook; no server-side configuration.
 - **Stop vs. network drop:** `$disconnect` writes a TTL'd `WSDISCONNECT#<connId>` marker to `ResponseTraceTable`. On a mid-stream `GoneException` the chat handler polls for it: marker found ⇒ deliberate stop (abort, discard, no save — a stopped answer must never reappear on reload); absent ⇒ silent network drop (finish generating with sends suppressed and save the exchange, so a reload shows the full answer).
 - **CORS origin:** Uses Lazy CDK token pattern — CloudFront domain resolved at synth time, not construct time.
-- **Custom domain is deploy-time config, not a console toggle:** Binding the app to a custom domain (e.g. `app.example.gov`) is driven entirely by per-deployment values — `CUSTOM_DOMAIN` (GitHub Actions Variable) + `CERTIFICATE_ARN` (Secret, ACM cert in **us-east-1**) + `OIDC_PROVIDER_NAME` (Variable, if SSO). [sonar-stack.ts](lib/sonar-stack.ts) computes one `siteUrl` from these and feeds it via Lazy tokens into **four** places: CloudFront alias+cert, Cognito app client callback/sign-out URLs, HTTP API + S3 CORS origin, and `aws-exports.json` redirect URLs. A deploy missing the domain values reverts all of them to the `*.cloudfront.net` fallback; a deploy missing `OIDC_PROVIDER_NAME` drops the SSO provider and breaks sign-in. **The Cognito app client is fully CDK-managed** ([authorization/index.ts](lib/authorization/index.ts)) — do **not** hand-edit callback URLs / scopes / providers in the console or patch `aws-exports.json` in S3; those are drift the next deploy silently overwrites. Symptom of a domain bound only via console+DNS (no redeploy): the page loads (HTTP 200) but the UI hangs on a spinner and/or chat hits CORS errors, because auth+CORS still target the old domain. Full runbook + troubleshooting: [docs/custom-domain.md](docs/custom-domain.md).
+- **Custom domain is deploy-time config, not a console toggle:** Binding the app to a custom domain (e.g. `app.example.gov`) is driven entirely by per-deployment values — `CUSTOM_DOMAIN` (GitHub Actions Variable) + `CERTIFICATE_ARN` (Secret, ACM cert in **us-east-1**) + `OIDC_PROVIDER_NAME` (Variable, if SSO). [abe-stack.ts](lib/abe-stack.ts) computes one `siteUrl` from these and feeds it via Lazy tokens into **four** places: CloudFront alias+cert, Cognito app client callback/sign-out URLs, HTTP API + S3 CORS origin, and `aws-exports.json` redirect URLs. A deploy missing the domain values reverts all of them to the `*.cloudfront.net` fallback; a deploy missing `OIDC_PROVIDER_NAME` drops the SSO provider and breaks sign-in. **The Cognito app client is fully CDK-managed** ([authorization/index.ts](lib/authorization/index.ts)) — do **not** hand-edit callback URLs / scopes / providers in the console or patch `aws-exports.json` in S3; those are drift the next deploy silently overwrites. Symptom of a domain bound only via console+DNS (no redeploy): the page loads (HTTP 200) but the UI hangs on a spinner and/or chat hits CORS errors, because auth+CORS still target the old domain. Full runbook + troubleshooting: [docs/custom-domain.md](docs/custom-domain.md).
 
 ## Monitoring
 
-CloudWatch dashboard: `SonarStack-Operations`
+CloudWatch dashboard: `ABEStack-Operations`
 
 43 active alarms (trigger SNS email):
 - **Lambda** (per function): errors >= 3 in 5 min | throttles >= 1 in 5 min | chat avg duration > 60s

@@ -89,7 +89,7 @@ export function AppShell({ active, children }: { active: NavId; children: ReactN
         <span className="menu"><MenuIcon style={{ fontSize: 20 }} /></span>
         <span className="app-logo">PALETTE</span>
         <span className="app-wordmark">
-          Sonar<span></span>
+          ABE<span></span>
         </span>
         <span className="app-avatar">EO</span>
       </div>

@@ -234,7 +234,7 @@ export default function FeedbackDetailView(props: FeedbackDetailViewProps) {
 
           <Paper variant="outlined" sx={{ p: 2.5 }}>
             <Typography variant="overline" color="text.secondary" sx={{ fontSize: "0.6875rem", letterSpacing: 1 }}>
-              How Sonar answered
+              How ABE answered
             </Typography>
             <AdminMarkdown content={detail?.trace?.FinalAnswer || feedback.AnswerPreview || "N/A"} sx={{ mt: 0.5 }} />
           </Paper>
@@ -402,8 +402,8 @@ export default function FeedbackDetailView(props: FeedbackDetailViewProps) {
         <DialogTitle sx={{ fontSize: "1rem", fontWeight: 600 }}>Save as a good example?</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.875rem" }}>
-            This question and Sonar's answer will be saved as a good example. We use these examples to automatically check
-            that Sonar keeps giving high-quality answers over time.
+            This question and ABE's answer will be saved as a good example. We use these examples to automatically check
+            that ABE keeps giving high-quality answers over time.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

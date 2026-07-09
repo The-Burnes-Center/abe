@@ -3,7 +3,7 @@
 CATEGORIES = {
     'user guide': 'A document providing clear, step-by-step instructions on how to use a product, service, or process. It outlines the key terms, processes, and requirements users need to follow.',
     'handbook': 'A comprehensive reference document covering various aspects of the subject area.',
-    'spreadsheet': 'A spreadsheet or tabular-data file (e.g. Excel or CSV) -- rows of records with their attributes. These are not document RAG content: structured files like this go through Sonar\'s dedicated structured-data (Excel/CSV) ingestion pipeline so they can be queried as structured rows, separate from the knowledge-base documents.',
+    'spreadsheet': 'A spreadsheet or tabular-data file (e.g. Excel or CSV) -- rows of records with their attributes. These are not document RAG content: structured files like this go through ABE\'s dedicated structured-data (Excel/CSV) ingestion pipeline so they can be queried as structured rows, separate from the knowledge-base documents.',
     'external reference': 'Supplementary documents or sheets that contain only a list with links for accessing other documents.',
     'memos': 'Official communications that outline updates, amendments, or directives regarding policies or procedures. These documents ensure compliance with the latest changes.',
     'unknown': 'Documents that do not clearly fit into any of the above categories.'

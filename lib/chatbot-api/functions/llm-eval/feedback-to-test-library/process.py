@@ -20,8 +20,8 @@ bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 PARTITION_KEY = "MASTER"
 
-SYSTEM_PROMPT = """You are building a Q&A test library for Sonar, an AI assistant that answers \
-questions grounded in an organization's knowledge base. Sonar helps users find information across \
+SYSTEM_PROMPT = """You are building a Q&A test library for ABE, an AI assistant that answers \
+questions grounded in an organization's knowledge base. ABE helps users find information across \
 documents and structured data and understand the relevant policies, terms, and details.
 
 You will receive the user's exact message (as they typed it) and the chatbot's answer from \

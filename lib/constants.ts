@@ -14,5 +14,7 @@ export const cognitoDomainName = process.env.COGNITO_DOMAIN_PREFIX || `${brand.s
 export const OIDCIntegrationName = process.env.OIDC_PROVIDER_NAME || "";
 
 // CloudFormation stack name — must be unique within your AWS account/region.
+// Uppercased slug keeps acronym brands clean (abe -> ABEStack). Override with
+// STACK_NAME for a multi-word brand where all-caps would read oddly.
 export const stackName =
-  process.env.STACK_NAME || `${brand.slug.charAt(0).toUpperCase()}${brand.slug.slice(1)}Stack`;
+  process.env.STACK_NAME || `${brand.slug.toUpperCase()}Stack`;

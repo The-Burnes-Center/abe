@@ -143,7 +143,7 @@ The static site is served, but the app's auth/API config is still pinned to the 
 
 ## How it's wired (for maintainers)
 
-`bin/sonar.ts` reads `customDomain` / `certificateArn` / `oidcProviderName` from CDK context (falling back to the `CUSTOM_DOMAIN` / `CERTIFICATE_ARN` / `OIDC_PROVIDER_NAME` env vars) and passes them to `SonarStack`. There, a single `siteUrl` is computed — the custom domain when **both** domain values are present, else the CloudFront domain — and fed via `Lazy` tokens into four places so they can't drift apart:
+`bin/abe.ts` reads `customDomain` / `certificateArn` / `oidcProviderName` from CDK context (falling back to the `CUSTOM_DOMAIN` / `CERTIFICATE_ARN` / `OIDC_PROVIDER_NAME` env vars) and passes them to `ABEStack`. There, a single `siteUrl` is computed — the custom domain when **both** domain values are present, else the CloudFront domain — and fed via `Lazy` tokens into four places so they can't drift apart:
 
 1. **CloudFront** alias + imported ACM cert (`UserInterface` → `Website`: `domainNames` + `certificate`)
 2. **Cognito app client** callback + sign-out URLs (`AuthorizationStack`, via the `callbackUrls` prop)

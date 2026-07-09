@@ -53,21 +53,21 @@ jobs:
       run: npx cdk bootstrap || true
     - name: Wait for stack to reach stable state
       run: |
-        STATUS=$(aws cloudformation describe-stacks --stack-name SonarStack --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+        STATUS=$(aws cloudformation describe-stacks --stack-name ABEStack --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "DOES_NOT_EXIST")
         echo "Current stack status: $STATUS"
         case "$STATUS" in
           *_IN_PROGRESS)
             echo "Stack is in progress ($STATUS), waiting for it to stabilize..."
-            aws cloudformation wait stack-exists --stack-name SonarStack
+            aws cloudformation wait stack-exists --stack-name ABEStack
             # Wait for any in-progress operation to complete (up to 30 min)
             timeout 1800 bash -c '
               while true; do
-                S=$(aws cloudformation describe-stacks --stack-name SonarStack --query "Stacks[0].StackStatus" --output text)
+                S=$(aws cloudformation describe-stacks --stack-name ABEStack --query "Stacks[0].StackStatus" --output text)
                 echo "  status: $S"
                 case "$S" in *_IN_PROGRESS) sleep 15 ;; *) break ;; esac
               done
             '
-            FINAL=$(aws cloudformation describe-stacks --stack-name SonarStack --query "Stacks[0].StackStatus" --output text)
+            FINAL=$(aws cloudformation describe-stacks --stack-name ABEStack --query "Stacks[0].StackStatus" --output text)
             echo "Stack settled at: $FINAL"
             # Fail the deploy if the previous operation ended in a failed state
             case "$FINAL" in
@@ -103,10 +103,10 @@ jobs:
         if [ -n "${{ vars.OIDC_PROVIDER_NAME }}" ]; then
           OIDC_FLAG="-c oidcProviderName=${{ vars.OIDC_PROVIDER_NAME }}"
         fi
-        npx cdk deploy SonarStack $ALARM_FLAG $DOMAIN_FLAG $OIDC_FLAG --require-approval never
+        npx cdk deploy ABEStack $ALARM_FLAG $DOMAIN_FLAG $OIDC_FLAG --require-approval never
     - name: Fetch CloudFormation Outputs
       run: |
-        aws cloudformation describe-stacks --stack-name SonarStack --query "Stacks[0].Outputs" > stack-outputs.json
+        aws cloudformation describe-stacks --stack-name ABEStack --query "Stacks[0].Outputs" > stack-outputs.json
         cat stack-outputs.json
     - name: Upload Outputs as Artifact
       uses: actions/upload-artifact@v4
