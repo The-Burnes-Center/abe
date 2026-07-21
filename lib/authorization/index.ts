@@ -50,7 +50,7 @@ export class AuthorizationStack extends Construct {
     // Create the Cognito User Pool
     const userPool = new UserPool(this, 'UserPool', {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
-      selfSignUpEnabled: false,
+      selfSignUpEnabled: true,
       mfa: cognito.Mfa.OPTIONAL,
       featurePlan: cognito.FeaturePlan.PLUS,
       advancedSecurityMode: cognito.AdvancedSecurityMode.ENFORCED,
