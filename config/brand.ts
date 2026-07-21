@@ -94,8 +94,8 @@ const palette: BrandPalette = {
 export const brand: BrandConfig = {
   slug: env("BRAND_SLUG", "abe"),
   assistantName: env("ASSISTANT_NAME", "ABE - Assistive Buyers Engine"),
-  organizationName: env("ORGANIZATION_NAME", "Burnes Center for Social Change"),
-  parentOrg: env("PARENT_ORG", "Northeastern University"),
+  organizationName: env("ORGANIZATION_NAME", "InnovateUS"),
+  parentOrg: env("PARENT_ORG", ""),
   tagline: env("BRAND_TAGLINE", "Ask anything about your knowledge base."),
   welcomeMessage: env("WELCOME_MESSAGE", "What can I help you with?"),
   supportContact: env("SUPPORT_CONTACT", "your administrator"),
