@@ -6,8 +6,8 @@ export const AUTHENTICATION = true;
 // can be overridden per-deployment via environment variables.
 
 // Cognito hosted-UI domain PREFIX — must be globally unique across all AWS
-// accounts. Override with COGNITO_DOMAIN_PREFIX if "<slug>-auth" is taken.
-export const cognitoDomainName = process.env.COGNITO_DOMAIN_PREFIX || `${brand.slug}-auth`;
+// accounts. Override with COGNITO_DOMAIN_PREFIX if needed.
+export const cognitoDomainName = process.env.COGNITO_DOMAIN_PREFIX || "abe-burnes-auth";
 
 // Federated OIDC provider name configured in Cognito. Leave blank ("") if you
 // have no SSO provider — username/password sign-in & sign-up still work.
