@@ -36,7 +36,9 @@ const LOGIN_LOGO_EXTENSION = ((): string => {
  * [svg#version|xmlns:xlink|xml:space] is not allowed`). Reduce the SVG to
  * what Cognito accepts: no XML declaration or comments, fills inlined from
  * simple `<style>` class rules, and a root element carrying only
- * xmlns + viewBox.
+ * xmlns + viewBox. Cognito also requires LOGO assets to have a width:height
+ * ratio between 1:1 and 4:1; wide wordmarks are padded with centered
+ * transparent space (via the viewBox) rather than distorted.
  */
 function sanitizeSvgForCognito(svg: string): string {
   let out = svg
@@ -57,7 +59,21 @@ function sanitizeSvgForCognito(svg: string): string {
     return fill ? `fill="${fill}"` : match;
   });
 
-  const viewBox = out.match(/viewBox="([^"]+)"/)?.[1];
+  let viewBox = out.match(/viewBox="([^"]+)"/)?.[1];
+  if (viewBox) {
+    const [minX, minY, w, h] = viewBox.split(/[\s,]+/).map(Number);
+    if ([minX, minY, w, h].every(Number.isFinite) && w > 0 && h > 0) {
+      const fmt = (n: number) => Number(n.toFixed(3)).toString();
+      const MAX_RATIO = 3.9; // stay safely inside Cognito's 4:1 limit
+      if (w / h > MAX_RATIO) {
+        const newH = w / MAX_RATIO;
+        viewBox = `${fmt(minX)} ${fmt(minY - (newH - h) / 2)} ${fmt(w)} ${fmt(newH)}`;
+      } else if (h > w) {
+        // Taller than 1:1: pad the width symmetrically.
+        viewBox = `${fmt(minX - (h - w) / 2)} ${fmt(minY)} ${fmt(h)} ${fmt(h)}`;
+      }
+    }
+  }
   return out
     .replace(
       /<svg[^>]*>/,
