@@ -7,15 +7,29 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as fs from 'fs';
 import * as path from 'path';
 import { MANAGED_LOGIN_BRANDING_SETTINGS } from './managed-login-branding';
+import { brand } from '../../config/brand';
 
-// The Cognito Managed Login screen shows the brand logo (not the state seal
-// used in the in-app header) so users see the brand of the agency that owns
-// the tool at sign-in.
+// The Cognito Managed Login screen (used only by SSO deployments; native
+// deployments render the in-app login page instead) shows the brand logo so
+// users see the brand of the agency that owns the tool at sign-in.
 const LOGIN_LOGO_PATH = path.join(
   __dirname,
-  '../user-interface/app/public/images/osd-logo.png',
+  '../user-interface/app/public',
+  brand.assets.logo,
 );
 const LOGIN_LOGO_BASE64 = fs.readFileSync(LOGIN_LOGO_PATH).toString('base64');
+// Cognito wants the asset type spelled out and only accepts these formats.
+const LOGIN_LOGO_EXTENSION = ((): string => {
+  const byExt: Record<string, string> = {
+    '.png': 'PNG',
+    '.svg': 'SVG',
+    '.jpg': 'JPEG',
+    '.jpeg': 'JPEG',
+    '.webp': 'WEBP',
+    '.ico': 'ICO',
+  };
+  return byExt[path.extname(LOGIN_LOGO_PATH).toLowerCase()] ?? 'PNG';
+})();
 
 export interface AuthorizationStackProps {
   /**
@@ -105,21 +119,59 @@ export class AuthorizationStack extends Construct {
     // field, so anything left unset reverts to a CDK/Cognito default on deploy).
     //
     // Security: the OAuth scopes intentionally EXCLUDE `aws.cognito.signin.user.admin`,
-    // and the auth flows exclude USER_PASSWORD / USER_SRP, so no token a user can obtain
-    // is able to call Cognito self-service APIs (UpdateUserAttributes) to self-assign
-    // `custom:role: ["Admin"]`. Admin roles come only from the SSO IdP mapping
-    // (roles -> custom:role). read/write attributes are deliberately left at the default
-    // (ALL) so that IdP mapping can still write `custom:role` at federated sign-in.
+    // so no hosted-UI token can call Cognito self-service APIs (UpdateUserAttributes)
+    // to self-assign `custom:role: ["Admin"]`.
+    //
+    // The auth flows and attribute permissions depend on the deployment mode:
+    //
+    //  - SSO deployments (oidcProviderName set): USER_SRP stays DISABLED because a
+    //    native-flow access token always carries the self-service scope, and the IdP
+    //    mapping (roles -> custom:role) requires the client to keep write access to
+    //    `custom:role`. Users sign in via the Cognito Managed Login page.
+    //
+    //  - Native deployments (no SSO provider): the app renders its own login page,
+    //    which needs USER_SRP enabled. To keep self-escalation impossible, the
+    //    client's write attributes explicitly EXCLUDE `custom:role`, so an
+    //    UpdateUserAttributes call with a user's own token is rejected. Admin roles
+    //    are assigned only by an operator (console / AdminUpdateUserAttributes,
+    //    which bypasses client write permissions).
     const supportedIdentityProviders = [UserPoolClientIdentityProvider.COGNITO];
     if (props.oidcProviderName) {
       supportedIdentityProviders.push(
         UserPoolClientIdentityProvider.custom(props.oidcProviderName),
       );
     }
+    const nativeSignIn = !props.oidcProviderName;
 
     const userPoolClient = new UserPoolClient(this, 'UserPoolClient', {
       userPool,
-      authFlows: { custom: true }, // -> ALLOW_CUSTOM_AUTH + ALLOW_REFRESH_TOKEN_AUTH (no password / SRP)
+      authFlows: nativeSignIn
+        ? { userSrp: true, custom: true } // in-app login page (SRP; password never leaves the browser)
+        : { custom: true }, // -> ALLOW_CUSTOM_AUTH + ALLOW_REFRESH_TOKEN_AUTH (no password / SRP)
+      // Only meaningful for native sign-in: return generic errors so the login page
+      // can't be used to probe which emails have accounts.
+      preventUserExistenceErrors: nativeSignIn ? true : undefined,
+      // Native mode: everything the UI/tokens need is readable (including custom:role
+      // for admin gating), but custom:role is NOT writable by the client. SSO mode
+      // leaves both at the Cognito default (ALL) so IdP mapping can write custom:role.
+      readAttributes: nativeSignIn
+        ? new cognito.ClientAttributes()
+            .withStandardAttributes({
+              email: true,
+              emailVerified: true,
+              fullname: true,
+              phoneNumber: true,
+              phoneNumberVerified: true,
+            })
+            .withCustomAttributes('role')
+        : undefined,
+      writeAttributes: nativeSignIn
+        ? new cognito.ClientAttributes().withStandardAttributes({
+            email: true,
+            fullname: true,
+            phoneNumber: true,
+          })
+        : undefined,
       oAuth: {
         flows: { authorizationCodeGrant: true },
         scopes: [
@@ -163,7 +215,7 @@ export class AuthorizationStack extends Construct {
           bytes: LOGIN_LOGO_BASE64,
           category: 'FORM_LOGO',
           colorMode: 'LIGHT',
-          extension: 'PNG',
+          extension: LOGIN_LOGO_EXTENSION,
         },
       ],
     });

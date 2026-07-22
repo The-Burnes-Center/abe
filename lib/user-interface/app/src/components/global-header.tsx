@@ -16,7 +16,8 @@ import MenuIcon from "@mui/icons-material/Menu";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import LogoutIcon from "@mui/icons-material/Logout";
 import { StorageHelper, ThemeMode } from "../common/helpers/storage-helper";
-import { fetchAuthSession, signOut } from "aws-amplify/auth";
+import { fetchAuthSession } from "aws-amplify/auth";
+import { Utils } from "../common/utils";
 import { CHATBOT_NAME } from "../common/constants";
 import { tokens } from "../common/theme";
 import { brand } from "../common/brand";
@@ -39,14 +40,14 @@ export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeader
         const session = await fetchAuthSession();
         const payload = session.tokens?.idToken?.payload;
         if (!payload) {
-          signOut();
+          Utils.signOut();
           return;
         }
         const name = payload?.name as string | undefined;
         const email = payload?.email as string | undefined;
         setUserName(name || email || null);
       } catch {
-        try { signOut(); } catch { /* ignore */ }
+        Utils.signOut();
       }
     })();
   }, []);
@@ -61,7 +62,7 @@ export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeader
 
   const handleSignOut = () => {
     setAnchorEl(null);
-    signOut();
+    Utils.signOut();
   };
 
   const c = tokens.colors[theme];

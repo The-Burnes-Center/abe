@@ -13,7 +13,7 @@ import { useNavigate } from "react-router-dom";
 import DocumentsTab from "./documents-tab";
 import { CHATBOT_NAME } from "../../common/constants";
 import { useState, useEffect, useContext } from "react";
-import { fetchAuthSession, signOut } from "aws-amplify/auth";
+import { fetchAuthSession } from "aws-amplify/auth";
 import DataFileUpload from "./file-upload-tab.tsx";
 import { ApiClient } from "../../common/api-client/api-client";
 import { AppContext } from "../../common/app-context";
@@ -59,7 +59,7 @@ export default function DataPage() {
         const session = await fetchAuthSession();
         const payload = session.tokens?.idToken?.payload;
         if (!payload) {
-          signOut();
+          Utils.signOut();
           return;
         }
         const admin =

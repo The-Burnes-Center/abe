@@ -13,7 +13,6 @@ import { ChatBotApi } from "../chatbot-api";
 import { Website } from "./generate-app"
 import { NagSuppressions } from "cdk-nag";
 import { Utils } from "../shared/utils"
-import { OIDCIntegrationName } from "../constants";
 
 export interface UserInterfaceProps {
   readonly userPoolId: string;
@@ -24,6 +23,10 @@ export interface UserInterfaceProps {
   // served from the custom domain and Cognito sign-in/out redirects point at it.
   readonly customDomain?: string;
   readonly certificateArn?: string;
+  // SSO provider name enabled on the app client (same value AuthorizationStack got).
+  // Written into aws-exports.json as `federatedSignInProvider`; when empty, the
+  // frontend renders its own login page instead of redirecting to the hosted UI.
+  readonly oidcProviderName?: string;
 }
 
 export class UserInterface extends Construct {
@@ -83,7 +86,8 @@ export class UserInterface extends Construct {
       },
       httpEndpoint : props.api.httpAPI.restAPI.url,
       wsEndpoint : props.api.wsAPI.wsAPIStage.url,
-      federatedSignInProvider : OIDCIntegrationName
+      // Empty string = no SSO provider = the frontend shows the in-app login page.
+      federatedSignInProvider : props.oidcProviderName ?? ""
     });
 
     const asset = s3deploy.Source.asset(appPath, {

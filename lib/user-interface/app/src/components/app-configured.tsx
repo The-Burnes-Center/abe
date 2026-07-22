@@ -10,10 +10,13 @@
  *  2. **Configure Amplify** -- passes the config to `Amplify.configure()`,
  *     which wires up Auth, API, and Storage clients globally.
  *  3. **Check authentication** -- calls `Auth.currentAuthenticatedUser()`.
- *     If the user has a valid session the app renders immediately;
- *     otherwise the user is redirected to the Cognito Managed Login
- *     page, which offers both username/password (native Cognito users)
- *     and the federated "Sign in with Mass SSO" button.
+ *     If the user has a valid session the app renders immediately.
+ *     Otherwise the sign-in experience depends on the deployment:
+ *       - No SSO provider (`federatedSignInProvider` empty): the branded
+ *         in-app `LoginPage` is rendered (email/password, sign-up, reset).
+ *       - SSO provider configured: the user is redirected to the Cognito
+ *         Managed Login page, which offers both username/password (native
+ *         Cognito users) and the federated SSO button.
  *  4. **Theme detection** -- a `MutationObserver` watches for changes to
  *     the `--app-color-scheme` CSS variable on `<html>`. When it flips
  *     between `"dark"` and `"light"` (e.g. via OS preference or user
@@ -43,6 +46,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import { buildTheme } from "../common/theme";
+import LoginPage from "./auth/login-page";
 import "@aws-amplify/ui-react/styles.css";
 
 /**
@@ -87,55 +91,58 @@ export default function AppConfigured() {
    *  2. Call `Amplify.configure()` so Auth/API clients are ready.
    *  3. Attempt `Auth.currentAuthenticatedUser()`.
    *     - Success: mark authenticated, store config, render the app.
-   *     - Failure (no session): redirect to the Cognito Managed Login
-   *       page, which presents both the username/password form and the
-   *       federated Mass SSO button (no provider is forced).
-   *  4. If both the auth check and the redirect fail (e.g. network
-   *     error), display the error state.
+   *     - Failure (no session): native deployments render the in-app
+   *       LoginPage; SSO deployments redirect to the Cognito Managed
+   *       Login page, which presents both the username/password form and
+   *       the federated SSO button (no provider is forced, so native
+   *       Cognito users aren't locked out).
+   *  4. If the config fetch itself fails (e.g. network error), display
+   *     the error state.
    */
   useEffect(() => {
     (async () => {
-      let currentConfig: AppConfig | undefined;
+      let awsExports: AppConfig;
       try {
         const result = await fetch("/aws-exports.json");
-        const awsExports = (await result.json()) as AppConfig;
-        currentConfig = awsExports;
+        awsExports = (await result.json()) as AppConfig;
         Amplify.configure(toResourcesConfig(awsExports));
+        // Empty/missing provider = no SSO = in-app login page.
+        Utils.setNativeAuth(!awsExports.federatedSignInProvider);
+      } catch {
+        // Config fetch/parse failed — we can't even redirect; show the error.
+        setError(true);
+        return;
+      }
+      try {
         const user = await getCurrentUser();
         if (user) {
           setAuthenticated(true);
         }
-        setConfig(awsExports);
-        setConfigured(true);
       } catch {
-        // Config fetch/parse failed — we can't even redirect; show the error.
-        if (!currentConfig) {
-          setError(true);
-          return;
-        }
-        try {
-          // Land on the Cognito Managed Login page, which presents BOTH the
-          // username/password form (native Cognito users) and the federated
-          // "Sign in with Mass SSO" button. Passing a specific provider here
-          // would skip the page and bounce straight to SSO — exactly what
-          // locked native Cognito users out before.
-          signInWithRedirect();
-        } catch {
-          setError(true);
+        if (Utils.isNativeAuth()) {
+          // No session: the render below shows the in-app login page.
+          setAuthenticated(false);
+        } else {
+          try {
+            signInWithRedirect();
+          } catch {
+            setError(true);
+          }
         }
       }
+      setConfig(awsExports);
+      setConfigured(true);
     })();
   }, []);
 
   /**
    * Re-authentication guard -- if the config has loaded but the user is
    * not authenticated (e.g. token expired between effects), send the user
-   * to the Managed Login page again.
+   * back to sign-in. Only SSO deployments need the redirect; native
+   * deployments already render the in-app login page in that state.
    */
   useEffect(() => {
-    if (!authenticated && configured) {
-      // Same as above: send the user to the Managed Login page so both
-      // native Cognito and federated Mass SSO sign-in remain available.
+    if (!authenticated && configured && !Utils.isNativeAuth()) {
       Utils.redirectToLogin();
     }
   }, [authenticated, configured]);
@@ -255,7 +262,13 @@ export default function AppConfigured() {
           }}
           colorMode={theme === "dark" ? "dark" : "light"}
         >
-          {authenticated ? <App /> : <></>}
+          {authenticated ? (
+            <App />
+          ) : Utils.isNativeAuth() ? (
+            <LoginPage onSignedIn={() => setAuthenticated(true)} />
+          ) : (
+            <></>
+          )}
         </ThemeProvider>
       </MuiThemeProvider>
     </AppContext.Provider>

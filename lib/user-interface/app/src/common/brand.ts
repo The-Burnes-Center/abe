@@ -1,8 +1,8 @@
 /* AUTO-GENERATED from config/brand.ts by `npm run brand:sync`. Do not edit by hand. */
 export const brand = {
   "assistantName": "ABE - Assistive Buyers Engine",
-  "organizationName": "Burnes Center for Social Change",
-  "parentOrg": "Northeastern University",
+  "organizationName": "InnovateUS",
+  "parentOrg": "",
   "tagline": "Ask anything about your knowledge base.",
   "welcomeMessage": "What can I help you with?",
   "suggestedPrompts": [

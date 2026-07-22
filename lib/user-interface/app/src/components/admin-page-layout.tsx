@@ -7,7 +7,8 @@ import Breadcrumbs from "@mui/material/Breadcrumbs";
 import Link from "@mui/material/Link";
 import Alert from "@mui/material/Alert";
 import Skeleton from "@mui/material/Skeleton";
-import { fetchAuthSession, signOut } from "aws-amplify/auth";
+import { fetchAuthSession } from "aws-amplify/auth";
+import { Utils } from "../common/utils";
 import { CHATBOT_NAME } from "../common/constants";
 
 interface AdminPageLayoutProps {
@@ -34,7 +35,7 @@ export default function AdminPageLayout({
         const session = await fetchAuthSession();
         const payload = session.tokens?.idToken?.payload;
         if (!payload) {
-          signOut();
+          Utils.signOut();
           return;
         }
         const adminRole =

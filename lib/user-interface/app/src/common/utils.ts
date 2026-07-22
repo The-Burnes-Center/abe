@@ -1,10 +1,15 @@
-import { fetchAuthSession, signInWithRedirect } from "aws-amplify/auth";
+import { fetchAuthSession, signInWithRedirect, signOut } from "aws-amplify/auth";
 
-// A lost/expired session should send the user back to the managed login exactly
-// once per page load. Without this guard, a burst of failing calls (or the Hub
+// A lost/expired session should send the user back to the login exactly once
+// per page load. Without this guard, a burst of failing calls (or the Hub
 // `tokenRefresh_failure` event firing alongside an in-flight request) would each
 // kick off their own redirect.
 let redirectingToLogin = false;
+
+// Whether this deployment uses the in-app login page (no SSO provider) instead
+// of the Cognito hosted UI. Set once by AppConfigured after aws-exports.json
+// loads; the session-loss handlers below run outside React and read it here.
+let nativeAuthEnabled = false;
 
 export class Utils {
   // static isDevelopment() {
@@ -176,20 +181,58 @@ export class Utils {
     return result !== null;
   }
 
+  /** See the module-level flag above; called by AppConfigured once config loads. */
+  static setNativeAuth(enabled: boolean): void {
+    nativeAuthEnabled = enabled;
+  }
+
+  static isNativeAuth(): boolean {
+    return nativeAuthEnabled;
+  }
+
   /**
-   * Send the user to the Cognito managed login to (re-)authenticate. This is the
-   * single "the session is gone" exit for the whole app: an expired or revoked
-   * session quietly bounces to sign-in instead of stranding the user with a
-   * cryptic "not authenticated" notification they can't act on. Safe to call from
+   * Send the user back to the login to (re-)authenticate. This is the single
+   * "the session is gone" exit for the whole app: an expired or revoked session
+   * quietly bounces to sign-in instead of stranding the user with a cryptic
+   * "not authenticated" notification they can't act on. Safe to call from
    * anywhere — only the first call per page load actually redirects.
+   *
+   * Native deployments clear the dead local session and reload, which lands on
+   * the in-app login page; SSO deployments redirect to the Cognito hosted UI.
    */
   static redirectToLogin(): void {
     if (redirectingToLogin) return;
     redirectingToLogin = true;
+    if (nativeAuthEnabled) {
+      signOut()
+        .catch(() => undefined)
+        .finally(() => window.location.replace("/"));
+      return;
+    }
     try {
       signInWithRedirect();
     } catch {
       // If the redirect itself fails there is nothing more we can do here.
+    }
+  }
+
+  /**
+   * Deliberate sign-out (user clicked "Sign out", or the UI decided the session
+   * is unusable). SSO deployments rely on Amplify's own hosted-UI logout
+   * redirect; native deployments clear the local session and reload so
+   * AppConfigured lands on the in-app login page.
+   */
+  static signOut(): void {
+    if (nativeAuthEnabled) {
+      signOut()
+        .catch(() => undefined)
+        .finally(() => window.location.replace("/"));
+      return;
+    }
+    try {
+      signOut();
+    } catch {
+      // Nothing more we can do; the next API call will bounce to login.
     }
   }
 

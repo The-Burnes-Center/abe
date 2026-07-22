@@ -56,6 +56,9 @@ export class ABEStack extends cdk.Stack {
       api: chatbotAPI,
       customDomain,
       certificateArn,
+      // Must be the exact value AuthorizationStack received, so the frontend's
+      // login mode (in-app page vs hosted-UI redirect) matches the app client.
+      oidcProviderName,
     });
     // Populate after construction — the Lazy producers read these during app.synth().
     // When a custom domain is bound, the browser's Origin (and the app's redirect URLs) are
