@@ -17,7 +17,6 @@ const LOGIN_LOGO_PATH = path.join(
   '../user-interface/app/public',
   brand.assets.logo,
 );
-const LOGIN_LOGO_BASE64 = fs.readFileSync(LOGIN_LOGO_PATH).toString('base64');
 // Cognito wants the asset type spelled out and only accepts these formats.
 const LOGIN_LOGO_EXTENSION = ((): string => {
   const byExt: Record<string, string> = {
@@ -30,6 +29,48 @@ const LOGIN_LOGO_EXTENSION = ((): string => {
   };
   return byExt[path.extname(LOGIN_LOGO_PATH).toLowerCase()] ?? 'PNG';
 })();
+
+/**
+ * Cognito validates branding SVGs against a strict allowlist and rejects the
+ * cruft design tools export (deploy fails with e.g. `element
+ * [svg#version|xmlns:xlink|xml:space] is not allowed`). Reduce the SVG to
+ * what Cognito accepts: no XML declaration or comments, fills inlined from
+ * simple `<style>` class rules, and a root element carrying only
+ * xmlns + viewBox.
+ */
+function sanitizeSvgForCognito(svg: string): string {
+  let out = svg
+    .replace(/<\?xml[\s\S]*?\?>/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '');
+
+  // Inline `.name { fill: ...; }` rules from <style> blocks, then drop them.
+  const fills = new Map<string, string>();
+  const styleBlock = out.match(/<style[^>]*>([\s\S]*?)<\/style>/);
+  if (styleBlock) {
+    for (const rule of styleBlock[1].matchAll(/\.([\w-]+)\s*\{\s*fill:\s*([^;}]+);?\s*\}/g)) {
+      fills.set(rule[1], rule[2].trim());
+    }
+    out = out.replace(styleBlock[0], '');
+  }
+  out = out.replace(/class="([\w-]+)"/g, (match, name: string) => {
+    const fill = fills.get(name);
+    return fill ? `fill="${fill}"` : match;
+  });
+
+  const viewBox = out.match(/viewBox="([^"]+)"/)?.[1];
+  return out
+    .replace(
+      /<svg[^>]*>/,
+      `<svg xmlns="http://www.w3.org/2000/svg"${viewBox ? ` viewBox="${viewBox}"` : ''}>`,
+    )
+    .trim();
+}
+
+const LOGIN_LOGO_BASE64 = (
+  LOGIN_LOGO_EXTENSION === 'SVG'
+    ? Buffer.from(sanitizeSvgForCognito(fs.readFileSync(LOGIN_LOGO_PATH, 'utf8')))
+    : fs.readFileSync(LOGIN_LOGO_PATH)
+).toString('base64');
 
 export interface AuthorizationStackProps {
   /**
