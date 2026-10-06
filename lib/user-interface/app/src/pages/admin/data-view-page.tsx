@@ -47,10 +47,10 @@ export default function DataPage() {
         await apiClient.knowledgeManagement.lastKendraSync();
       setLastSyncData(syncData);
       if (syncData.status === "COMPLETE" && syncData.completedAt) {
-        setLastSyncTime(Utils.formatToEasternTime(syncData.completedAt));
+        setLastSyncTime(Utils.formatTimestamp(syncData.completedAt));
       } else if (syncData.status === "FAILED") {
         const when = syncData.completedAt
-          ? Utils.formatToEasternTime(syncData.completedAt)
+          ? Utils.formatTimestamp(syncData.completedAt)
           : "recently";
         setLastSyncTime(`Failed ${when}`);
       } else if (syncData.status === "NO_SYNC_HISTORY") {

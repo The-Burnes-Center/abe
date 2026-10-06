@@ -1,15 +1,45 @@
-import { fetchAuthSession, signInWithRedirect, signOut } from "aws-amplify/auth";
+import { Amplify } from "aws-amplify";
+import { fetchAuthSession, signOut } from "aws-amplify/auth";
+import { brand } from "./brand";
 
 // A lost/expired session should send the user back to the login exactly once
 // per page load. Without this guard, a burst of failing calls (or the Hub
 // `tokenRefresh_failure` event firing alongside an in-flight request) would each
-// kick off their own redirect.
+// kick off their own reload.
 let redirectingToLogin = false;
+let signingOut = false;
 
-// Whether this deployment uses the in-app login page (no SSO provider) instead
-// of the Cognito hosted UI. Set once by AppConfigured after aws-exports.json
-// loads; the session-loss handlers below run outside React and read it here.
-let nativeAuthEnabled = false;
+const GLOBAL_SIGN_OUT_TIMEOUT_MS = 3000;
+
+/**
+ * Revoke every refresh token for the user (Cognito GlobalSignOut), using an
+ * access token captured before the local session was cleared. Best effort:
+ * the local sign-out has already happened, so a failure here only means other
+ * devices stay signed in until their tokens expire.
+ */
+async function revokeAllSessions(accessToken: string): Promise<void> {
+  const userPoolId = Amplify.getConfig().Auth?.Cognito?.userPoolId ?? "";
+  const region = userPoolId.split("_")[0];
+  if (!region) return;
+  const domain = region.startsWith("cn-") ? "amazonaws.com.cn" : "amazonaws.com";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GLOBAL_SIGN_OUT_TIMEOUT_MS);
+  try {
+    await fetch(`https://cognito-idp.${region}.${domain}/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-amz-json-1.1",
+        "X-Amz-Target": "AWSCognitoIdentityProviderService.GlobalSignOut",
+      },
+      body: JSON.stringify({ AccessToken: accessToken }),
+      signal: controller.signal,
+    });
+  } catch {
+    // Network failure or timeout; see the note above.
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export class Utils {
   // static isDevelopment() {
@@ -181,59 +211,41 @@ export class Utils {
     return result !== null;
   }
 
-  /** See the module-level flag above; called by AppConfigured once config loads. */
-  static setNativeAuth(enabled: boolean): void {
-    nativeAuthEnabled = enabled;
-  }
-
-  static isNativeAuth(): boolean {
-    return nativeAuthEnabled;
-  }
-
   /**
-   * Send the user back to the login to (re-)authenticate. This is the single
-   * "the session is gone" exit for the whole app: an expired or revoked session
-   * quietly bounces to sign-in instead of stranding the user with a cryptic
-   * "not authenticated" notification they can't act on. Safe to call from
-   * anywhere — only the first call per page load actually redirects.
-   *
-   * Native deployments clear the dead local session and reload, which lands on
-   * the in-app login page; SSO deployments redirect to the Cognito hosted UI.
+   * The session is gone (expired or revoked): clear what is left locally and
+   * reload the current page, which renders the in-app login. After signing in
+   * the user lands back on the same same-origin path. Safe to call from
+   * anywhere; only the first call per page load does anything.
    */
   static redirectToLogin(): void {
     if (redirectingToLogin) return;
     redirectingToLogin = true;
-    if (nativeAuthEnabled) {
-      signOut()
-        .catch(() => undefined)
-        .finally(() => window.location.replace("/"));
-      return;
-    }
-    try {
-      signInWithRedirect();
-    } catch {
-      // If the redirect itself fails there is nothing more we can do here.
-    }
+    signOut()
+      .catch(() => undefined)
+      .finally(() => window.location.reload());
   }
 
   /**
-   * Deliberate sign-out (user clicked "Sign out", or the UI decided the session
-   * is unusable). SSO deployments rely on Amplify's own hosted-UI logout
-   * redirect; native deployments clear the local session and reload so
-   * AppConfigured lands on the in-app login page.
+   * Deliberate sign-out. Clears the local session first (so the user is signed
+   * out on this device even if the network is down), then revokes the
+   * session everywhere with the access token captured beforehand.
    */
-  static signOut(): void {
-    if (nativeAuthEnabled) {
-      signOut()
-        .catch(() => undefined)
-        .finally(() => window.location.replace("/"));
-      return;
+  static async signOut(): Promise<void> {
+    if (signingOut) return;
+    signingOut = true;
+    let accessToken: string | undefined;
+    try {
+      accessToken = (await fetchAuthSession()).tokens?.accessToken?.toString();
+    } catch {
+      // No usable session; the local clear below is all that's left to do.
     }
     try {
-      signOut();
+      await signOut();
     } catch {
-      // Nothing more we can do; the next API call will bounce to login.
+      // Amplify failed to clear storage; reloading still drops in-memory state.
     }
+    if (accessToken) await revokeAllSessions(accessToken);
+    window.location.replace("/");
   }
 
   static async authenticate(): Promise<string> {
@@ -254,57 +266,45 @@ export class Utils {
   }
 
   /**
-   * Converts a UTC ISO 8601 timestamp to Eastern Time (EST/EDT) formatted string.
-   * Handles both EST and EDT automatically based on the date.
-   * 
-   * @param utcTimestamp - ISO 8601 timestamp string with Z suffix (e.g., "2026-02-20T14:17:00Z")
-   * @returns Formatted date string in Eastern Time (e.g., "Feb 20, 2026, 9:17 AM")
+   * Format a UTC ISO 8601 timestamp in the deployment's time zone
+   * (`brand.timezone`), e.g. "Feb 20, 2026, 9:17 AM".
    */
-  /**
-   * Parses a Cognito display name like "Kumar, Dhruv (A&F)" into
-   * { displayName: "Kumar, Dhruv", agency: "A&F" }.
-   * If no parenthesized suffix exists, agency is "Unknown".
-   */
-  static parseUserIdentity(rawName: string | null | undefined): {
-    displayName: string;
-    agency: string;
-  } {
-    if (!rawName || rawName.trim().length === 0) {
-      return { displayName: "Unknown", agency: "Unknown" };
-    }
-
-    const match = rawName.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
-    if (match) {
-      return {
-        displayName: match[1].trim(),
-        agency: match[2].trim(),
-      };
-    }
-
-    return { displayName: rawName.trim(), agency: "Unknown" };
-  }
-
-  static formatToEasternTime(utcTimestamp: string | null | undefined): string {
+  static formatTimestamp(utcTimestamp: string | null | undefined): string {
     if (!utcTimestamp) {
-      return 'N/A';
+      return "N/A";
     }
 
     try {
       const date = new Date(utcTimestamp);
       if (isNaN(date.getTime())) {
-        return 'Invalid date';
+        return "Invalid date";
       }
 
-      return new Intl.DateTimeFormat('en-US', {
-        timeZone: 'America/New_York',
-        dateStyle: 'medium',
-        timeStyle: 'short',
+      return new Intl.DateTimeFormat("en-US", {
+        timeZone: brand.timezone,
+        dateStyle: "medium",
+        timeStyle: "short",
       }).format(date);
     } catch (error) {
       if (import.meta.env.DEV) {
-        console.error("Error formatting timestamp to Eastern Time:", error);
+        console.error("Error formatting timestamp:", error);
       }
-      return 'Invalid date';
+      return "Invalid date";
+    }
+  }
+
+  /** Short label for the configured time zone, e.g. "EDT" or "GMT+1". */
+  static timezoneLabel(): string {
+    try {
+      const part = new Intl.DateTimeFormat("en-US", {
+        timeZone: brand.timezone,
+        timeZoneName: "short",
+      })
+        .formatToParts(new Date())
+        .find((p) => p.type === "timeZoneName");
+      return part?.value ?? brand.timezone;
+    } catch {
+      return brand.timezone;
     }
   }
 }

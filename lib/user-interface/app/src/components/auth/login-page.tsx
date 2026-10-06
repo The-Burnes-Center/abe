@@ -1,23 +1,25 @@
 /**
- * LoginPage -- branded, in-app authentication for native (non-SSO) deployments.
+ * LoginPage -- branded, in-app authentication against Cognito.
  *
- * Rendered by AppConfigured when the deployment has no federated SSO provider
- * (aws-exports.json `federatedSignInProvider` is empty) and there is no active
- * session. Talks to Cognito directly through Amplify's SRP APIs, so the user
- * never sees the generic Cognito hosted UI.
+ * Rendered by AppConfigured when there is no active session. Talks to Cognito
+ * directly through Amplify's SRP APIs, so users never see a hosted UI.
  *
  * Flows handled:
  *  - Sign in (email + password), including the follow-up challenges Cognito
- *    can return: SMS / TOTP / email MFA codes and "new password required"
- *    (admin-created users signing in for the first time).
- *  - Self sign-up with email verification code, then automatic sign-in.
+ *    can return: "new password required" (invited users signing in with the
+ *    temporary password from their invitation email), TOTP setup when the
+ *    pool requires MFA, TOTP / email codes, and MFA method selection.
+ *  - Self sign-up with email verification code, then automatic sign-in. Only
+ *    offered when the deployment enables it (`selfSignUpEnabled` in
+ *    aws-exports.json); otherwise the page explains that an administrator
+ *    sends invitations.
  *  - Forgot password (reset code + new password).
  *
- * Visual design follows the app theme (config/brand.ts): a brand panel on the
- * left (desktop only) and the form on the right. Light/dark mode both work and
- * can be toggled from the page itself.
+ * After sign-in the app renders at the URL the user originally opened. The
+ * page never redirects elsewhere, so a post-login destination is always
+ * same-origin.
  */
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useState } from "react";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -35,13 +37,9 @@ import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import DarkModeOutlinedIcon from "@mui/icons-material/DarkModeOutlined";
 import LightModeOutlinedIcon from "@mui/icons-material/LightModeOutlined";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
-import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
-import CircleOutlinedIcon from "@mui/icons-material/CircleOutlined";
-import ForumOutlinedIcon from "@mui/icons-material/ForumOutlined";
-import LibraryBooksOutlinedIcon from "@mui/icons-material/LibraryBooksOutlined";
-import GppGoodOutlinedIcon from "@mui/icons-material/GppGoodOutlined";
 import {
   signIn,
+  signOut,
   confirmSignIn,
   signUp,
   confirmSignUp,
@@ -51,12 +49,17 @@ import {
   autoSignIn,
 } from "aws-amplify/auth";
 import { brand } from "../../common/brand";
-import { tokens } from "../../common/theme";
 import { StorageHelper } from "../../common/helpers/storage-helper";
+import { friendlyAuthError, passwordMeetsRules } from "./auth-helpers";
+import PasswordChecklist from "./password-checklist";
+import LoginBrandPanel from "./login-brand-panel";
+import TotpSetupDetails from "./totp-setup";
 
 interface LoginPageProps {
   /** Called once Cognito reports the sign-in is complete. */
   onSignedIn: () => void;
+  /** Show the "Create an account" flow (deployment opted in to self sign-up). */
+  selfSignUpEnabled?: boolean;
 }
 
 type View =
@@ -66,6 +69,7 @@ type View =
   | "forgotPassword"
   | "resetPassword"
   | "mfa"
+  | "totpSetup"
   | "newPassword";
 
 /**
@@ -75,79 +79,16 @@ type View =
 interface SignInNextStep {
   signInStep: string;
   codeDeliveryDetails?: { destination?: string; deliveryMedium?: string };
+  totpSetupDetails?: {
+    sharedSecret: string;
+    getSetupUri: (appName: string, accountName?: string) => URL;
+  };
+  allowedMFATypes?: string[];
 }
 
-/** Mirrors the pool password policy in lib/authorization/index.ts. */
-const PASSWORD_RULES: { label: string; test: (p: string) => boolean }[] = [
-  { label: "At least 12 characters", test: (p) => p.length >= 12 },
-  { label: "An uppercase letter", test: (p) => /[A-Z]/.test(p) },
-  { label: "A lowercase letter", test: (p) => /[a-z]/.test(p) },
-  { label: "A number", test: (p) => /\d/.test(p) },
-  { label: "A symbol", test: (p) => /[^A-Za-z0-9\s]/.test(p) },
-];
-
-const passwordMeetsRules = (p: string) =>
-  PASSWORD_RULES.every((rule) => rule.test(p));
-
-/** Map Cognito error codes onto messages a person can act on. */
-function friendlyAuthError(err: unknown): string {
-  const name = (err as { name?: string })?.name ?? "";
-  const message = (err as Error)?.message ?? "";
-  switch (name) {
-    case "NotAuthorizedException":
-    case "UserNotFoundException":
-      return "Incorrect email or password.";
-    case "UsernameExistsException":
-      return "An account with this email already exists. Try signing in instead.";
-    case "InvalidPasswordException":
-      return "That password doesn't meet the requirements.";
-    case "CodeMismatchException":
-      return "That code doesn't match. Double-check it and try again.";
-    case "ExpiredCodeException":
-      return "That code has expired. Request a new one and try again.";
-    case "LimitExceededException":
-    case "TooManyRequestsException":
-      return "Too many attempts. Please wait a few minutes and try again.";
-    case "UserNotConfirmedException":
-      return "This account hasn't been verified yet. Check your email for a code.";
-    case "PasswordResetRequiredException":
-      return 'A password reset is required for this account. Use "Forgot password?" below.';
-    case "AliasExistsException":
-      return "An account with this email already exists.";
-  }
-  return message || "Something went wrong. Please try again.";
-}
-
-/** Feature bullets on the brand panel. Generic on purpose (white-label). */
-const FEATURES = [
-  {
-    icon: <ForumOutlinedIcon />,
-    title: "Ask in plain language",
-    body: "Get direct answers instead of digging through documents.",
-  },
-  {
-    icon: <LibraryBooksOutlinedIcon />,
-    title: "Grounded in your knowledge base",
-    body: "Every answer cites the source documents it came from.",
-  },
-  {
-    icon: <GppGoodOutlinedIcon />,
-    title: "Private and secure",
-    body: "Your account and conversations are protected end to end.",
-  },
-];
-
-export default function LoginPage({ onSignedIn }: LoginPageProps) {
+export default function LoginPage({ onSignedIn, selfSignUpEnabled = false }: LoginPageProps) {
   const theme = useTheme();
   const mode = theme.palette.mode;
-  // Same brand-over-tokens merge theme.ts uses, so panel colors match the app.
-  const c = useMemo(
-    () => ({
-      ...tokens.colors[mode],
-      ...(mode === "dark" ? brand.colorsDark : brand.colorsLight),
-    }),
-    [mode]
-  );
 
   const [view, setView] = useState<View>("signIn");
   const [email, setEmail] = useState("");
@@ -160,6 +101,7 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
   const [info, setInfo] = useState("");
   const [busy, setBusy] = useState(false);
   const [mfaHint, setMfaHint] = useState("");
+  const [totp, setTotp] = useState<{ uri: string; secret: string } | null>(null);
 
   const username = email.trim().toLowerCase();
 
@@ -180,53 +122,62 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
   };
 
   /** Route Cognito's post-sign-in challenge to the matching view. */
-  const handleSignInStep = async (nextStep: SignInNextStep) => {
+  const handleSignInStep = async (nextStep: SignInNextStep): Promise<void> => {
     const step = nextStep.signInStep;
-    if (step === "DONE") {
-      onSignedIn();
-      return;
-    }
-    if (step === "CONFIRM_SIGN_UP") {
-      try {
-        await resendSignUpCode({ username });
-      } catch {
-        // Best effort; the previous code may still be valid.
+    switch (step) {
+      case "DONE":
+        onSignedIn();
+        return;
+      case "CONFIRM_SIGN_UP":
+        try {
+          await resendSignUpCode({ username });
+        } catch {
+          // Best effort; the previous code may still be valid.
+        }
+        goTo("confirmSignUp");
+        setInfo("This account still needs verification. We emailed you a code.");
+        return;
+      case "RESET_PASSWORD":
+        await resetPassword({ username });
+        goTo("resetPassword", { clearPasswords: true });
+        setInfo("A password reset is required. We emailed you a code.");
+        return;
+      case "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED":
+        goTo("newPassword", { clearPasswords: true });
+        return;
+      case "CONTINUE_SIGN_IN_WITH_TOTP_SETUP": {
+        const details = nextStep.totpSetupDetails;
+        if (!details) break;
+        setTotp({
+          uri: details.getSetupUri(brand.assistantName, username).toString(),
+          secret: details.sharedSecret,
+        });
+        goTo("totpSetup");
+        return;
       }
-      goTo("confirmSignUp");
-      setInfo("This account still needs verification. We emailed you a code.");
-      return;
-    }
-    if (step === "RESET_PASSWORD") {
-      await resetPassword({ username });
-      goTo("resetPassword", { clearPasswords: true });
-      setInfo("A password reset is required. We emailed you a code.");
-      return;
-    }
-    if (step === "CONFIRM_SIGN_IN_WITH_SMS_CODE") {
-      setMfaHint(
-        `We sent a code to ${nextStep.codeDeliveryDetails?.destination ?? "your phone"}.`
-      );
-      goTo("mfa");
-      return;
-    }
-    if (step === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE") {
-      setMfaHint(
-        `We sent a code to ${nextStep.codeDeliveryDetails?.destination ?? "your email"}.`
-      );
-      goTo("mfa");
-      return;
-    }
-    if (step === "CONFIRM_SIGN_IN_WITH_TOTP_CODE") {
-      setMfaHint("Enter the code from your authenticator app.");
-      goTo("mfa");
-      return;
-    }
-    if (step === "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED") {
-      goTo("newPassword", { clearPasswords: true });
-      return;
+      case "CONTINUE_SIGN_IN_WITH_MFA_SELECTION":
+      case "CONTINUE_SIGN_IN_WITH_MFA_SETUP_SELECTION": {
+        // Authenticator apps are the supported method; pick TOTP when offered.
+        const allowed = nextStep.allowedMFATypes ?? [];
+        const choice = allowed.includes("TOTP") ? "TOTP" : allowed[0];
+        if (!choice) break;
+        const { nextStep: following } = await confirmSignIn({ challengeResponse: choice });
+        await handleSignInStep(following as SignInNextStep);
+        return;
+      }
+      case "CONFIRM_SIGN_IN_WITH_TOTP_CODE":
+        setMfaHint("Enter the 6-digit code from your authenticator app.");
+        goTo("mfa");
+        return;
+      case "CONFIRM_SIGN_IN_WITH_EMAIL_CODE":
+        setMfaHint(
+          `We sent a code to ${nextStep.codeDeliveryDetails?.destination ?? "your email"}.`
+        );
+        goTo("mfa");
+        return;
     }
     setError(
-      `This account requires a sign-in step this app doesn't support yet. Please contact ${brand.supportContact}.`
+      `This account requires a sign-in step this app doesn't support. Please contact ${brand.supportContact}.`
     );
   };
 
@@ -240,10 +191,6 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
       try {
         await action();
       } catch (err) {
-        if ((err as { name?: string })?.name === "UserAlreadyAuthenticatedException") {
-          onSignedIn();
-          return;
-        }
         setError(friendlyAuthError(err));
       } finally {
         setBusy(false);
@@ -251,14 +198,17 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
     };
 
   const handleSignIn = submit(async () => {
+    // Drop any half-finished or stale local session first, so a leftover
+    // token from another user can never be picked up instead of this sign-in.
+    await signOut().catch(() => undefined);
     const { nextStep } = await signIn({ username, password });
-    await handleSignInStep(nextStep);
+    await handleSignInStep(nextStep as SignInNextStep);
   });
 
   const finishAutoSignIn = async () => {
     try {
       const { nextStep } = await autoSignIn();
-      await handleSignInStep(nextStep);
+      await handleSignInStep(nextStep as SignInNextStep);
     } catch {
       goTo("signIn", { clearPasswords: true });
       setInfo("Your email is verified. Sign in with your new account.");
@@ -274,11 +224,12 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
       setError("The passwords don't match.");
       return;
     }
+    const name = fullName.trim();
     const { nextStep } = await signUp({
       username,
       password,
       options: {
-        userAttributes: { email: username, name: fullName.trim() },
+        userAttributes: { email: username, ...(name ? { name } : {}) },
         autoSignIn: true,
       },
     });
@@ -346,9 +297,10 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
     setInfo("Password updated. Sign in with your new password.");
   });
 
-  const handleMfa = submit(async () => {
+  /** Shared by the code challenge and the TOTP setup step. */
+  const handleCode = submit(async () => {
     const { nextStep } = await confirmSignIn({ challengeResponse: code.trim() });
-    await handleSignInStep(nextStep);
+    await handleSignInStep(nextStep as SignInNextStep);
   });
 
   const handleNewPassword = submit(async () => {
@@ -361,7 +313,7 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
       return;
     }
     const { nextStep } = await confirmSignIn({ challengeResponse: password });
-    await handleSignInStep(nextStep);
+    await handleSignInStep(nextStep as SignInNextStep);
   });
 
   // ---------------------------------------------------------------------
@@ -381,7 +333,7 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
     </InputAdornment>
   );
 
-  const emailField = (props?: { autoFocus?: boolean; disabled?: boolean }) => (
+  const emailField = (props?: { autoFocus?: boolean }) => (
     <TextField
       label="Email"
       type="email"
@@ -391,7 +343,7 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
       required
       fullWidth
       autoFocus={props?.autoFocus}
-      disabled={props?.disabled || busy}
+      disabled={busy}
     />
   );
 
@@ -401,7 +353,7 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
       value={code}
       onChange={(e) => setCode(e.target.value)}
       autoComplete="one-time-code"
-      inputMode="numeric"
+      inputProps={{ inputMode: "numeric" }}
       required
       fullWidth
       autoFocus
@@ -484,6 +436,25 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
     </Box>
   );
 
+  const accountFooter = selfSignUpEnabled ? (
+    <Typography variant="body2" sx={{ textAlign: "center", color: "text.secondary" }}>
+      New here?{" "}
+      <Link
+        component="button"
+        type="button"
+        onClick={() => goTo("signUp", { clearPasswords: true })}
+        sx={{ fontWeight: 600 }}
+      >
+        Create an account
+      </Link>
+    </Typography>
+  ) : (
+    <Typography variant="body2" sx={{ textAlign: "center", color: "text.secondary" }}>
+      Accounts are created by invitation. Ask {brand.supportContact} to invite you, then sign in
+      with the temporary password from your invitation email.
+    </Typography>
+  );
+
   // ---------------------------------------------------------------------
   // Views
   // ---------------------------------------------------------------------
@@ -500,7 +471,6 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
             autoComplete="name"
-            required
             fullWidth
             autoFocus
             disabled={busy}
@@ -568,11 +538,27 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
 
     case "mfa":
       content = (
-        <Stack component="form" onSubmit={handleMfa} spacing={2.25} noValidate>
+        <Stack component="form" onSubmit={handleCode} spacing={2.25} noValidate>
           {heading("Two-step verification", mfaHint || "Enter your verification code.")}
           {alerts}
           {codeField()}
           {submitButton("Verify")}
+          {backToSignIn}
+        </Stack>
+      );
+      break;
+
+    case "totpSetup":
+      content = (
+        <Stack component="form" onSubmit={handleCode} spacing={2.25} noValidate>
+          {heading(
+            "Set up two-step verification",
+            "Scan this QR code with an authenticator app (such as Google Authenticator, Microsoft Authenticator or 1Password), then enter the 6-digit code it shows."
+          )}
+          {alerts}
+          {totp && <TotpSetupDetails setupUri={totp.uri} sharedSecret={totp.secret} />}
+          {codeField("6-digit code")}
+          {submitButton("Verify and continue")}
           {backToSignIn}
         </Stack>
       );
@@ -621,17 +607,7 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
             </Box>
           </Box>
           {submitButton("Sign in")}
-          <Typography variant="body2" sx={{ textAlign: "center", color: "text.secondary" }}>
-            New here?{" "}
-            <Link
-              component="button"
-              type="button"
-              onClick={() => goTo("signUp", { clearPasswords: true })}
-              sx={{ fontWeight: 600 }}
-            >
-              Create an account
-            </Link>
-          </Typography>
+          {accountFooter}
         </Stack>
       );
   }
@@ -641,90 +617,8 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
   // ---------------------------------------------------------------------
 
   return (
-    <Box
-      sx={{
-        minHeight: "100dvh",
-        display: "flex",
-        bgcolor: "background.default",
-      }}
-    >
-      {/* Brand panel (desktop only) */}
-      <Box
-        sx={{
-          display: { xs: "none", md: "flex" },
-          flex: "1 1 55%",
-          position: "relative",
-          overflow: "hidden",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          p: { md: 6, lg: 8 },
-          color: c.headerText,
-          backgroundColor: c.headerBg,
-          backgroundImage: `linear-gradient(160deg, ${c.headerBg} 0%, color-mix(in srgb, ${c.headerBg} 55%, ${c.secondary}) 100%)`,
-        }}
-      >
-        {/* Decorative shapes */}
-        <Box
-          aria-hidden
-          sx={{
-            position: "absolute",
-            inset: 0,
-            background:
-              "radial-gradient(560px circle at 85% 12%, rgba(255,255,255,0.09), transparent 60%)," +
-              "radial-gradient(680px circle at 8% 95%, rgba(255,255,255,0.07), transparent 60%)",
-            pointerEvents: "none",
-          }}
-        />
-        <Box
-          component="img"
-          src={brand.assets.logoDark}
-          alt=""
-          sx={{ height: 44, alignSelf: "flex-start", position: "relative" }}
-        />
-        <Box sx={{ position: "relative", maxWidth: 520 }}>
-          <Typography
-            variant="h3"
-            component="p"
-            sx={{ fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.15 }}
-          >
-            {brand.assistantName}
-          </Typography>
-          <Typography sx={{ mt: 2, mb: 5, opacity: 0.85, fontSize: "1.05rem" }}>
-            {brand.tagline}
-          </Typography>
-          <Stack spacing={3}>
-            {FEATURES.map((feature) => (
-              <Stack key={feature.title} direction="row" spacing={2} alignItems="flex-start">
-                <Box
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 42,
-                    height: 42,
-                    borderRadius: 2,
-                    flexShrink: 0,
-                    bgcolor: "rgba(255,255,255,0.12)",
-                    "& svg": { fontSize: 22 },
-                  }}
-                >
-                  {feature.icon}
-                </Box>
-                <Box>
-                  <Typography sx={{ fontWeight: 700 }}>{feature.title}</Typography>
-                  <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                    {feature.body}
-                  </Typography>
-                </Box>
-              </Stack>
-            ))}
-          </Stack>
-        </Box>
-        <Typography variant="caption" sx={{ opacity: 0.7, position: "relative" }}>
-          © {new Date().getFullYear()} {brand.organizationName}
-          {brand.parentOrg ? ` · ${brand.parentOrg}` : ""}
-        </Typography>
-      </Box>
+    <Box sx={{ minHeight: "100dvh", display: "flex", bgcolor: "background.default" }}>
+      <LoginBrandPanel />
 
       {/* Form panel */}
       <Box
@@ -735,7 +629,7 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
           alignItems: "center",
           justifyContent: "center",
           position: "relative",
-          px: { xs: 3, sm: 6 },
+          px: { xs: 2, sm: 6 },
           py: { xs: 5, sm: 8 },
         }}
       >
@@ -750,70 +644,33 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
         </Tooltip>
 
         <Box sx={{ width: "100%", maxWidth: 400 }}>
-          {/* Mobile-only logo (the brand panel is hidden below md) */}
-          <Box
-            component="img"
-            src={mode === "dark" ? brand.assets.logoDark : brand.assets.logo}
-            alt={brand.organizationName}
-            sx={{ height: 40, mb: 4, display: { xs: "block", md: "none" } }}
-          />
+          {/* Mobile-only identity (the brand panel is hidden below md) */}
+          <Stack
+            direction="row"
+            spacing={1.5}
+            alignItems="center"
+            sx={{ mb: 4, display: { xs: "flex", md: "none" } }}
+          >
+            <Box component="img" src={brand.assets.icon} alt="" sx={{ height: 40, width: 40 }} />
+            <Box sx={{ minWidth: 0 }}>
+              <Typography sx={{ fontWeight: 800, lineHeight: 1.2 }} noWrap>
+                {brand.assistantName}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" noWrap>
+                {brand.organizationName}
+              </Typography>
+            </Box>
+          </Stack>
           {content}
         </Box>
 
         <Typography
           variant="caption"
-          sx={{
-            mt: 5,
-            color: "text.secondary",
-            display: { xs: "block", md: "none" },
-          }}
+          sx={{ mt: 5, color: "text.secondary", display: { xs: "block", md: "none" } }}
         >
           © {new Date().getFullYear()} {brand.organizationName}
         </Typography>
       </Box>
-    </Box>
-  );
-}
-
-/** Live checklist of the pool's password policy, shown while typing. */
-function PasswordChecklist({ value }: { value: string }) {
-  return (
-    <Box
-      component="ul"
-      sx={{
-        listStyle: "none",
-        m: 0,
-        mt: -1,
-        p: 1.5,
-        borderRadius: 2,
-        bgcolor: "action.hover",
-        display: "grid",
-        gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
-        gap: 0.75,
-      }}
-    >
-      {PASSWORD_RULES.map((rule) => {
-        const ok = rule.test(value);
-        return (
-          <Box
-            component="li"
-            key={rule.label}
-            sx={{ display: "flex", alignItems: "center", gap: 0.75 }}
-          >
-            {ok ? (
-              <CheckCircleRoundedIcon sx={{ fontSize: 16, color: "success.main" }} />
-            ) : (
-              <CircleOutlinedIcon sx={{ fontSize: 16, color: "text.disabled" }} />
-            )}
-            <Typography
-              variant="caption"
-              sx={{ color: ok ? "text.primary" : "text.secondary" }}
-            >
-              {rule.label}
-            </Typography>
-          </Box>
-        );
-      })}
     </Box>
   );
 }

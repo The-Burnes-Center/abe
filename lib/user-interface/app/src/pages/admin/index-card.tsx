@@ -84,7 +84,7 @@ function statusLabel(s: IndexStatus | null): string {
     return s.error_message ?? "Error";
   if (s.status === "COMPLETE" || s.has_data) {
     const updated = s.last_updated
-      ? ` (updated ${Utils.formatToEasternTime(s.last_updated)})`
+      ? ` (updated ${Utils.formatTimestamp(s.last_updated)})`
       : "";
     return `${s.row_count.toLocaleString()} rows${updated}`;
   }

@@ -301,7 +301,7 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
                 {history.map((run) => (
                   <TableRow key={run.sk}>
                     <TableCell>
-                      {Utils.formatToEasternTime(run.sk)}
+                      {Utils.formatTimestamp(run.sk)}
                     </TableCell>
                     <TableCell>
                       <Chip

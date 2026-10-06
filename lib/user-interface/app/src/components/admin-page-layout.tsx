@@ -1,15 +1,12 @@
-import { ReactNode, useState, useEffect } from "react";
+import { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import Breadcrumbs from "@mui/material/Breadcrumbs";
 import Link from "@mui/material/Link";
-import Alert from "@mui/material/Alert";
-import Skeleton from "@mui/material/Skeleton";
-import { fetchAuthSession } from "aws-amplify/auth";
-import { Utils } from "../common/utils";
-import { CHATBOT_NAME } from "../common/constants";
+import { v4 as uuidv4 } from "uuid";
+import { brand } from "../common/brand";
 
 interface AdminPageLayoutProps {
   title: string;
@@ -27,60 +24,8 @@ export default function AdminPageLayout({
   actions,
 }: AdminPageLayoutProps) {
   const navigate = useNavigate();
-  const [admin, setAdmin] = useState<boolean | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const session = await fetchAuthSession();
-        const payload = session.tokens?.idToken?.payload;
-        if (!payload) {
-          Utils.signOut();
-          return;
-        }
-        const adminRole =
-          payload?.["custom:role"] as string | undefined;
-        if (adminRole) {
-          const data = JSON.parse(adminRole);
-          if (data.some((role: string) => role.includes("Admin"))) {
-            setAdmin(true);
-            return;
-          }
-        }
-        setAdmin(false);
-      } catch {
-        setAdmin(false);
-      }
-    })();
-  }, []);
-
-  if (admin === null) {
-    return (
-      <Stack spacing={3}>
-        <Skeleton variant="text" width={200} height={24} />
-        <Skeleton variant="text" width={300} height={40} />
-        <Skeleton variant="rounded" height={200} />
-      </Stack>
-    );
-  }
-
-  if (!admin) {
-    return (
-      <Box
-        sx={{
-          height: "60vh",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <Alert severity="error">
-          You are not authorized to view this page.
-        </Alert>
-      </Box>
-    );
-  }
-
+  // Access is enforced once, by the AdminRoute guard on /admin/*.
   return (
     <Stack spacing={3}>
       <Breadcrumbs aria-label="breadcrumb">
@@ -88,10 +33,10 @@ export default function AdminPageLayout({
           component="button"
           underline="hover"
           color="inherit"
-          onClick={() => navigate("/")}
+          onClick={() => navigate(`/chatbot/playground/${uuidv4()}`)}
           sx={{ fontSize: "0.8125rem" }}
         >
-          {CHATBOT_NAME}
+          {brand.shortName}
         </Link>
         <Typography color="text.primary" sx={{ fontSize: "0.8125rem" }}>
           {breadcrumbLabel}

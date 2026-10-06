@@ -9,6 +9,7 @@ import OnboardingDialog from "./components/onboarding/onboarding-dialog";
 import LandingPage from "./pages/landing-page";
 import LandingPageInfo from "./pages/landing-page-info";
 import LandingPageStart from "./pages/landing-page-start";
+import AdminRoute from "./components/admin-route";
 import "./styles/app.scss";
 
 const Playground = React.lazy(() => import("./pages/chatbot/playground/playground"));
@@ -19,6 +20,7 @@ const UserFeedbackDetailPage = React.lazy(() => import("./pages/admin/feedback-d
 const MetricsPage = React.lazy(() => import("./pages/admin/metrics-page"));
 const LlmEvaluationPage = React.lazy(() => import("./pages/admin/llm-evaluation-page"));
 const DetailedEvaluationPage = React.lazy(() => import("./pages/admin/detailed-evaluation-page"));
+const UsersPage = React.lazy(() => import("./pages/admin/users/users-page"));
 const HelpPage = React.lazy(() => import("./pages/help/how-to-use"));
 const NotFoundPage = React.lazy(() => import("./pages/not-found"));
 
@@ -95,8 +97,9 @@ function App() {
                     <Route path="tips" element={<Navigate to="/help" replace />} />
                   </Route>
 
-                  <Route path="/admin">
+                  <Route path="/admin" element={<AdminRoute />}>
                     <Route path="data" element={<DataPage />} />
+                    <Route path="users" element={<UsersPage />} />
                     <Route path="user-feedback" element={<UserFeedbackPage />} />
                     <Route path="user-feedback/:feedbackId" element={<UserFeedbackDetailPage />} />
                     <Route path="metrics" element={<MetricsPage />} />

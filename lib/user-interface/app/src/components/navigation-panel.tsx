@@ -22,6 +22,7 @@ import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
 import FeedbackOutlinedIcon from "@mui/icons-material/FeedbackOutlined";
 import BarChartOutlinedIcon from "@mui/icons-material/BarChartOutlined";
 import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
+import PeopleOutlineIcon from "@mui/icons-material/PeopleOutline";
 import ChatBubbleOutlineIcon from "@mui/icons-material/ChatBubbleOutline";
 import { AppContext } from "../common/app-context";
 import { ApiClient } from "../common/api-client/api-client";
@@ -29,7 +30,8 @@ import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import { v4 as uuidv4 } from "uuid";
 import { SessionRefreshContext } from "../common/session-refresh-context";
 import { useNotifications } from "./notif-manager";
-import { Utils } from "../common/utils.js";
+import { Utils } from "../common/utils";
+import { isAdmin } from "../common/auth";
 
 const VISIBLE_SESSION_COUNT = 10;
 
@@ -53,8 +55,11 @@ const adminLinkDefinitions: AdminLink[] = [
   { text: "Data", href: "/admin/data", icon: <FolderOutlinedIcon fontSize="small" /> },
   { text: "Feedback Manager", href: "/admin/user-feedback", icon: <FeedbackOutlinedIcon fontSize="small" /> },
   { text: "Analytics", href: "/admin/metrics", icon: <BarChartOutlinedIcon fontSize="small" /> },
-  { text: "LLM Evaluation", href: "/admin/llm-evaluation", icon: <ScienceOutlinedIcon fontSize="small" /> },
+  { text: "Quality Monitoring", href: "/admin/llm-evaluation", icon: <ScienceOutlinedIcon fontSize="small" /> },
+  { text: "Users", href: "/admin/users", icon: <PeopleOutlineIcon fontSize="small" /> },
 ];
+
+const EVAL_HREF = "/admin/llm-evaluation";
 
 export default function NavigationPanel() {
   const appContext = useContext(AppContext);
@@ -94,15 +99,15 @@ export default function NavigationPanel() {
   const loadAdminLinks = async () => {
     try {
       const session = await fetchAuthSession();
-      const admin = session.tokens?.idToken?.payload?.["custom:role"] as string | undefined;
-      if (admin) {
-        const data = JSON.parse(admin);
-        if (data.includes("Admin") || data.includes("Master Admin")) {
-          setAdminLinks(adminLinkDefinitions);
-        }
-      }
+      // Deployments built with enableEval=false have no evaluation API.
+      const evalEnabled = appContext?.evalEnabled !== false;
+      setAdminLinks(
+        isAdmin(session)
+          ? adminLinkDefinitions.filter((l) => evalEnabled || l.href !== EVAL_HREF)
+          : []
+      );
     } catch {
-      // Admin check failed — user is not admin
+      setAdminLinks([]);
     }
   };
 
