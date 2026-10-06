@@ -10,7 +10,7 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
-    "test:lambda": "vitest run lib/chatbot-api/functions/websocket-chat",
+    "test:lambda": "vitest run",
     "synth": "ts-node --prefer-ts-exts scripts/sync-brand.ts && cdk synth",
     "deploy": "ts-node --prefer-ts-exts scripts/sync-brand.ts && cdk deploy",
     "cdk": "cdk"

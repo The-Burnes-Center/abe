@@ -1,0 +1,114 @@
+name: Test
+
+# Reusable test job, called by deploy.yml and pr-check.yml so both run the
+# exact same checks. Needs no AWS credentials and no Docker.
+on:
+  workflow_call:
+    inputs:
+      coverage:
+        description: Collect coverage reports and upload them as an artifact
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            lib/user-interface/app/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: lib/user-interface/app
+        run: npm ci
+
+      - name: Install Python test dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pytest pytest-cov moto boto3 pydantic openpyxl python-jose requests cryptography
+          if [ -f requirements-dev.txt ]; then python3 -m pip install -r requirements-dev.txt; fi
+
+      - name: Typecheck CDK app
+        run: npx tsc --noEmit
+
+      - name: CDK tests (Jest)
+        run: npm test
+
+      - name: Node Lambda tests (Vitest)
+        run: npm run test:lambda
+
+      - name: Python Lambda tests (pytest)
+        run: |
+          COV_ARGS=""
+          if [ "${{ inputs.coverage }}" = "true" ]; then
+            COV_ARGS="--cov=lib --cov-report=term-missing --cov-report=xml:coverage-python.xml"
+          fi
+          # Discover every test_*.py under lib/; importlib mode lets test files in
+          # different Lambda folders share a basename.
+          python3 -m pytest lib \
+            --import-mode=importlib \
+            --ignore=lib/user-interface \
+            $COV_ARGS
+
+      - name: Frontend lint
+        working-directory: lib/user-interface/app
+        run: npm run lint
+
+      - name: Frontend typecheck
+        working-directory: lib/user-interface/app
+        run: npx tsc --noEmit
+
+      - name: Frontend tests
+        working-directory: lib/user-interface/app
+        run: |
+          if [ "${{ inputs.coverage }}" = "true" ]; then
+            npm run test:coverage
+          else
+            npm test
+          fi
+
+      - name: Coverage summary
+        if: inputs.coverage
+        run: |
+          {
+            echo "## Coverage"
+            LCOV=lib/user-interface/app/coverage/lcov.info
+            if [ -f "$LCOV" ]; then
+              FOUND=$(grep -h '^LF:' "$LCOV" | cut -d: -f2 | paste -sd+ - | bc)
+              HIT=$(grep -h '^LH:' "$LCOV" | cut -d: -f2 | paste -sd+ - | bc)
+              echo "- Frontend (Vitest): ${HIT}/${FOUND} lines"
+            fi
+            if [ -f coverage-python.xml ]; then
+              RATE=$(grep -o 'line-rate="[0-9.]*"' coverage-python.xml | head -1 | grep -o '[0-9.]*')
+              echo "- Python (pytest-cov): line rate ${RATE}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage reports
+        if: inputs.coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-reports
+          path: |
+            lib/user-interface/app/coverage/lcov.info
+            coverage-python.xml
+          if-no-files-found: ignore
