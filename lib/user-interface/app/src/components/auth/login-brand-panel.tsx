@@ -1,5 +1,4 @@
 /** Left-hand brand panel of the login page (desktop only). */
-import { useMemo } from "react";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -8,7 +7,7 @@ import ForumOutlinedIcon from "@mui/icons-material/ForumOutlined";
 import LibraryBooksOutlinedIcon from "@mui/icons-material/LibraryBooksOutlined";
 import GppGoodOutlinedIcon from "@mui/icons-material/GppGoodOutlined";
 import { brand } from "../../common/brand";
-import { tokens } from "../../common/theme";
+import { themeColors } from "../../common/theme";
 
 /** Feature bullets on the brand panel. Generic on purpose (white-label). */
 const FEATURES = [
@@ -32,14 +31,7 @@ const FEATURES = [
 export default function LoginBrandPanel() {
   const theme = useTheme();
   const mode = theme.palette.mode;
-  // Same brand-over-tokens merge theme.ts uses, so panel colors match the app.
-  const c = useMemo(
-    () => ({
-      ...tokens.colors[mode],
-      ...(mode === "dark" ? brand.colorsDark : brand.colorsLight),
-    }),
-    [mode]
-  );
+  const c = themeColors(mode);
 
   return (
     <Box
@@ -72,7 +64,7 @@ export default function LoginBrandPanel() {
         component="img"
         src={brand.assets.logoDark}
         alt=""
-        sx={{ height: 44, alignSelf: "flex-start", position: "relative" }}
+        sx={{ height: 96, alignSelf: "flex-start", position: "relative" }}
       />
       <Box sx={{ position: "relative", maxWidth: 520 }}>
         <Typography

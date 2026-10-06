@@ -6,69 +6,70 @@ import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
+import ListItemIcon from "@mui/material/ListItemIcon";
 import Box from "@mui/material/Box";
 import Avatar from "@mui/material/Avatar";
 import Tooltip from "@mui/material/Tooltip";
 import Stack from "@mui/material/Stack";
+import Divider from "@mui/material/Divider";
+import { useTheme } from "@mui/material/styles";
 import DarkModeOutlinedIcon from "@mui/icons-material/DarkModeOutlined";
 import LightModeOutlinedIcon from "@mui/icons-material/LightModeOutlined";
 import MenuIcon from "@mui/icons-material/Menu";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import LogoutIcon from "@mui/icons-material/Logout";
-import { StorageHelper, ThemeMode } from "../common/helpers/storage-helper";
+import PhonelinkLockOutlinedIcon from "@mui/icons-material/PhonelinkLockOutlined";
 import { fetchAuthSession } from "aws-amplify/auth";
-import { Utils } from "../common/utils";
-import { CHATBOT_NAME } from "../common/constants";
-import { tokens } from "../common/theme";
-import { brand } from "../common/brand";
 import { v4 as uuidv4 } from "uuid";
+import { StorageHelper } from "../common/helpers/storage-helper";
+import { Utils } from "../common/utils";
+import { themeColors } from "../common/theme";
+import { brand } from "../common/brand";
+import MfaSettingsDialog from "./auth/mfa-settings-dialog";
 
 interface GlobalHeaderProps {
   onMenuClick?: () => void;
   menuExpanded?: boolean;
 }
 
+const HOVER_BG = "rgba(255,255,255,0.12)";
+
 export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeaderProps) {
   const navigate = useNavigate();
+  const mode = useTheme().palette.mode;
   const [userName, setUserName] = useState<string | null>(null);
-  const [theme, setTheme] = useState<ThemeMode>(StorageHelper.getTheme());
+  const [email, setEmail] = useState("");
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [mfaOpen, setMfaOpen] = useState(false);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const session = await fetchAuthSession();
+    fetchAuthSession()
+      .then((session) => {
         const payload = session.tokens?.idToken?.payload;
         if (!payload) {
-          Utils.signOut();
+          Utils.redirectToLogin();
           return;
         }
-        const name = payload?.name as string | undefined;
-        const email = payload?.email as string | undefined;
-        setUserName(name || email || null);
-      } catch {
-        Utils.signOut();
-      }
-    })();
+        const name = typeof payload.name === "string" ? payload.name : "";
+        const mail = typeof payload.email === "string" ? payload.email : "";
+        setEmail(mail);
+        setUserName(name || mail || null);
+      })
+      .catch(() => Utils.redirectToLogin());
   }, []);
 
   const onChangeThemeClick = () => {
-    if (theme === "dark") {
-      setTheme(StorageHelper.applyTheme("light"));
-    } else {
-      setTheme(StorageHelper.applyTheme("dark"));
-    }
+    StorageHelper.applyTheme(mode === "dark" ? "light" : "dark");
   };
 
   const handleSignOut = () => {
     setAnchorEl(null);
-    Utils.signOut();
+    void Utils.signOut();
   };
 
-  const c = tokens.colors[theme];
-  const initials = userName
-    ? userName.split(/[\s@]+/)[0].charAt(0).toUpperCase()
-    : "U";
+  const c = themeColors(mode);
+  const initials = userName ? userName.split(/[\s@]+/)[0].charAt(0).toUpperCase() : "U";
+  const iconSx = { color: c.headerText, "&:hover": { bgcolor: HOVER_BG } };
 
   return (
     <AppBar
@@ -78,10 +79,11 @@ export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeader
         top: 0,
         zIndex: (t) => t.zIndex.drawer + 1,
         bgcolor: c.headerBg,
-        borderBottom: `1px solid ${theme === "light" ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.05)"}`,
+        color: c.headerText,
+        borderBottom: "1px solid rgba(255,255,255,0.06)",
       }}
     >
-      <Toolbar sx={{ minHeight: { xs: 56, sm: 64 }, px: { xs: 1.5, sm: 2.5 } }}>
+      <Toolbar sx={{ minHeight: { xs: 56, sm: 64 }, px: { xs: 1, sm: 2.5 }, gap: 1 }}>
         {onMenuClick && (
           <IconButton
             color="inherit"
@@ -89,7 +91,7 @@ export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeader
             onClick={onMenuClick}
             aria-label={menuExpanded ? "Hide navigation menu" : "Show navigation menu"}
             aria-expanded={menuExpanded}
-            sx={{ mr: 1 }}
+            sx={{ flexShrink: 0 }}
           >
             <MenuIcon />
           </IconButton>
@@ -97,69 +99,63 @@ export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeader
         <Box
           component="button"
           onClick={() => navigate(`/chatbot/playground/${uuidv4()}`)}
-          aria-label={`Open ${CHATBOT_NAME} chat in a new session`}
+          aria-label={`Open ${brand.assistantName} chat in a new session`}
           sx={{
             display: "flex",
             alignItems: "center",
-            gap: 1.5,
+            gap: 1.25,
+            minWidth: 0,
+            flex: "0 1 auto",
             background: "none",
             border: "none",
             cursor: "pointer",
             p: 0,
-            mr: 2,
+            mr: "auto",
             borderRadius: 1,
-            "&:focus-visible": {
-              outline: "2px solid rgba(255,255,255,0.6)",
-              outlineOffset: 4,
-            },
+            color: "inherit",
           }}
         >
           <Box
             component="img"
             src={brand.assets.icon}
-            alt={`${CHATBOT_NAME} logo`}
-            sx={{ height: { xs: 28, sm: 32 } }}
+            alt=""
+            sx={{ height: { xs: 28, sm: 32 }, width: { xs: 28, sm: 32 }, flexShrink: 0 }}
           />
           <Typography
             variant="subtitle1"
             noWrap
             sx={{
+              minWidth: 0,
               color: c.headerText,
               fontWeight: 700,
-              fontSize: { xs: "0.875rem", sm: "1rem" },
+              fontSize: { xs: "0.9375rem", sm: "1rem" },
               letterSpacing: "-0.01em",
             }}
           >
-            {CHATBOT_NAME}
+            <Box component="span" sx={{ display: { xs: "inline", sm: "none" } }}>
+              {brand.shortName}
+            </Box>
+            <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
+              {brand.assistantName}
+            </Box>
           </Typography>
         </Box>
 
-        <Box sx={{ flexGrow: 1 }} />
-
-        <Stack direction="row" spacing={0.5} alignItems="center">
+        <Stack direction="row" spacing={{ xs: 0, sm: 0.5 }} alignItems="center" sx={{ flexShrink: 0 }}>
           <Tooltip title="Help & Guide">
-            <IconButton
-              color="inherit"
-              onClick={() => navigate("/help")}
-              aria-label="Help and guide"
-              sx={{ color: c.headerText, "&:hover": { bgcolor: "rgba(255,255,255,0.12)" } }}
-            >
+            <IconButton color="inherit" onClick={() => navigate("/help")} aria-label="Help and guide" sx={iconSx}>
               <HelpOutlineIcon />
             </IconButton>
           </Tooltip>
 
-          <Tooltip title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+          <Tooltip title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
             <IconButton
               color="inherit"
               onClick={onChangeThemeClick}
-              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-              sx={{ color: c.headerText, "&:hover": { bgcolor: "rgba(255,255,255,0.12)" } }}
+              aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              sx={iconSx}
             >
-              {theme === "dark" ? (
-                <LightModeOutlinedIcon />
-              ) : (
-                <DarkModeOutlinedIcon />
-              )}
+              {mode === "dark" ? <LightModeOutlinedIcon /> : <DarkModeOutlinedIcon />}
             </IconButton>
           </Tooltip>
 
@@ -168,7 +164,6 @@ export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeader
               onClick={(e) => setAnchorEl(e.currentTarget)}
               aria-label="Account menu"
               aria-haspopup="true"
-              sx={{ ml: 0.5 }}
             >
               <Avatar
                 sx={{
@@ -194,16 +189,35 @@ export default function GlobalHeader({ onMenuClick, menuExpanded }: GlobalHeader
           transformOrigin={{ vertical: "top", horizontal: "right" }}
         >
           {userName && (
-            <MenuItem disabled sx={{ opacity: "0.7 !important", fontSize: "0.8125rem" }}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ px: 2, py: 1, maxWidth: 280, overflowWrap: "anywhere" }}
+            >
               {userName}
-            </MenuItem>
+            </Typography>
           )}
-          <MenuItem onClick={handleSignOut} sx={{ gap: 1 }}>
-            <LogoutIcon fontSize="small" />
+          {userName && <Divider />}
+          <MenuItem
+            onClick={() => {
+              setAnchorEl(null);
+              setMfaOpen(true);
+            }}
+          >
+            <ListItemIcon>
+              <PhonelinkLockOutlinedIcon fontSize="small" />
+            </ListItemIcon>
+            Two-step verification
+          </MenuItem>
+          <MenuItem onClick={handleSignOut}>
+            <ListItemIcon>
+              <LogoutIcon fontSize="small" />
+            </ListItemIcon>
             Sign out
           </MenuItem>
         </Menu>
       </Toolbar>
+      <MfaSettingsDialog open={mfaOpen} onClose={() => setMfaOpen(false)} accountName={email} />
     </AppBar>
   );
 }

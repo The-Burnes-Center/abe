@@ -1,4 +1,5 @@
-import { ReactElement, useState } from "react";
+import { ReactElement, useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Drawer from "@mui/material/Drawer";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -13,19 +14,22 @@ import { StorageHelper } from "../common/helpers/storage-helper";
 
 interface BaseAppLayoutProps {
   children?: ReactElement | ReactElement[];
-  info?: ReactElement;
 }
 
 export default function BaseAppLayout({ children }: BaseAppLayoutProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [desktopCollapsed, setDesktopCollapsed] = useState(
     () => StorageHelper.getNavigationPanelState().collapsed ?? false,
   );
   const [needsRefresh, setNeedsRefresh] = useState(true);
 
-  const drawerContent = <NavigationPanel />;
+  // The mobile drawer is an overlay: close it once the user picks a destination.
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
 
   const handleMenuClick = () => {
     if (isMobile) {
@@ -42,9 +46,8 @@ export default function BaseAppLayout({ children }: BaseAppLayoutProps) {
   return (
     <SessionRefreshContext.Provider value={{ needsRefresh, setNeedsRefresh }}>
       <NotificationProvider>
-        {/* Fills the slot the parent gives us (between BrandBanner and Footer
-            in App), so the whole shell — banner, header, body, footer — fits
-            in one viewport with the body as the only scrollable region. */}
+        {/* The whole shell fits in one viewport with the body as the only
+            scrollable region. */}
         <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
           <GlobalHeader
             onMenuClick={handleMenuClick}
@@ -52,51 +55,50 @@ export default function BaseAppLayout({ children }: BaseAppLayoutProps) {
           />
 
           <Box sx={{ display: "flex", flex: 1, minHeight: 0 }}>
-            {/* Mobile drawer */}
-            <Drawer
-              variant="temporary"
-              open={mobileOpen}
-              onClose={() => setMobileOpen(false)}
-              ModalProps={{ keepMounted: true }}
-              PaperProps={{ "aria-label": "Main navigation" }}
-              sx={{
-                display: { xs: "block", md: "none" },
-                "& .MuiDrawer-paper": { width: DRAWER_WIDTH, boxSizing: "border-box" },
-              }}
-            >
-              {drawerContent}
-            </Drawer>
-
-            {/* Desktop drawer — hidden when collapsed so main content reclaims
-                the full width. Paper fills available height so NavigationPanel's
-                pinned-top/bottom + scrollable-middle layout can take effect. */}
-            <Drawer
-              variant="permanent"
-              sx={{
-                display: { xs: "none", md: desktopCollapsed ? "none" : "block" },
-                width: DRAWER_WIDTH,
-                flexShrink: 0,
-                "& .MuiDrawer-paper": {
+            {/* Only one NavigationPanel is mounted at a time, so sessions load once. */}
+            {isMobile ? (
+              <Drawer
+                variant="temporary"
+                open={mobileOpen}
+                onClose={() => setMobileOpen(false)}
+                ModalProps={{ keepMounted: true }}
+                PaperProps={{ "aria-label": "Main navigation" }}
+                sx={{
+                  // Above the sticky AppBar so the panel's top isn't hidden behind it.
+                  zIndex: (t) => t.zIndex.appBar + 1,
+                  "& .MuiDrawer-paper": { width: DRAWER_WIDTH, maxWidth: "85vw", boxSizing: "border-box" },
+                }}
+              >
+                <NavigationPanel />
+              </Drawer>
+            ) : (
+              <Drawer
+                variant="permanent"
+                sx={{
+                  display: desktopCollapsed ? "none" : "block",
                   width: DRAWER_WIDTH,
-                  boxSizing: "border-box",
-                  position: "static",
-                  height: "100%",
-                },
-              }}
-            >
-              {drawerContent}
-            </Drawer>
+                  flexShrink: 0,
+                  "& .MuiDrawer-paper": {
+                    width: DRAWER_WIDTH,
+                    boxSizing: "border-box",
+                    position: "static",
+                    height: "100%",
+                  },
+                }}
+              >
+                <NavigationPanel />
+              </Drawer>
+            )}
 
-            {/* Main content */}
+            {/* Main content. minWidth 0 lets it shrink below its content's
+                intrinsic width instead of pushing the page sideways. */}
             <Box
               component="main"
               id="main-content"
               tabIndex={-1}
               sx={{
                 flexGrow: 1,
-                width: {
-                  md: desktopCollapsed ? "100%" : `calc(100% - ${DRAWER_WIDTH}px)`,
-                },
+                minWidth: 0,
                 display: "flex",
                 flexDirection: "column",
                 "&:focus:not(:focus-visible)": { outline: "none" },
@@ -107,6 +109,7 @@ export default function BaseAppLayout({ children }: BaseAppLayoutProps) {
                 sx={{
                   flex: 1,
                   minHeight: 0,
+                  minWidth: 0,
                   display: "flex",
                   flexDirection: "column",
                   px: { xs: 2, sm: 2.5, md: 3 },
