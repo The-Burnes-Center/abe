@@ -65,6 +65,7 @@ def _trim_history_and_append(session_id, user_id, new_chat_entry, title_text):
     """Rewrite the session with the oldest turns dropped so the new entry fits."""
     existing = table.get_item(Key={"user_id": user_id, "session_id": session_id}).get("Item") or {}
     history = list(existing.get("chat_history") or []) + [new_chat_entry]
+    previous_count = existing.get("message_count", len(existing.get("chat_history") or []))
     item = {
         **existing,
         "user_id": user_id,
@@ -72,6 +73,7 @@ def _trim_history_and_append(session_id, user_id, new_chat_entry, title_text):
         "title": existing.get("title") or title_text,
         "time_stamp": utc_now_iso(),
         "chat_history": history,
+        "message_count": int(previous_count) + 1,
     }
     dropped = 0
     while len(item["chat_history"]) > 1 and _json_size(item) > MAX_ITEM_BYTES:
@@ -100,6 +102,49 @@ def get_session(session_id, user_id):
         return json_response(500, "An unexpected error occurred")
 
 
+# message_count lets the metrics Lambda count turns without reading every
+# chat_history body. Sessions written before the counter existed are seeded
+# from their stored history the first time they are appended to.
+_COUNT_READY = "(attribute_exists(message_count) OR attribute_not_exists(chat_history))"
+
+
+def _append_entry(session_id, user_id, new_chat_entry, *, title_text=None, must_exist=False, return_values="NONE"):
+    key = {"user_id": user_id, "session_id": session_id}
+    set_parts = [
+        "chat_history = list_append(if_not_exists(chat_history, :empty), :new_entry)",
+        "time_stamp = :ts",
+        "message_count = if_not_exists(message_count, :seed) + :one",
+    ]
+    values = {":empty": [], ":new_entry": [new_chat_entry], ":ts": utc_now_iso(), ":seed": 0, ":one": 1}
+    kwargs = {}
+    if title_text is not None:
+        set_parts.append("#title = if_not_exists(#title, :title)")
+        values[":title"] = title_text
+        kwargs["ExpressionAttributeNames"] = {"#title": "title"}
+    exists = "attribute_exists(user_id) AND attribute_exists(session_id)"
+
+    def _update(condition):
+        return table.update_item(
+            Key=key,
+            UpdateExpression="SET " + ", ".join(set_parts),
+            ExpressionAttributeValues=values,
+            ConditionExpression=condition,
+            ReturnValues=return_values,
+            **kwargs,
+        )
+
+    try:
+        return _update(f"{exists} AND {_COUNT_READY}" if must_exist else _COUNT_READY)
+    except ClientError as error:
+        if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+        existing = table.get_item(Key=key, ProjectionExpression="chat_history, message_count").get("Item")
+        if not existing or "message_count" in existing:
+            raise
+        values[":seed"] = len(existing.get("chat_history") or [])
+        return _update(exists if must_exist else "attribute_exists(chat_history)")
+
+
 def add_session(session_id, user_id, title, new_chat_entry):
     new_chat_entry = _fit_entry(new_chat_entry)
     if new_chat_entry is None:
@@ -111,6 +156,7 @@ def add_session(session_id, user_id, title, new_chat_entry):
                 "user_id": user_id,
                 "session_id": session_id,
                 "chat_history": [new_chat_entry],
+                "message_count": 1,
                 "title": title_text,
                 "time_stamp": utc_now_iso(),
             },
@@ -131,17 +177,7 @@ def update_session(session_id, user_id, new_chat_entry):
     if new_chat_entry is None:
         return json_response(413, "This message is too large to save.")
     try:
-        response = table.update_item(
-            Key={"user_id": user_id, "session_id": session_id},
-            UpdateExpression="SET chat_history = list_append(if_not_exists(chat_history, :empty), :new_entry), time_stamp = :ts",
-            ExpressionAttributeValues={
-                ":new_entry": [new_chat_entry],
-                ":empty": [],
-                ":ts": utc_now_iso(),
-            },
-            ConditionExpression="attribute_exists(user_id) AND attribute_exists(session_id)",
-            ReturnValues="UPDATED_NEW",
-        )
+        response = _append_entry(session_id, user_id, new_chat_entry, must_exist=True, return_values="UPDATED_NEW")
         return json_response(200, response.get("Attributes", {}))
     except ClientError as error:
         logger.exception("DynamoDB error while updating session")
@@ -159,21 +195,7 @@ def append_chat_entry(session_id, user_id, new_chat_entry, title):
     if new_chat_entry is None:
         return json_response(413, "This message is too large to save.")
     try:
-        response = table.update_item(
-            Key={"user_id": user_id, "session_id": session_id},
-            UpdateExpression=(
-                "SET chat_history = list_append(if_not_exists(chat_history, :empty), :new_entry), "
-                "time_stamp = :ts, #title = if_not_exists(#title, :title)"
-            ),
-            ExpressionAttributeNames={"#title": "title"},
-            ExpressionAttributeValues={
-                ":empty": [],
-                ":new_entry": [new_chat_entry],
-                ":title": title_text,
-                ":ts": utc_now_iso(),
-            },
-            ReturnValues="ALL_OLD",
-        )
+        response = _append_entry(session_id, user_id, new_chat_entry, title_text=title_text, return_values="ALL_OLD")
         return json_response(
             200,
             {

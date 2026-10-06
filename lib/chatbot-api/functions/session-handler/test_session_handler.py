@@ -1055,3 +1055,56 @@ class TestItemSizeGuard:
         assert item["chat_history"][-1]["user"] == "newest"
         assert len(item["chat_history"]) < 11
         assert item["chat_history"][0]["user"] != "q0"
+
+
+class TestMessageCount:
+    def _append(self, lf, text="q"):
+        return _invoke(lf, {
+            "operation": "append_chat_entry",
+            "user_id": USER_ID,
+            "session_id": SESSION_ID,
+            "new_chat_entry": {"user": text, "chatbot": "a"},
+            "title": "T",
+        })
+
+    def test_counter_tracks_new_session(self, ctx):
+        lf, table = ctx
+        assert self._append(lf)["_parsed"]["created"] is True
+        assert self._append(lf)["_parsed"]["created"] is False
+        item = table.get_item(Key={"user_id": USER_ID, "session_id": SESSION_ID})["Item"]
+        assert item["message_count"] == 2
+        assert len(item["chat_history"]) == 2
+
+    def test_legacy_session_counter_seeded_from_history(self, ctx):
+        lf, table = ctx
+        _seed_session(table, history=[{"user": f"q{i}", "chatbot": "a"} for i in range(3)])
+        resp = self._append(lf)
+        assert resp["statusCode"] == 200
+        item = table.get_item(Key={"user_id": USER_ID, "session_id": SESSION_ID})["Item"]
+        assert item["message_count"] == 4
+        assert len(item["chat_history"]) == 4
+
+    def test_add_session_sets_counter(self, ctx):
+        lf, table = ctx
+        _invoke(lf, {
+            "operation": "add_session",
+            "user_id": USER_ID,
+            "session_id": SESSION_ID,
+            "new_chat_entry": {"user": "q", "chatbot": "a"},
+            "title": "T",
+        })
+        item = table.get_item(Key={"user_id": USER_ID, "session_id": SESSION_ID})["Item"]
+        assert item["message_count"] == 1
+
+    def test_update_session_on_legacy_item_seeds_counter(self, ctx):
+        lf, table = ctx
+        _seed_session(table, history=[{"user": "q0", "chatbot": "a"}, {"user": "q1", "chatbot": "a"}])
+        resp = _invoke(lf, {
+            "operation": "update_session",
+            "user_id": USER_ID,
+            "session_id": SESSION_ID,
+            "new_chat_entry": {"user": "q2", "chatbot": "a"},
+        })
+        assert resp["statusCode"] == 200
+        item = table.get_item(Key={"user_id": USER_ID, "session_id": SESSION_ID})["Item"]
+        assert item["message_count"] == 3
