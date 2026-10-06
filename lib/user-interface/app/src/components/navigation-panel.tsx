@@ -1,4 +1,4 @@
-import { useContext, useState, useEffect } from "react";
+import { useContext, useState, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
@@ -63,7 +63,7 @@ const EVAL_HREF = "/admin/llm-evaluation";
 
 export default function NavigationPanel() {
   const appContext = useContext(AppContext);
-  const apiClient = new ApiClient(appContext!);
+  const apiClient = useMemo(() => new ApiClient(appContext!), [appContext]);
   const navigate = useNavigate();
   const location = useLocation();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -74,46 +74,54 @@ export default function NavigationPanel() {
   const { addNotification, removeNotification } = useNotifications();
   const [adminOpen, setAdminOpen] = useState(true);
 
-  const loadSessions = async () => {
-    if (loadingSessions) return;
-    setLoadingSessions(true);
-    try {
-      const user = await getCurrentUser();
-      const username = user?.username;
-      if (username && needsRefresh) {
-        const fetchedSessions = await apiClient.sessions.getSessions(username);
-        setSessions(fetchedSessions);
-        await loadAdminLinks();
-        if (!loaded) setLoaded(true);
-        setNeedsRefresh(false);
-      }
-    } catch (error: any) {
-      setLoaded(true);
-      addNotification("error", "Could not load sessions: " + (error?.message ?? "Unknown error"));
-      addNotification("info", "Please refresh the page");
-    } finally {
-      setLoadingSessions(false);
-    }
-  };
-
-  const loadAdminLinks = async () => {
-    try {
-      const session = await fetchAuthSession();
-      // Deployments built with enableEval=false have no evaluation API.
-      const evalEnabled = appContext?.evalEnabled !== false;
-      setAdminLinks(
-        isAdmin(session)
-          ? adminLinkDefinitions.filter((l) => evalEnabled || l.href !== EVAL_HREF)
-          : []
-      );
-    } catch {
-      setAdminLinks([]);
-    }
-  };
+  // Admin links depend only on the token, not on whether sessions loaded.
+  useEffect(() => {
+    let cancelled = false;
+    // Deployments built with enableEval=false have no evaluation API.
+    const evalEnabled = appContext?.evalEnabled !== false;
+    fetchAuthSession()
+      .then((session) => {
+        if (cancelled) return;
+        setAdminLinks(
+          isAdmin(session)
+            ? adminLinkDefinitions.filter((l) => evalEnabled || l.href !== EVAL_HREF)
+            : []
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAdminLinks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appContext]);
 
   useEffect(() => {
-    loadSessions();
-  }, [needsRefresh]);
+    if (!needsRefresh) return;
+    let cancelled = false;
+    setLoadingSessions(true);
+    (async () => {
+      try {
+        const { username } = await getCurrentUser();
+        const fetchedSessions = await apiClient.sessions.getSessions(username);
+        if (cancelled) return;
+        setSessions(fetchedSessions);
+        setNeedsRefresh(false);
+      } catch (error) {
+        if (!cancelled) {
+          addNotification("error", `Could not load sessions: ${Utils.getErrorMessage(error)}`);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoaded(true);
+          setLoadingSessions(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [needsRefresh, apiClient, setNeedsRefresh, addNotification]);
 
   const onReloadClick = async () => {
     setNeedsRefresh(true);

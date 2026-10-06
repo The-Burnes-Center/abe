@@ -215,10 +215,12 @@ function ChatMessage(props: ChatMessageProps) {
 // object for the last message), or when the streaming status/flag changes.
 // Callback props are intentionally excluded from comparison: they reference
 // stable functions and don't affect render output for completed messages.
-export default React.memo(ChatMessage, (prev, next) => {
+const MemoizedChatMessage = React.memo(ChatMessage, (prev, next) => {
   return (
     prev.message === next.message &&
     prev.isLastAiMessage === next.isLastAiMessage &&
     prev.streamingStatus === next.streamingStatus
   );
 });
+
+export default MemoizedChatMessage;

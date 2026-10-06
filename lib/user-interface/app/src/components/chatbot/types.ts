@@ -21,10 +21,10 @@ export interface ContextUsage {
 }
 
 export interface ChatMessageMetadata {
-  Sources?: any[];
+  Sources?: unknown[];
   Trace?: MessageTraceMetadata;
   ContextUsage?: ContextUsage;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export enum ChatBotMessageType {

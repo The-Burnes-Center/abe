@@ -37,7 +37,7 @@ import { buildTheme } from "../common/theme";
 import LoginPage from "./auth/login-page";
 
 /** Map the on-disk `aws-exports.json` onto Amplify v6's `ResourcesConfig`. */
-export function toResourcesConfig(c: AppConfig): ResourcesConfig {
+function toResourcesConfig(c: AppConfig): ResourcesConfig {
   return {
     Auth: {
       Cognito: {
