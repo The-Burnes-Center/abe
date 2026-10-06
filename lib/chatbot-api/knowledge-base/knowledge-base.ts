@@ -6,6 +6,9 @@ import { aws_bedrock as bedrock } from 'aws-cdk-lib';
 
 import { Construct } from "constructs";
 import { OpenSearchStack } from "../opensearch/opensearch";
+import { isInferenceProfileId, modelOrProfileArn, underlyingModelArn } from "../../shared/bedrock";
+
+const EMBEDDING_MODEL_ID = 'amazon.titan-embed-text-v2:0';
 
 export interface KnowledgeBaseStackProps {
   readonly openSearch: OpenSearchStack;
@@ -16,7 +19,27 @@ export interface KnowledgeBaseStackProps {
    * images and visual elements here; the KB reads them back at query time.
    */
   readonly supplementalBucket: s3.Bucket;
+  /**
+   * Model or inference-profile id used to parse documents at ingestion
+   * (BEDROCK_FOUNDATION_MODEL, multimodal). Unset = the Bedrock default
+   * parser (text only, no extra cost, available in every KB region).
+   */
+  readonly parserModelId?: string;
 }
+
+const PARSING_PROMPT = [
+  'Transcribe this document into plain text while preserving its structure.',
+  '',
+  'CRITICAL — Form fields:',
+  '- When you see a checkbox table, render each row as `[X] Label` if the checkbox is marked (filled, checked, or contains an X/✓/✗) and `[ ] Label` if it is empty. Do not omit any row.',
+  '- Preserve the *state* of every checkbox, radio button, and form field. The selection is often the most important content on the page.',
+  '- For signature/initial fields, write `[signed]` if filled, `[not signed]` if empty.',
+  '',
+  'Tables: render as Markdown tables with column headers. Keep numeric values verbatim.',
+  'Headings: preserve the document\'s section numbering (e.g. "1.4.6 Acquisition Method(s)").',
+  'Reading order: top-to-bottom, left-to-right. Multi-column layouts should be linearized correctly.',
+  'Do not summarize, paraphrase, or add commentary. Output only the transcribed document content.',
+].join('\n');
 
 export class KnowledgeBaseStack extends Construct {
 
@@ -28,27 +51,13 @@ export class KnowledgeBaseStack extends Construct {
 
     const stack = cdk.Stack.of(this);
 
-    // Parser model for BEDROCK_FOUNDATION_MODEL parsing. Bedrock KB only
-    // accepts a static list of model IDs as parsers and requires the model
-    // to be (a) on that allowlist, (b) directly available as a foundation
-    // model in this region (cross-region inference profiles are rejected),
-    // and (c) Marketplace-subscribed in the account.
-    //
-    // Default = Claude 3 Sonnet: on the parser allowlist, directly
-    // available in us-east-1, requires a one-time Marketplace bootstrap
-    // by an admin with aws-marketplace:Subscribe (see ops runbook).
-    //
-    // Preferred = Claude 3.5 Sonnet v1 (better quality): also on the
-    // allowlist, but in some us-east-1 accounts only reachable through a
-    // cross-region inference profile -- which the KB parser rejects. Try
-    // it with:
-    //   cdk deploy -c kbParserModel=anthropic.claude-3-5-sonnet-20240620-v1:0
-    //
-    // IAM grants below cover both models, so swapping is just a redeploy
-    // with the context flag -- no IAM change needed.
-    const PARSER_MODEL_ID: string =
-      stack.node.tryGetContext('kbParserModel') ??
-      'anthropic.claude-3-sonnet-20240229-v1:0';
+    // Foundation-model parsing (Claude/Nova/Llama 4 vision models) renders
+    // each PDF page as an image and preserves tables and form-field state,
+    // but model availability differs by region and account, so it is opt-in:
+    //   cdk deploy -c kbParserModel=us.anthropic.claude-sonnet-4-6
+    // Inference-profile ids (us./eu./apac./global.) are accepted.
+    const parserModelId = props.parserModelId;
+    const embeddingModelArn = modelOrProfileArn(this, EMBEDDING_MODEL_ID);
 
     // Resources use `scope` (not `this`) to preserve existing CloudFormation
     // logical IDs. Switching to `this` would change IDs and recreate resources.
@@ -57,9 +66,7 @@ export class KnowledgeBaseStack extends Construct {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['aoss:APIAccessAll'],
-        resources: [
-          `arn:aws:aoss:${stack.region}:${stack.account}:collection/${props.openSearch.openSearchCollection.attrId}`,
-        ],
+        resources: [props.openSearch.openSearchCollection.attrArn],
       })
     );
 
@@ -81,36 +88,33 @@ export class KnowledgeBaseStack extends Construct {
       ],
     }));
 
+    // InvokeModel: embed chunks (and parse documents, when an FM parser is set).
+    // GetFoundationModel / GetInferenceProfile: Bedrock validates the parser
+    // model when the data source is created. Built from the configured id so
+    // the grant always matches the model actually in use.
+    const modelResources = [embeddingModelArn];
+    const modelActions = ['bedrock:InvokeModel', 'bedrock:GetFoundationModel'];
+    if (parserModelId) {
+      modelResources.push(modelOrProfileArn(this, parserModelId));
+      if (isInferenceProfileId(parserModelId)) {
+        // A profile routes to the model in any of its regions.
+        modelResources.push(underlyingModelArn(parserModelId));
+        modelActions.push('bedrock:GetInferenceProfile');
+      }
+    }
     props.openSearch.knowledgeBaseRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      // InvokeModel: actually call the model during ingestion.
-      // GetFoundationModel: Bedrock validates the parser model at DataSource
-      //   create time and reads it during ingestion. Without this the create
-      //   fails. Earlier attempts using a cross-region inference profile
-      //   needed bedrock:GetInferenceProfile too, but that validation races
-      //   IAM propagation (CFN reports the policy complete before IAM has
-      //   actually published it, so the call fails). Using a direct
-      //   foundation-model ARN here sidesteps that race entirely.
-      actions: [
-        'bedrock:InvokeModel',
-        'bedrock:GetFoundationModel',
-      ],
-      resources: [
-        `arn:aws:bedrock:${stack.region}::foundation-model/amazon.titan-embed-text-v2:0`,
-        // Allow both candidate parser models so switching between them
-        // (via the kbParserModel CDK context) doesn't need an IAM update.
-        `arn:aws:bedrock:${stack.region}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0`,
-        `arn:aws:bedrock:${stack.region}::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0`,
-      ],
+      actions: modelActions,
+      resources: modelResources,
     }));
 
     const knowledgeBase = new bedrock.CfnKnowledgeBase(scope, 'KnowledgeBase', {
       knowledgeBaseConfiguration: {
         type: 'VECTOR',
         vectorKnowledgeBaseConfiguration: {
-          embeddingModelArn: `arn:aws:bedrock:${stack.region}::foundation-model/amazon.titan-embed-text-v2:0`,
-          // Required by Bedrock when any data source uses parsingModality=MULTIMODAL.
-          // The parser writes extracted images/visual elements here during ingestion.
+          embeddingModelArn,
+          // Required by Bedrock when a data source uses parsingModality=MULTIMODAL.
+          // Kept even with the default parser: removing it would replace the KB.
           supplementalDataStorageConfiguration: {
             supplementalDataStorageLocations: [
               {
@@ -173,49 +177,26 @@ export class KnowledgeBaseStack extends Construct {
         },
       },
       knowledgeBaseId: knowledgeBase.attrKnowledgeBaseId,
-      name: `${stack.stackName}-kb-ds`,
+      // Changing the parser replaces the data source, and Bedrock rejects a
+      // second data source with the same name in one KB, so the two parsing
+      // modes use different names. (Run a sync afterwards to re-ingest.)
+      name: parserModelId ? `${stack.stackName}-kb-ds` : `${stack.stackName}-kb-ds-std`,
       description: 'S3 data source',
-      // CDK 2.140.0 types don't include SEMANTIC chunking; we inject via
-      // addPropertyOverride below. CloudFormation fully supports it.
       vectorIngestionConfiguration: {
         chunkingConfiguration: {
           chunkingStrategy: 'SEMANTIC',
         } as bedrock.CfnDataSource.ChunkingConfigurationProperty,
-        // Use a vision-capable Claude model to parse PDFs at ingestion time.
-        // The default Bedrock parser is text-only and drops form-field state
-        // (e.g. RFR section 1.4.6 acquisition-method checkboxes), which made
-        // the model is unable to identify which option was marked. Multimodal parsing
-        // renders each page as an image and transcribes form fields with
-        // their state preserved.
-        parsingConfiguration: {
+        parsingConfiguration: parserModelId ? {
           parsingStrategy: 'BEDROCK_FOUNDATION_MODEL',
           bedrockFoundationModelConfiguration: {
-            // Direct foundation-model ARN — avoids the inference-profile
-            // validation step at DataSource create time, which races IAM
-            // propagation. Model ID is parameterized via PARSER_MODEL_ID
-            // (see top of constructor) so switching between candidate
-            // parsers is one `-c kbParserModel=...` flag.
-            modelArn: `arn:aws:bedrock:${stack.region}::foundation-model/${PARSER_MODEL_ID}`,
-            // MULTIMODAL is essential — without it the FM parser falls back to
-            // text-only extraction and the checkbox glyphs are still lost.
+            modelArn: modelOrProfileArn(this, parserModelId),
+            // MULTIMODAL renders pages as images so checkbox/form state survives.
             parsingModality: 'MULTIMODAL',
             parsingPrompt: {
-              parsingPromptText: [
-                'Transcribe this document into plain text while preserving its structure.',
-                '',
-                'CRITICAL — Form fields:',
-                '- When you see a checkbox table, render each row as `[X] Label` if the checkbox is marked (filled, checked, or contains an X/✓/✗) and `[ ] Label` if it is empty. Do not omit any row.',
-                '- Preserve the *state* of every checkbox, radio button, and form field. The selection is often the most important content on the page.',
-                '- For signature/initial fields, write `[signed]` if filled, `[not signed]` if empty.',
-                '',
-                'Tables: render as Markdown tables with column headers. Keep numeric values verbatim.',
-                'Headings: preserve the document\'s section numbering (e.g. "1.4.6 Acquisition Method(s)").',
-                'Reading order: top-to-bottom, left-to-right. Multi-column layouts should be linearized correctly.',
-                'Do not summarize, paraphrase, or add commentary. Output only the transcribed document content.',
-              ].join('\n'),
+              parsingPromptText: PARSING_PROMPT,
             },
           },
-        },
+        } : undefined,
       },
     });
 

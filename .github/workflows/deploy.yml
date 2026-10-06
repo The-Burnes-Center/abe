@@ -1,115 +1,163 @@
-name: Deploy Chatbot
+name: Deploy
+
+# Tests every push to main, then deploys with CDK when the repository has an
+# AWS_ROLE_ARN secret (an IAM role trusted for GitHub OIDC). Forks without that
+# secret run the tests and skip the deploy cleanly.
+#
+# Repository configuration (all optional unless noted):
+#   Secrets:   AWS_ROLE_ARN (required to deploy), CERTIFICATE_ARN, ALARM_EMAIL
+#   Variables: STACK_NAME (ABEStack), AWS_REGION (us-east-1), CUSTOM_DOMAIN,
+#              ALLOWED_SIGNUP_DOMAINS, COGNITO_FEATURE_PLAN, ENABLE_EVAL,
+#              KB_PARSER_MODEL, API_GATEWAY_ACCOUNT_ROLE, ENVIRONMENT,
+#              PRIMARY_MODEL_ID, FAST_MODEL_ID, GUARDRAIL_ID, GUARDRAIL_VERSION,
+#              and brand: ASSISTANT_NAME, SHORT_NAME, ORGANIZATION_NAME,
+#              BRAND_TAGLINE, SUPPORT_CONTACT, DOMAIN_CONTEXT, BRAND_TIMEZONE
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
 permissions:
-  id-token: "write"
-  contents: "read"
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  config:
     runs-on: ubuntu-latest
+    outputs:
+      can-deploy: ${{ steps.check.outputs.can-deploy }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20.x'
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: us-east-1
-        role-session-name: ${{ github.actor }}
-    - name: Install backend dependencies
-      run: npm install
-    - name: Install frontend dependencies
-      run: |
-        cd lib/user-interface/app
-        npm install
-    - name: Run backend Lambda tests
-      run: npm run test:lambda
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-    - name: Install Python test dependencies
-      run: pip install pytest moto boto3 pydantic python-jose requests cryptography
-    - name: Run Python Lambda tests
-      run: |
-        python3 -m pytest \
-          lib/chatbot-api/functions/excel-index/query/test_excel_query.py \
-          lib/chatbot-api/functions/metadata-retrieval/test_metadata_cache.py \
-          lib/authorization/websocket-api-authorizer/test_jwt_authorizer.py \
-          lib/chatbot-api/functions/metadata-handler/test_metadata_handler.py \
-          lib/chatbot-api/functions/sync-orchestrator/test_sync_orchestrator.py \
-          -v
-    - name: Run frontend tests
-      run: |
-        cd lib/user-interface/app
-        npm test
-    - name: Bootstrap AWS environment
-      run: npx cdk bootstrap || true
-    - name: Wait for stack to reach stable state
-      run: |
-        STATUS=$(aws cloudformation describe-stacks --stack-name ABEStack --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-        echo "Current stack status: $STATUS"
-        case "$STATUS" in
-          *_IN_PROGRESS)
-            echo "Stack is in progress ($STATUS), waiting for it to stabilize..."
-            aws cloudformation wait stack-exists --stack-name ABEStack
-            # Wait for any in-progress operation to complete (up to 30 min)
-            timeout 1800 bash -c '
-              while true; do
-                S=$(aws cloudformation describe-stacks --stack-name ABEStack --query "Stacks[0].StackStatus" --output text)
-                echo "  status: $S"
-                case "$S" in *_IN_PROGRESS) sleep 15 ;; *) break ;; esac
-              done
-            '
-            FINAL=$(aws cloudformation describe-stacks --stack-name ABEStack --query "Stacks[0].StackStatus" --output text)
-            echo "Stack settled at: $FINAL"
-            # Fail the deploy if the previous operation ended in a failed state
-            case "$FINAL" in
-              *_FAILED|ROLLBACK_COMPLETE) echo "Stack is in a failed state: $FINAL"; exit 1 ;;
-            esac
-            ;;
-          DOES_NOT_EXIST)
-            echo "Stack does not exist yet, proceeding with fresh deploy."
-            ;;
-          *)
-            echo "Stack is stable ($STATUS), proceeding."
-            ;;
-        esac
-    - name: Deploy CDK stack
-      run: |
-        ALARM_FLAG=""
-        if [ -n "${{ secrets.ALARM_EMAIL }}" ]; then
-          ALARM_FLAG="-c alarmEmail=${{ secrets.ALARM_EMAIL }}"
-        fi
-        # Custom domain + ACM cert ARN come from GitHub Actions config (Variable + Secret),
-        # never hardcoded. Both must be set to bind the domain; otherwise no flags are passed
-        # and the app stays on the default CloudFront domain. Scope these per environment
-        # (GitHub Environments) so other branches/stacks don't inherit this stack's values.
-        DOMAIN_FLAG=""
-        if [ -n "${{ vars.CUSTOM_DOMAIN }}" ] && [ -n "${{ secrets.CERTIFICATE_ARN }}" ]; then
-          DOMAIN_FLAG="-c customDomain=${{ vars.CUSTOM_DOMAIN }} -c certificateArn=${{ secrets.CERTIFICATE_ARN }}"
-        fi
-        # OIDC SSO provider name to enable on the Cognito app client (e.g. "MyOrg-SSO").
-        # Comes from a per-environment GitHub Actions Variable, never hardcoded. If unset, the
-        # client is deployed with only the COGNITO provider — so this MUST be set for any
-        # environment that uses SSO, or the deploy would drop the federated provider.
-        OIDC_FLAG=""
-        if [ -n "${{ vars.OIDC_PROVIDER_NAME }}" ]; then
-          OIDC_FLAG="-c oidcProviderName=${{ vars.OIDC_PROVIDER_NAME }}"
-        fi
-        npx cdk deploy ABEStack $ALARM_FLAG $DOMAIN_FLAG $OIDC_FLAG --require-approval never
-    - name: Fetch CloudFormation Outputs
-      run: |
-        aws cloudformation describe-stacks --stack-name ABEStack --query "Stacks[0].Outputs" > stack-outputs.json
-        cat stack-outputs.json
-    - name: Upload Outputs as Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: stack-outputs
-        path: stack-outputs.json
+      - id: check
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          if [ -n "$AWS_ROLE_ARN" ]; then
+            echo "can-deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "can-deploy=false" >> "$GITHUB_OUTPUT"
+            echo "AWS_ROLE_ARN secret not set: tests only, deploy skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  test:
+    uses: ./.github/workflows/test.yml
+
+  deploy:
+    needs: [config, test]
+    if: needs.config.outputs.can-deploy == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      STACK_NAME: ${{ vars.STACK_NAME || 'ABEStack' }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            lib/user-interface/app/package-lock.json
+
+      - name: Export deployment settings
+        # Only non-empty values are exported, so unset variables fall back to
+        # the defaults in config/brand.ts and lib/deployment-config.ts.
+        env:
+          IN_CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+          IN_CERTIFICATE_ARN: ${{ secrets.CERTIFICATE_ARN }}
+          IN_ALARM_EMAIL: ${{ secrets.ALARM_EMAIL }}
+          IN_ALLOWED_SIGNUP_DOMAINS: ${{ vars.ALLOWED_SIGNUP_DOMAINS }}
+          IN_COGNITO_FEATURE_PLAN: ${{ vars.COGNITO_FEATURE_PLAN }}
+          IN_ENABLE_EVAL: ${{ vars.ENABLE_EVAL }}
+          IN_KB_PARSER_MODEL: ${{ vars.KB_PARSER_MODEL }}
+          IN_API_GATEWAY_ACCOUNT_ROLE: ${{ vars.API_GATEWAY_ACCOUNT_ROLE }}
+          IN_ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+          IN_PRIMARY_MODEL_ID: ${{ vars.PRIMARY_MODEL_ID }}
+          IN_FAST_MODEL_ID: ${{ vars.FAST_MODEL_ID }}
+          IN_GUARDRAIL_ID: ${{ vars.GUARDRAIL_ID }}
+          IN_GUARDRAIL_VERSION: ${{ vars.GUARDRAIL_VERSION }}
+          IN_ASSISTANT_NAME: ${{ vars.ASSISTANT_NAME }}
+          IN_SHORT_NAME: ${{ vars.SHORT_NAME }}
+          IN_ORGANIZATION_NAME: ${{ vars.ORGANIZATION_NAME }}
+          IN_BRAND_TAGLINE: ${{ vars.BRAND_TAGLINE }}
+          IN_SUPPORT_CONTACT: ${{ vars.SUPPORT_CONTACT }}
+          IN_DOMAIN_CONTEXT: ${{ vars.DOMAIN_CONTEXT }}
+          IN_BRAND_TIMEZONE: ${{ vars.BRAND_TIMEZONE }}
+        run: |
+          for name in $(env | grep -o '^IN_[A-Z_]*' | sort); do
+            value="${!name}"
+            [ -z "$value" ] && continue
+            if [[ "$value" == *$'\n'* ]]; then
+              echo "::error::${name#IN_} must be a single line"; exit 1
+            fi
+            echo "${name#IN_}=$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: deploy-${{ github.run_id }}
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: lib/user-interface/app
+        run: npm ci
+
+      - name: Generate frontend brand files
+        # Applies the brand Variables above to the committed frontend brand
+        # module so a deployment can brand itself without editing config.
+        run: npm run brand:sync
+
+      - name: Bootstrap CDK environment
+        # Idempotent: a no-op when the bootstrap stack is already current.
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          npx cdk bootstrap "aws://${ACCOUNT}/${AWS_REGION}"
+
+      - name: Wait for stack to reach a stable state
+        run: |
+          status() {
+            aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+              --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "DOES_NOT_EXIST"
+          }
+          STATUS=$(status)
+          echo "Current stack status: $STATUS"
+          if [[ "$STATUS" == *_IN_PROGRESS ]]; then
+            echo "Waiting up to 30 minutes for the in-progress operation to finish..."
+            for _ in $(seq 1 120); do
+              STATUS=$(status)
+              [[ "$STATUS" != *_IN_PROGRESS ]] && break
+              sleep 15
+            done
+            echo "Stack settled at: $STATUS"
+          fi
+          case "$STATUS" in
+            *_IN_PROGRESS) echo "::error::Stack is still $STATUS"; exit 1 ;;
+            *_FAILED|ROLLBACK_COMPLETE) echo "::error::Stack is in a failed state: $STATUS"; exit 1 ;;
+          esac
+
+      - name: Deploy CDK stack
+        run: npx cdk deploy "$STACK_NAME" --require-approval never
+
+      - name: Deployment summary
+        run: |
+          URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='AppUrl'].OutputValue | [0]" --output text)
+          {
+            echo "## Deployed ${STACK_NAME} (${AWS_REGION})"
+            echo "App URL: ${URL}"
+            echo "Invite an admin: scripts/create-admin.sh --email you@example.org --stack-name ${STACK_NAME} --region ${AWS_REGION}"
+          } >> "$GITHUB_STEP_SUMMARY"

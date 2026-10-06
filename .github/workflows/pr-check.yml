@@ -1,163 +1,116 @@
 name: PR Check
 
+# Runs the shared test suite (with coverage) on every pull request. The deploy
+# role is never used here. If the repository defines an AWS_DIFF_ROLE_ARN
+# secret (a read-only role trusted for GitHub OIDC), a `cdk diff` against the
+# deployed stack is written to the job summary. Pull requests from forks never
+# receive secrets, so for them the diff is skipped.
 on:
   pull_request:
     branches:
       - main
 
 permissions:
-  id-token: write
   contents: read
-  pull-requests: write   # needed to post the cdk diff comment
 
 jobs:
-  test-and-diff:
+  test:
+    uses: ./.github/workflows/test.yml
+    with:
+      coverage: true
+
+  config:
     runs-on: ubuntu-latest
+    outputs:
+      can-diff: ${{ steps.check.outputs.can-diff }}
+    steps:
+      - id: check
+        env:
+          AWS_DIFF_ROLE_ARN: ${{ secrets.AWS_DIFF_ROLE_ARN }}
+        run: |
+          if [ -n "$AWS_DIFF_ROLE_ARN" ]; then
+            echo "can-diff=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "can-diff=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  cdk-diff:
+    needs: [config, test]
+    if: needs.config.outputs.can-diff == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      STACK_NAME: ${{ vars.STACK_NAME || 'ABEStack' }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20.x'
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            lib/user-interface/app/package-lock.json
 
-      - name: Install backend dependencies
-        run: npm install
-
-      - name: Install frontend dependencies
+      - name: Export deployment settings
+        # Same settings as deploy.yml so the diff matches what a deploy would do.
+        env:
+          IN_CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+          IN_CERTIFICATE_ARN: ${{ secrets.CERTIFICATE_ARN }}
+          IN_ALLOWED_SIGNUP_DOMAINS: ${{ vars.ALLOWED_SIGNUP_DOMAINS }}
+          IN_COGNITO_FEATURE_PLAN: ${{ vars.COGNITO_FEATURE_PLAN }}
+          IN_ENABLE_EVAL: ${{ vars.ENABLE_EVAL }}
+          IN_KB_PARSER_MODEL: ${{ vars.KB_PARSER_MODEL }}
+          IN_API_GATEWAY_ACCOUNT_ROLE: ${{ vars.API_GATEWAY_ACCOUNT_ROLE }}
+          IN_ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+          IN_PRIMARY_MODEL_ID: ${{ vars.PRIMARY_MODEL_ID }}
+          IN_FAST_MODEL_ID: ${{ vars.FAST_MODEL_ID }}
+          IN_GUARDRAIL_ID: ${{ vars.GUARDRAIL_ID }}
+          IN_GUARDRAIL_VERSION: ${{ vars.GUARDRAIL_VERSION }}
+          IN_ASSISTANT_NAME: ${{ vars.ASSISTANT_NAME }}
+          IN_SHORT_NAME: ${{ vars.SHORT_NAME }}
+          IN_ORGANIZATION_NAME: ${{ vars.ORGANIZATION_NAME }}
+          IN_BRAND_TAGLINE: ${{ vars.BRAND_TAGLINE }}
+          IN_SUPPORT_CONTACT: ${{ vars.SUPPORT_CONTACT }}
+          IN_DOMAIN_CONTEXT: ${{ vars.DOMAIN_CONTEXT }}
+          IN_BRAND_TIMEZONE: ${{ vars.BRAND_TIMEZONE }}
         run: |
-          cd lib/user-interface/app
-          npm install
+          for name in $(env | grep -o '^IN_[A-Z_]*' | sort); do
+            value="${!name}"
+            [ -z "$value" ] && continue
+            if [[ "$value" == *$'\n'* ]]; then
+              echo "::error::${name#IN_} must be a single line"; exit 1
+            fi
+            echo "${name#IN_}=$value" >> "$GITHUB_ENV"
+          done
 
-      - name: Run backend Lambda tests
-        run: npm run test:lambda
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Configure AWS credentials (read-only diff role)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          python-version: '3.12'
-
-      - name: Install Python test dependencies
-        run: pip install pytest pytest-cov moto boto3 pydantic openpyxl python-jose requests cryptography
-
-      - name: Run Python Lambda tests
-        run: |
-          python3 -m pytest \
-            lib/chatbot-api/functions/excel-index/query/test_excel_query.py \
-            lib/chatbot-api/functions/excel-index/parser/test_excel_parser.py \
-            lib/chatbot-api/functions/metadata-retrieval/test_metadata_cache.py \
-            lib/authorization/websocket-api-authorizer/test_jwt_authorizer.py \
-            lib/chatbot-api/functions/metadata-handler/test_metadata_handler.py \
-            lib/chatbot-api/functions/session-handler/test_session_handler.py \
-            lib/chatbot-api/functions/sync-orchestrator/test_sync_orchestrator.py \
-            --cov --cov-report=term-missing --cov-report=xml:coverage-python.xml \
-            -v
-
-      - name: Run frontend tests with coverage
-        run: |
-          cd lib/user-interface/app
-          npm run test:coverage
-
-      - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-reports
-          path: |
-            lib/user-interface/app/coverage/lcov.info
-            coverage-python.xml
-          if-no-files-found: ignore
-
-      - name: Post coverage summary as PR comment
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            let body = '## Coverage Summary\n';
-
-            // Frontend (lcov)
-            const lcovPath = 'lib/user-interface/app/coverage/lcov.info';
-            if (fs.existsSync(lcovPath)) {
-              const lcov = fs.readFileSync(lcovPath, 'utf8');
-              const linesFound = (lcov.match(/^LF:(\d+)/gm) || []).reduce((s, l) => s + parseInt(l.slice(3)), 0);
-              const linesHit   = (lcov.match(/^LH:(\d+)/gm) || []).reduce((s, l) => s + parseInt(l.slice(3)), 0);
-              const pct = linesFound > 0 ? ((linesHit / linesFound) * 100).toFixed(1) : 'n/a';
-              body += `\n### Frontend (Vitest)\nLines: **${pct}%** (${linesHit}/${linesFound})\n`;
-            } else {
-              body += '\n### Frontend (Vitest)\n_Coverage report not found._\n';
-            }
-
-            // Python (Cobertura XML)
-            const xmlPath = 'coverage-python.xml';
-            if (fs.existsSync(xmlPath)) {
-              const xml = fs.readFileSync(xmlPath, 'utf8');
-              const m = xml.match(/line-rate="([0-9.]+)"/);
-              const pct = m ? (parseFloat(m[1]) * 100).toFixed(1) : 'n/a';
-              body += `\n### Python (pytest-cov)\nLines: **${pct}%**\n`;
-            } else {
-              body += '\n### Python (pytest-cov)\n_Coverage report not found._\n';
-            }
-
-            // Delete previous coverage comment from this bot
-            const { data: comments } = await github.rest.issues.listComments({
-              ...context.repo,
-              issue_number: context.issue.number,
-            });
-            for (const comment of comments) {
-              if (comment.user.login === 'github-actions[bot]' && comment.body.startsWith('## Coverage Summary')) {
-                await github.rest.issues.deleteComment({
-                  ...context.repo,
-                  comment_id: comment.id,
-                });
-              }
-            }
-
-            await github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: context.issue.number,
-              body,
-            });
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
+          role-to-assume: ${{ secrets.AWS_DIFF_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
           role-session-name: pr-diff-${{ github.event.pull_request.number }}
 
-      - name: CDK diff
-        id: diff
+      - name: Install dependencies
         run: |
-          npx cdk diff ABEStack 2>&1 | head -300 > cdk-diff.txt || true
+          npm ci
+          npm --prefix lib/user-interface/app ci
 
-      - name: Post CDK diff as PR comment
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const diff = fs.readFileSync('cdk-diff.txt', 'utf8').trim();
-            const body = diff.length > 0
-              ? `## CDK Diff\n\`\`\`\n${diff}\n\`\`\``
-              : `## CDK Diff\nNo infrastructure changes detected.`;
+      - name: Generate frontend brand files
+        run: npm run brand:sync
 
-            // Delete previous diff comment from this bot on the same PR
-            const { data: comments } = await github.rest.issues.listComments({
-              ...context.repo,
-              issue_number: context.issue.number,
-            });
-            for (const comment of comments) {
-              if (comment.user.login === 'github-actions[bot]' && comment.body.startsWith('## CDK Diff')) {
-                await github.rest.issues.deleteComment({
-                  ...context.repo,
-                  comment_id: comment.id,
-                });
-              }
-            }
-
-            await github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: context.issue.number,
-              body,
-            });
+      - name: CDK diff
+        run: |
+          set -o pipefail
+          npx cdk diff "$STACK_NAME" 2>&1 | tee cdk-diff.txt
+          {
+            echo "## CDK diff: ${STACK_NAME} (${AWS_REGION})"
+            echo '```'
+            head -500 cdk-diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

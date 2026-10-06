@@ -1,6 +1,5 @@
 import * as cdk from "aws-cdk-lib";
 import * as cf from "aws-cdk-lib/aws-cloudfront";
-import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import { Construct } from "constructs";
@@ -18,15 +17,14 @@ export interface UserInterfaceProps {
   readonly userPoolId: string;
   readonly userPoolClientId: string;
   readonly api: ChatBotApi;
-  readonly cognitoDomain : string;
-  // Optional custom domain + ACM cert ARN (us-east-1). When both are set, the app is
-  // served from the custom domain and Cognito sign-in/out redirects point at it.
+  /** Written to aws-exports.json so the login page shows or hides "Create account". */
+  readonly selfSignUpEnabled: boolean;
+  /** Written to aws-exports.json so the UI can hide the evaluation pages. */
+  readonly evalEnabled: boolean;
+  // Optional custom domain + ACM cert ARN (us-east-1, a CloudFront requirement).
+  // When both are set, the app is served from the custom domain.
   readonly customDomain?: string;
   readonly certificateArn?: string;
-  // SSO provider name enabled on the app client (same value AuthorizationStack got).
-  // Written into aws-exports.json as `federatedSignInProvider`; when empty, the
-  // frontend renders its own login page instead of redirecting to the hosted UI.
-  readonly oidcProviderName?: string;
 }
 
 export class UserInterface extends Construct {
@@ -53,53 +51,37 @@ export class UserInterface extends Construct {
       serverAccessLogsBucket: uploadLogsBucket,
     });
 
-    // Deploy either Private (only accessible within VPC) or Public facing website
-    let apiEndpoint: string;
-    let websocketEndpoint: string;
-
-    const publicWebsite = new Website(this, "Website", { ...props, websiteBucket: websiteBucket });
+    const publicWebsite = new Website(this, "Website", {
+      websiteBucket,
+      customDomain: props.customDomain,
+      certificateArn: props.certificateArn,
+    });
     this.distribution = publicWebsite.distribution
 
-    // Sign-in/out redirects must point at the domain users actually load the app from.
-    // Use the custom domain only when it's bound (both hostname + cert configured);
-    // otherwise fall back to the default CloudFront domain.
-    const siteUrl = props.customDomain && props.certificateArn
-      ? `https://${props.customDomain}`
-      : `https://${this.distribution.distributionDomainName}`;
-
+    // Runtime config the SPA fetches at startup. Native Cognito sign-in only:
+    // no OAuth / hosted-UI settings.
     const exportsAsset = s3deploy.Source.jsonData("aws-exports.json", {
       Auth: {
         region: cdk.Aws.REGION,
         userPoolId: props.userPoolId,
         userPoolWebClientId: props.userPoolClientId,
-        oauth: {
-          domain: props.cognitoDomain.concat(`.auth.${cdk.Aws.REGION}.amazoncognito.com`),
-          // Do NOT request `aws.cognito.signin.user.admin`. That scope lets a user's
-          // own token call Cognito self-service APIs (UpdateUserAttributes), which would
-          // allow self-assigning `custom:role: ["Admin"]`. Admin roles come only from the
-          // SSO IdP mapping (roles -> custom:role), so the app never needs self-service writes.
-          scope: ["email", "openid", "profile"],
-          redirectSignIn: siteUrl,
-          redirectSignOut: siteUrl,
-          responseType: "code"
-        }
       },
-      httpEndpoint : props.api.httpAPI.restAPI.url,
-      wsEndpoint : props.api.wsAPI.wsAPIStage.url,
-      // Empty string = no SSO provider = the frontend shows the in-app login page.
-      federatedSignInProvider : props.oidcProviderName ?? ""
+      httpEndpoint: props.api.httpAPI.restAPI.url,
+      wsEndpoint: props.api.wsAPI.wsAPIStage.url,
+      selfSignUpEnabled: props.selfSignUpEnabled,
+      evalEnabled: props.evalEnabled,
     });
 
     const asset = s3deploy.Source.asset(appPath, {
       bundling: {
         image: cdk.DockerImage.fromRegistry(
-          "public.ecr.aws/sam/build-nodejs20.x:latest"
+          "public.ecr.aws/sam/build-nodejs22.x:latest"
         ),
         command: [
           "sh",
           "-c",
           [
-            "npm --cache /tmp/.npm install",
+            "npm --cache /tmp/.npm ci",
             `npm --cache /tmp/.npm run build`,
             "cp -aur /asset-input/dist/* /asset-output/",
           ].join(" && "),
@@ -135,10 +117,6 @@ export class UserInterface extends Construct {
       distribution: this.distribution
     });
 
-
-    /**
-     * CDK NAG suppression
-     */
     NagSuppressions.addResourceSuppressions(
       uploadLogsBucket,
       [

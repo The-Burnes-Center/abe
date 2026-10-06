@@ -5,14 +5,12 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import { Construct } from "constructs";
-import { ChatBotApi } from "../chatbot-api";
 import { NagSuppressions } from "cdk-nag";
 
+/** CloudFront-scoped WAF web ACLs can only be created in us-east-1. */
+const WAF_REGION = "us-east-1";
 
 export interface WebsiteProps {
-  readonly userPoolId: string;
-  readonly userPoolClientId: string;
-  readonly api: ChatBotApi;
   readonly websiteBucket: s3.Bucket;
   // Optional custom domain (CloudFront alternate domain name) + its ACM cert ARN
   // (us-east-1). Both must be set for the domain to be bound to the distribution.
@@ -30,7 +28,17 @@ export class Website extends Construct {
     ///// WAF WEB ACL                /////
     /////////////////////////////////////
 
-    const webAcl = new wafv2.CfnWebACL(this, "WebACL", {
+    // A CLOUDFRONT-scoped web ACL must live in us-east-1. Stacks in any other
+    // region deploy without it (and say so at synth) rather than failing.
+    const region = cdk.Stack.of(this).region;
+    const createWaf = !cdk.Token.isUnresolved(region) && region === WAF_REGION;
+    if (!createWaf) {
+      cdk.Annotations.of(this).addWarningV2(
+        "abe:waf-skipped",
+        `CloudFront WAF not created: it requires the stack to be deployed in ${WAF_REGION} (stack region: ${cdk.Token.isUnresolved(region) ? "unresolved" : region}).`,
+      );
+    }
+    const webAcl = createWaf ? new wafv2.CfnWebACL(this, "WebACL", {
       defaultAction: { allow: {} },
       scope: "CLOUDFRONT",
       visibilityConfig: {
@@ -104,6 +112,52 @@ export class Website extends Construct {
           },
         },
       ],
+    }) : undefined;
+
+    /////////////////////////////////////
+    ///// SECURITY HEADERS           /////
+    /////////////////////////////////////
+
+    // The CSP is report-only for now: violations show in the browser console
+    // without blocking anything. connect-src uses region wildcards for the
+    // API Gateway endpoints because the API's CORS origin depends on this
+    // distribution, so referencing the exact API URLs here would be circular.
+    const awsRegion = cdk.Aws.REGION;
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      `img-src 'self' data: blob: https://*.s3.amazonaws.com https://*.s3.${awsRegion}.amazonaws.com`,
+      `connect-src 'self' https://cognito-idp.${awsRegion}.amazonaws.com https://*.execute-api.${awsRegion}.amazonaws.com wss://*.execute-api.${awsRegion}.amazonaws.com https://*.s3.amazonaws.com https://*.s3.${awsRegion}.amazonaws.com wss://transcribestreaming.${awsRegion}.amazonaws.com:8443`,
+      `frame-src 'self' blob: https://*.s3.amazonaws.com https://*.s3.${awsRegion}.amazonaws.com`,
+      "media-src 'self' blob:",
+      "worker-src 'self' blob:",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join("; ");
+    const responseHeadersPolicy = new cf.ResponseHeadersPolicy(this, "SecurityHeaders", {
+      comment: "HSTS, nosniff, frame denial, referrer policy, report-only CSP",
+      securityHeadersBehavior: {
+        strictTransportSecurity: {
+          accessControlMaxAge: cdk.Duration.days(365),
+          includeSubdomains: true,
+          override: true,
+        },
+        contentTypeOptions: { override: true },
+        frameOptions: { frameOption: cf.HeadersFrameOption.DENY, override: true },
+        referrerPolicy: {
+          referrerPolicy: cf.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+          override: true,
+        },
+      },
+      customHeadersBehavior: {
+        customHeaders: [
+          { header: "Content-Security-Policy-Report-Only", value: csp, override: true },
+        ],
+      },
     });
 
     /////////////////////////////////////
@@ -122,7 +176,8 @@ export class Website extends Construct {
       }
     );
 
-    const s3Origin = new origins.S3Origin(props.websiteBucket);
+    // Origin access control (OAC): CloudFront signs S3 requests; the bucket stays private.
+    const s3Origin = origins.S3BucketOrigin.withOriginAccessControl(props.websiteBucket);
 
     // Bind a custom domain + ACM certificate only when both are configured.
     // CloudFront requires the certificate to be in ACM us-east-1.
@@ -136,27 +191,23 @@ export class Website extends Construct {
       "Dist",
       {
         ...(useCustomDomain
-          ? { domainNames: [props.customDomain!], certificate }
+          ? {
+              domainNames: [props.customDomain!],
+              certificate,
+              minimumProtocolVersion: cf.SecurityPolicyProtocol.TLS_V1_2_2021,
+            }
           : {}),
         defaultBehavior: {
           origin: s3Origin,
           viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        },
-        additionalBehaviors: {
-          "/chatbot/files/*": {
-            origin: s3Origin,
-            viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-            allowedMethods: cf.AllowedMethods.ALLOW_ALL,
-            cachePolicy: cf.CachePolicy.CACHING_DISABLED,
-            originRequestPolicy: cf.OriginRequestPolicy.CORS_S3_ORIGIN,
-          },
+          responseHeadersPolicy,
         },
         defaultRootObject: "index.html",
         priceClass: cf.PriceClass.PRICE_CLASS_100,
         httpVersion: cf.HttpVersion.HTTP2_AND_3,
         enableLogging: true,
         logBucket: distributionLogsBucket,
-        webAclId: webAcl.attrArn,
+        webAclId: webAcl?.attrArn,
         errorResponses: [
           {
             httpStatus: 403,
@@ -193,15 +244,23 @@ export class Website extends Construct {
       ]
     );
 
-    NagSuppressions.addResourceSuppressions(props.websiteBucket, [
-      { id: "AwsSolutions-S5", reason: "OAI is configured via S3Origin for CloudFront read access." },
-    ]);
-
-    NagSuppressions.addResourceSuppressions(distribution, [
-      { id: "AwsSolutions-CFR1", reason: "US-focused user base; no geo restrictions needed." },
-      { id: "AwsSolutions-CFR4", reason: "TLS 1.2 is the CloudFront default minimum protocol version." },
+    const distributionSuppressions = [
+      { id: "AwsSolutions-CFR1", reason: "Geo restrictions are deployment-specific; none are applied by default." },
       { id: "AwsSolutions-CFR5", reason: "S3 origins use AWS-internal HTTPS; origin SSL protocol is not configurable for S3 origin types." },
-    ]);
+    ];
+    if (!useCustomDomain) {
+      distributionSuppressions.push({
+        id: "AwsSolutions-CFR4",
+        reason: "The default *.cloudfront.net certificate fixes the minimum viewer protocol and it cannot be raised. Bind a custom domain (customDomain + certificateArn) to enforce TLSv1.2_2021.",
+      });
+    }
+    if (!createWaf) {
+      distributionSuppressions.push({
+        id: "AwsSolutions-CFR2",
+        reason: "CloudFront-scoped WAF can only be created by a stack in us-east-1; this stack is in another region (see the synth warning).",
+      });
+    }
+    NagSuppressions.addResourceSuppressions(distribution, distributionSuppressions);
     }
 
   }
