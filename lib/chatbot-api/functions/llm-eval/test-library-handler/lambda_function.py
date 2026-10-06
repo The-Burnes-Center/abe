@@ -5,20 +5,20 @@ import uuid
 import logging
 import boto3
 from boto3.dynamodb.conditions import Key
-from botocore.exceptions import ClientError
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
-from common_utils import is_admin
+from common_utils import is_admin, safe_int
 from common_utils.text import strip_kb_citation_markers
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TABLE_NAME = os.environ["TEST_LIBRARY_TABLE"]
-dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
+dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
 
 PARTITION_KEY = "MASTER"
+MAX_BULK_ITEMS = 1000
 
 
 def normalize_question(q: str) -> str:
@@ -37,7 +37,7 @@ def convert_from_decimal(item):
 
 
 def now_iso():
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
 
 def find_by_normalized(normalized: str):
@@ -101,8 +101,8 @@ def upsert_item(question: str, expected_response: str, source: str):
 # --- Operations ---
 
 def op_list(data, headers):
-    limit = data.get("limit", 25)
-    search = data.get("search", "").strip().lower()
+    limit = safe_int(data.get("limit"), 25, minimum=1, maximum=200)
+    search = str(data.get("search") or "").strip().lower()
     continuation_token = data.get("continuation_token")
 
     params = {
@@ -116,16 +116,12 @@ def op_list(data, headers):
     resp = table.query(**params)
     items = convert_from_decimal(resp.get("Items", []))
 
+    # Count versions before filtering so each count stays with its own item.
+    for item in items:
+        item["versionCount"] = len(item.pop("versions", None) or [])
+
     if search:
         items = [i for i in items if search in i.get("question", "").lower()]
-
-    for item in items:
-        item.pop("versions", None)
-        item["versionCount"] = 0
-    full_items = resp.get("Items", [])
-    for idx, fi in enumerate(full_items):
-        if idx < len(items):
-            items[idx]["versionCount"] = len(fi.get("versions", []))
 
     body = {
         "Items": items,
@@ -194,7 +190,10 @@ def op_update(data, headers):
 
 def op_revert(data, headers):
     qid = data.get("question_id")
-    version_index = data.get("version_index", 0)
+    try:
+        version_index = int(data.get("version_index", 0))
+    except (TypeError, ValueError):
+        return {"statusCode": 400, "headers": headers, "body": json.dumps({"error": "Invalid version_index"})}
     if not qid:
         return {"statusCode": 400, "headers": headers, "body": json.dumps({"error": "question_id required"})}
 
@@ -243,8 +242,14 @@ def op_delete(data, headers):
 def op_bulk_import(data, headers):
     items = data.get("items", [])
     source = data.get("source", "import")
-    if not items:
+    if not items or not isinstance(items, list):
         return {"statusCode": 400, "headers": headers, "body": json.dumps({"error": "items array required"})}
+    if len(items) > MAX_BULK_ITEMS:
+        return {
+            "statusCode": 400,
+            "headers": headers,
+            "body": json.dumps({"error": f"Import at most {MAX_BULK_ITEMS} questions at a time"}),
+        }
 
     added = 0
     updated = 0
@@ -342,6 +347,10 @@ def lambda_handler(event, context):
 
         return handler(data, headers)
 
-    except Exception as e:
-        logger.error(f"Error in test-library-handler: {str(e)}")
-        return {"statusCode": 500, "headers": headers, "body": json.dumps({"error": str(e)})}
+    except Exception:
+        logger.exception("Error in test-library-handler")
+        return {
+            "statusCode": 500,
+            "headers": headers,
+            "body": json.dumps({"error": "An unexpected error occurred. Please try again."}),
+        }

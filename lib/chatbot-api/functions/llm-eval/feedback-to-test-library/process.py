@@ -4,24 +4,27 @@ import re
 import uuid
 import logging
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
 from boto3.dynamodb.conditions import Key
+from common_utils import extract_json_object
+from common_utils.brand import assistant_name
+from common_utils.models import fast_model_id
 from common_utils.text import strip_kb_citation_markers
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 TABLE_NAME = os.environ["TEST_LIBRARY_TABLE"]
-MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+MODEL_ID = os.environ.get("MODEL_ID") or fast_model_id()
 
-dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
+dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
-bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+bedrock = boto3.client("bedrock-runtime")
 
 PARTITION_KEY = "MASTER"
 
-SYSTEM_PROMPT = """You are building a Q&A test library for ABE, an AI assistant that answers \
-questions grounded in an organization's knowledge base. ABE helps users find information across \
+SYSTEM_PROMPT = """You are building a Q&A test library for __ASSISTANT_NAME__, an AI assistant that answers \
+questions grounded in an organization's knowledge base. It helps users find information across \
 documents and structured data and understand the relevant policies, terms, and details.
 
 You will receive the user's exact message (as they typed it) and the chatbot's answer from \
@@ -34,7 +37,7 @@ Priorities (in order):
 1. Stay as close as possible to the user's original wording, tone, and length. Prefer light \
 edits over rewriting.
 2. Only add missing context when the question is a fragment or follow-up that cannot be \
-understood without the answer (e.g. "what about vendors?" → minimally name the topic implied \
+understood without the answer (e.g. "what about weekends?" → minimally name the topic implied \
 by the answer).
 3. Do NOT turn casual phrasing into formal essay questions unless necessary for clarity.
 4. Do NOT introduce new constraints, entities, or topics that the user did not imply.
@@ -46,18 +49,20 @@ Rules:
 - Do not include or modify the answer in your output.
 
 Example (minimal fix):
-User Question: any other vendors available
-Chatbot Response: Under contract MRO001, vendors include Acme Supply, Beta Flooring, …
+User Question: any other options available
+Chatbot Response: Under the travel policy, approved options include rail, economy air, …
 
 Example output:
-{"question": "Are any other vendors available under MRO001?"}
+{"question": "Are any other options available under the travel policy?"}
 
 Example (fragment disambiguated, still short):
-User Question: vendors?
-Chatbot Response: For carpet, MRO001 lists 12 approved vendors including …
+User Question: deadline?
+Chatbot Response: Expense reports must be submitted within 30 days of the trip …
 
 Example output:
-{"question": "Which vendors are on MRO001 for carpet?"}"""
+{"question": "What is the deadline for submitting expense reports?"}""".replace(
+    "__ASSISTANT_NAME__", assistant_name()
+)
 
 
 def normalize_question(q: str) -> str:
@@ -66,7 +71,7 @@ def normalize_question(q: str) -> str:
 
 
 def now_iso():
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
 
 def find_by_normalized(normalized: str):
@@ -162,15 +167,11 @@ def rewrite_question(prompt: str, completion: str) -> str:
     result = json.loads(response["body"].read())
     text = result["content"][0]["text"].strip()
 
-    json_match = re.search(r'\{[\s\S]*\}', text)
-    if not json_match:
-        raise ValueError(f"No JSON found in LLM response: {text[:200]}")
-
-    parsed = json.loads(json_match.group())
-    if "question" not in parsed:
-        raise ValueError(f"Missing 'question' key in LLM response: {parsed}")
-
-    return parsed["question"]
+    parsed = extract_json_object(text)
+    question = str(parsed.get("question") or "").strip()
+    if not question:
+        raise ValueError(f"Missing 'question' key in LLM response: {text[:200]}")
+    return question
 
 
 def lambda_handler(event, context):
