@@ -21,6 +21,7 @@ import { useDocumentTitle } from "../../../common/hooks/use-document-title";
 import { AppContext } from "../../../common/app-context";
 import { ApiClient } from "../../../common/api-client/api-client";
 import { useNotifications } from "../../../components/notif-manager";
+import { brand } from "../../../common/brand";
 import InboxView from "./InboxView";
 import FeedbackDetailView from "./FeedbackDetailView";
 import TrendsView from "./TrendsView";
@@ -32,12 +33,15 @@ import {
   PromptData,
   InboxFilters,
   ActivityLogEntry,
-  ClusterSummary,
   formatDate,
   label,
 } from "./types";
 
 type TabValue = "queue" | "trends" | "prompts";
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 function getDetailText(entry: ActivityLogEntry, key: string): string {
   const value = entry.details?.[key];
@@ -143,6 +147,11 @@ export default function FeedbackOpsPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [activityLogError, setActivityLogError] = useState<string | null>(null);
+  // Load failures are kept per view so each can show an inline error with Retry
+  // instead of an empty state that implies there is simply no data.
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [monitoringError, setMonitoringError] = useState<string | null>(null);
+  const [promptsError, setPromptsError] = useState<string | null>(null);
   const [filters, setFilters] = useState<InboxFilters>({
     feedbackKind: "",
     reviewStatus: "",
@@ -175,8 +184,13 @@ export default function FeedbackOpsPage() {
     for (const [k, v] of Object.entries(filters)) {
       if (v) filterParams[k] = v;
     }
-    const result = await apiClient.userFeedback.getAdminFeedback(filterParams);
-    setFeedbackItems(result.items || []);
+    try {
+      const result = await apiClient.userFeedback.getAdminFeedback(filterParams);
+      setFeedbackItems(result.items || []);
+      setFeedbackError(null);
+    } catch (error: unknown) {
+      setFeedbackError(errorMessage(error, "Could not load feedback."));
+    }
   }, [apiClient, filters]);
 
   const loadFeedbackDetail = useCallback(
@@ -195,15 +209,52 @@ export default function FeedbackOpsPage() {
 
   const loadMonitoring = useCallback(async () => {
     if (!apiClient) return;
-    const result = await apiClient.userFeedback.getMonitoring();
-    setMonitoring(result);
+    try {
+      const result = await apiClient.userFeedback.getMonitoring();
+      setMonitoring(result);
+      setMonitoringError(null);
+    } catch (error: unknown) {
+      setMonitoringError(errorMessage(error, "Could not load trends."));
+    }
   }, [apiClient]);
 
   const loadPrompts = useCallback(async () => {
     if (!apiClient) return;
-    const result = await apiClient.userFeedback.getPrompts();
-    setPromptData(result);
+    try {
+      const result = await apiClient.userFeedback.getPrompts();
+      setPromptData(result);
+      setPromptsError(null);
+    } catch (error: unknown) {
+      setPromptsError(errorMessage(error, "Could not load instructions."));
+    }
   }, [apiClient]);
+
+  const reloadFeedback = useCallback(async () => {
+    setLoadingFeedback(true);
+    try {
+      await loadFeedback();
+    } finally {
+      setLoadingFeedback(false);
+    }
+  }, [loadFeedback]);
+
+  const reloadMonitoring = useCallback(async () => {
+    setLoadingMeta(true);
+    try {
+      await loadMonitoring();
+    } finally {
+      setLoadingMeta(false);
+    }
+  }, [loadMonitoring]);
+
+  const reloadPrompts = useCallback(async () => {
+    setLoadingMeta(true);
+    try {
+      await loadPrompts();
+    } finally {
+      setLoadingMeta(false);
+    }
+  }, [loadPrompts]);
 
   const loadActivityLog = useCallback(async () => {
     if (!apiClient) return;
@@ -213,8 +264,7 @@ export default function FeedbackOpsPage() {
       setActivityLogError(null);
     } catch (error: unknown) {
       setActivityLog([]);
-      const message =
-        error instanceof Error ? error.message : "Could not load activity log.";
+      const message = errorMessage(error, "Could not load activity log.");
       setActivityLogError(message);
       addNotification("error", message);
     }
@@ -229,7 +279,7 @@ export default function FeedbackOpsPage() {
         await loadFeedbackDetail(feedbackId);
       }
     } catch (error: unknown) {
-      addNotification("error", error instanceof Error ? error.message : "Failed to refresh Feedback Manager.");
+      addNotification("error", errorMessage(error, "Failed to refresh Feedback Manager."));
     } finally {
       setLoadingFeedback(false);
       setLoadingMeta(false);
@@ -245,7 +295,7 @@ export default function FeedbackOpsPage() {
     Promise.all([loadMonitoring(), loadPrompts(), loadActivityLog()])
       .catch((error: unknown) => {
         if (isActive) {
-          addNotification("error", error instanceof Error ? error.message : "Failed to load monitoring or prompts.");
+          addNotification("error", errorMessage(error, "Failed to load monitoring or prompts."));
         }
       })
       .finally(() => {
@@ -259,26 +309,9 @@ export default function FeedbackOpsPage() {
   }, [addNotification, apiClient, loadActivityLog, loadMonitoring, loadPrompts]);
 
   useEffect(() => {
-    let isActive = true;
-    if (!apiClient) {
-      return undefined;
-    }
-    setLoadingFeedback(true);
-    loadFeedback()
-      .catch((error: unknown) => {
-        if (isActive) {
-          addNotification("error", error instanceof Error ? error.message : "Failed to load feedback.");
-        }
-      })
-      .finally(() => {
-        if (isActive) {
-          setLoadingFeedback(false);
-        }
-      });
-    return () => {
-      isActive = false;
-    };
-  }, [addNotification, apiClient, loadFeedback]);
+    if (!apiClient) return;
+    void reloadFeedback();
+  }, [apiClient, reloadFeedback]);
 
   useEffect(() => {
     const paramTab = searchParams.get("tab");
@@ -332,25 +365,10 @@ export default function FeedbackOpsPage() {
     await Promise.all([loadFeedback(), loadMonitoring(), loadActivityLog()]);
   }, [loadActivityLog, loadFeedback, loadMonitoring]);
 
-  const handleCreateDraftFromCluster = useCallback(
-    (cluster: ClusterSummary) => {
-      if (cluster.sampleFeedbackId) {
-        setSelectedFeedbackIds([cluster.sampleFeedbackId]);
-      }
-      setTab("prompts");
-      if (!feedbackId) {
-        setSearchParams(
-          (prev) => {
-            const next = new URLSearchParams(prev);
-            next.set("tab", "prompts");
-            return next;
-          },
-          { replace: true }
-        );
-      }
-    },
-    [feedbackId, setSearchParams]
-  );
+  const handlePromptsChanged = useCallback(async () => {
+    await loadPrompts();
+    await loadMonitoring();
+  }, [loadMonitoring, loadPrompts]);
 
   const pendingCount = feedbackItems.filter(
     (i) => i.feedbackKind !== "helpful" && i.reviewStatus !== "actioned" && i.reviewStatus !== "dismissed"
@@ -361,7 +379,7 @@ export default function FeedbackOpsPage() {
   return (
     <AdminPageLayout
       title="Feedback Manager"
-      description="Review user feedback, spot trends, and improve ABE's responses."
+      description={`Review user feedback, spot trends, and improve ${brand.shortName}'s responses.`}
       breadcrumbLabel="Feedback Manager"
     >
       {feedbackId ? (
@@ -381,7 +399,7 @@ export default function FeedbackOpsPage() {
             <Tooltip
               title={
                 activityLogError
-                  ? "Activity log failed to load — open for details"
+                  ? "Activity log failed to load. Open for details."
                   : activityLog.length > 0
                     ? "View recent activity"
                     : "No recent activity yet"
@@ -465,8 +483,10 @@ export default function FeedbackOpsPage() {
             filters={filters}
             loadingFeedback={loadingFeedback}
             loadingMeta={loadingMeta}
+            error={feedbackError}
             onFiltersChange={setFilters}
             onRefresh={refreshAll}
+            onRetry={reloadFeedback}
           />
           </Box>
         )}
@@ -475,7 +495,8 @@ export default function FeedbackOpsPage() {
             <TrendsView
               monitoring={monitoring}
               loadingMeta={loadingMeta}
-              onCreateDraftFromCluster={handleCreateDraftFromCluster}
+              error={monitoringError}
+              onRetry={reloadMonitoring}
             />
           </Box>
         )}
@@ -484,11 +505,10 @@ export default function FeedbackOpsPage() {
             <PromptWorkspace
               promptData={promptData}
               loadingMeta={loadingMeta}
+              loadError={promptsError}
+              onRetry={reloadPrompts}
               apiClient={apiClient}
-              onRefresh={async () => {
-                await loadPrompts();
-                await loadMonitoring();
-              }}
+              onRefresh={handlePromptsChanged}
               selectedFeedbackIds={selectedFeedbackIds}
             />
           </Box>

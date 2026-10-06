@@ -24,6 +24,7 @@ import ThumbUpOutlinedIcon from "@mui/icons-material/ThumbUpOutlined";
 import ThumbDownOutlinedIcon from "@mui/icons-material/ThumbDownOutlined";
 import SearchIcon from "@mui/icons-material/Search";
 import { FeedbackItem, InboxFilters, feedbackStatusChip, formatDate, itemNeedsTriage } from "./types";
+import LoadErrorAlert from "./LoadErrorAlert";
 
 const ISSUE_LABELS: Record<string, { label: string; color: "error" | "warning" | "info" | "default" }> = {
   retrieval_gap: { label: "Missing info", color: "warning" },
@@ -52,8 +53,12 @@ interface InboxViewProps {
   filters: InboxFilters;
   loadingFeedback: boolean;
   loadingMeta: boolean;
+  /** Message from the last failed feedback load, or null when it succeeded. */
+  error?: string | null;
   onFiltersChange: (filters: InboxFilters) => void;
   onRefresh: () => Promise<void>;
+  /** Re-run the feedback fetch after a failure. */
+  onRetry: () => void;
 }
 
 function InboxSkeleton() {
@@ -82,7 +87,7 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 }
 
 export default function InboxView(props: InboxViewProps) {
-  const { feedbackItems, filters, loadingFeedback, loadingMeta, onFiltersChange, onRefresh } = props;
+  const { feedbackItems, filters, loadingFeedback, loadingMeta, error, onFiltersChange, onRefresh, onRetry } = props;
   const navigate = useNavigate();
 
   const [page, setPage] = useState(0);
@@ -200,8 +205,12 @@ export default function InboxView(props: InboxViewProps) {
         </Stack>
       </Stack>
 
+      {error && (
+        <LoadErrorAlert title="Feedback could not be loaded" message={error} onRetry={onRetry} retrying={loadingFeedback} />
+      )}
+
       {/* List */}
-      {visibleItems.length === 0 ? (
+      {error && visibleItems.length === 0 ? null : visibleItems.length === 0 ? (
         view === "needs" ? (
           <EmptyState
             title="Nothing needs your review"

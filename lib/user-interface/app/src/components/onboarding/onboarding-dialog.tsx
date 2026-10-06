@@ -1,8 +1,9 @@
 /**
- * OnboardingDialog — a one-time welcome shown the first time a signed-in user
+ * OnboardingDialog: a one-time welcome shown the first time a signed-in user
  * reaches any in-app page. It auto-plays a short walkthrough of asking the
  * assistant a question, then never shows again (remembered in localStorage, versioned via
- * StorageHelper so we can re-introduce it after a redesign).
+ * StorageHelper so we can re-introduce it after a redesign). The clip is
+ * optional: if the deployment has no recording, the dialog is text only.
  *
  * Mounted in AppShell, so it covers every authenticated route but not the
  * public landing pages.
@@ -18,7 +19,7 @@ import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
 import { StorageHelper } from "../../common/helpers/storage-helper";
-import { CHATBOT_NAME } from "../../common/constants";
+import { brand } from "../../common/brand";
 import DemoVideo from "./demo-video";
 
 export default function OnboardingDialog() {
@@ -44,7 +45,7 @@ export default function OnboardingDialog() {
       aria-labelledby="onboarding-dialog-title"
     >
       <DialogTitle id="onboarding-dialog-title" sx={{ pr: 6 }}>
-        Welcome to {CHATBOT_NAME}
+        Welcome to {brand.assistantName}
         <IconButton
           aria-label="Close"
           onClick={dismiss}
@@ -55,9 +56,9 @@ export default function OnboardingDialog() {
       </DialogTitle>
       <DialogContent>
         <DialogContentText sx={{ mb: 2 }}>
-          {CHATBOT_NAME} is your AI assistant. Ask a question in plain language
-          and {CHATBOT_NAME} answers using your organization's documents and
-          data, with links to the sources so you can verify them.
+          {brand.shortName} is your AI assistant. Ask a question in plain
+          language and get an answer drawn from your organization&apos;s
+          documents and data, with links to the sources so you can verify them.
         </DialogContentText>
         <DemoVideo autoPlay />
         <DialogContentText variant="body2" sx={{ mt: 1.5 }}>

@@ -65,7 +65,7 @@ export default function AdminMarkdown({
           my: compact ? 0.75 : 1,
           p: 1.5,
           borderRadius: 1,
-          bgcolor: "grey.100",
+          bgcolor: "action.hover",
           overflow: "auto",
         },
         "& code": {
@@ -95,7 +95,7 @@ export default function AdminMarkdown({
           verticalAlign: "top",
         },
         "& th": {
-          bgcolor: "grey.100",
+          bgcolor: "action.hover",
           fontWeight: 600,
         },
         "& a": {
