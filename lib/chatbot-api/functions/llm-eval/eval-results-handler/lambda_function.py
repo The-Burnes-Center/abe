@@ -51,7 +51,9 @@ def get_evaluation_summaries(continuation_token=None, limit=10):
             # First try with PartitionKey
             query_params = {
                 "KeyConditionExpression": Key("PartitionKey").eq("Evaluation"),
-                "ProjectionExpression": "#eid, #ts, #as, #ar, #ac, #tq, #en, #tk, #acp, #acr, #arr, #af, #ea, #st",
+                # average_relevance only exists on evaluations run before it was
+                # dropped as a duplicate of average_response_relevancy.
+                "ProjectionExpression": "#eid, #ts, #as, #ar, #ac, #tq, #fq, #en, #tk, #acp, #acr, #arr, #af, #ea, #st",
                 "ExpressionAttributeNames": {
                     "#eid": "EvaluationId",
                     "#ts": "Timestamp",
@@ -59,6 +61,7 @@ def get_evaluation_summaries(continuation_token=None, limit=10):
                     "#ar": "average_relevance",
                     "#ac": "average_correctness",
                     "#tq": "total_questions",
+                    "#fq": "failed_questions",
                     "#en": "evaluation_name",
                     "#tk": "test_cases_key",
                     "#acp": "average_context_precision",

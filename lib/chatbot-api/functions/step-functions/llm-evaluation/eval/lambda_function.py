@@ -1,4 +1,3 @@
-from datetime import datetime
 import json
 import boto3
 import os
@@ -24,119 +23,87 @@ s3_client = boto3.client('s3')
 lambda_client = boto3.client('lambda')
 
 
+METRIC_NAMES = (
+    'similarity',
+    'correctness',
+    'context_precision',
+    'context_recall',
+    'response_relevancy',
+    'faithfulness',
+)
+MAX_ERROR_LENGTH = 500
+
+# Text generate-response substitutes when retrieval finds nothing; it is not context.
+_NO_CONTEXT_PREFIX = "No knowledge available!"
+
+
 def lambda_handler(event, context):
-    try:
-        chunk_key = event["chunk_key"]
-        evaluation_id = event["evaluation_id"]
-        logging.info(f"Processing chunk: {chunk_key} for evaluation: {evaluation_id}")
-        test_cases = read_chunk_from_s3(s3_client, TEST_CASES_BUCKET, chunk_key)
+    """Evaluate one chunk of test cases and write its partial result to S3.
 
-        logging.info(f"Retrieved {len(test_cases)} test cases to evaluate")
+    A question that fails (generation or RAGAS error) is recorded with its error
+    and excluded from the metric totals, so one bad question doesn't drag every
+    average toward zero. Infrastructure failures (unreadable chunk, unwritable
+    partial result) raise, so the Map state fails and the pipeline's Catch marks
+    the evaluation FAILED instead of silently continuing with missing data.
+    """
+    chunk_key = event["chunk_key"]
+    evaluation_id = event["evaluation_id"]
+    logging.info(f"Processing chunk: {chunk_key} for evaluation: {evaluation_id}")
+    test_cases = read_chunk_from_s3(s3_client, TEST_CASES_BUCKET, chunk_key)
+    logging.info(f"Retrieved {len(test_cases)} test cases to evaluate")
 
-        for idx, test_case in enumerate(test_cases):
-            if 'question' not in test_case or 'expectedResponse' not in test_case:
-                logging.error(f"Invalid test case at index {idx}: missing required fields")
-                test_cases[idx] = {'question': f"Invalid test case {idx}", 'expectedResponse': ""}
+    detailed_results = []
+    totals = {name: 0.0 for name in METRIC_NAMES}
+    num_succeeded = 0
+    num_failed = 0
 
-        detailed_results = []
-        total_similarity = 0
-        total_relevance = 0
-        total_correctness = 0
-        total_context_precision = 0
-        total_context_recall = 0
-        total_response_relevancy = 0
-        total_faithfulness = 0
-
-        for idx, test_case in enumerate(test_cases):
-            try:
-                logging.info(f"Starting test case {idx+1}/{len(test_cases)}")
-
-                if idx > 0:
-                    time.sleep(3)
-
-                result = process_test_case(idx, test_case)
-                detailed_results.append(result)
-
-                total_similarity += result['similarity']
-                total_relevance += result['relevance']
-                total_correctness += result['correctness']
-                total_context_precision += result['context_precision']
-                total_context_recall += result['context_recall']
-                total_response_relevancy += result['response_relevancy']
-                total_faithfulness += result['faithfulness']
-
-                logging.info(f"Completed test case {idx+1}/{len(test_cases)} successfully")
-
-            except Exception as e:
-                logging.error(f"Error processing test case {idx+1}: {str(e)}")
-                detailed_results.append({
-                    'question': test_case.get('question', f"Question {idx+1}"),
-                    'expectedResponse': test_case.get('expectedResponse', ''),
-                    'actualResponse': 'Error during evaluation',
-                    'similarity': 0.0,
-                    'relevance': 0.0,
-                    'correctness': 0.0,
-                    'context_precision': 0.0,
-                    'context_recall': 0.0,
-                    'response_relevancy': 0.0,
-                    'faithfulness': 0.0,
-                    'error': str(e)
-                })
-
-        num_results = len(detailed_results)
-        if num_results == 0:
-            logging.warning(f"No test cases were successfully evaluated for chunk: {chunk_key}")
-            partial_results = {
-                "detailed_results": [],
-                "total_similarity": 0,
-                "total_relevance": 0,
-                "total_correctness": 0,
-                "num_test_cases": 0,
-                "total_context_precision": 0,
-                "total_context_recall": 0,
-                "total_response_relevancy": 0,
-                "total_faithfulness": 0
-            }
-        else:
-            partial_results = {
-                "detailed_results": detailed_results,
-                "total_similarity": total_similarity,
-                "total_relevance": total_relevance,
-                "total_correctness": total_correctness,
-                "num_test_cases": num_results,
-                "total_context_precision": total_context_precision,
-                "total_context_recall": total_context_recall,
-                "total_response_relevancy": total_response_relevancy,
-                "total_faithfulness": total_faithfulness
-            }
-
-        partial_result_key = f"evaluations/{evaluation_id}/partial_results/{os.path.basename(chunk_key)}"
+    for idx, test_case in enumerate(test_cases):
+        if idx > 0:
+            time.sleep(3)
         try:
-            s3_client.put_object(
-                Bucket=TEST_CASES_BUCKET,
-                Key=partial_result_key,
-                Body=json.dumps(partial_results)
-            )
-            logging.info(f"Successfully wrote partial results to S3: {TEST_CASES_BUCKET}/{partial_result_key}")
+            if not test_case.get('question') or 'expectedResponse' not in test_case:
+                raise ValueError("Test case is missing 'question' or 'expectedResponse'")
+            logging.info(f"Starting test case {idx+1}/{len(test_cases)}")
+            result = process_test_case(idx, test_case)
+            for name in METRIC_NAMES:
+                totals[name] += result[name]
+            num_succeeded += 1
+            detailed_results.append(result)
+            logging.info(f"Completed test case {idx+1}/{len(test_cases)} successfully")
         except Exception as e:
-            logging.error(f"Error writing partial results to S3: {str(e)}")
+            logging.exception(f"Error processing test case {idx+1}")
+            num_failed += 1
+            failed = {
+                'question': str(test_case.get('question') or f"Question {idx+1}"),
+                'expectedResponse': str(test_case.get('expectedResponse') or ''),
+                'actualResponse': 'Error during evaluation',
+                'failed': True,
+                'error': str(e)[:MAX_ERROR_LENGTH],
+            }
+            failed.update({name: None for name in METRIC_NAMES})
+            detailed_results.append(failed)
 
-        return {
-            "partial_result_key": partial_result_key,
-            "evaluation_id": evaluation_id,
-            "num_test_cases": num_results
-        }
+    partial_results = {
+        "detailed_results": detailed_results,
+        "num_test_cases": num_succeeded,
+        "num_failed": num_failed,
+        **{f"total_{name}": totals[name] for name in METRIC_NAMES},
+    }
 
-    except Exception as e:
-        logging.error(f"Error in evaluation Lambda: {str(e)}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({
-                'error': str(e),
-                'evaluation_id': event.get("evaluation_id")
-            }),
-            'evaluation_id': event.get("evaluation_id")
-        }
+    partial_result_key = f"evaluations/{evaluation_id}/partial_results/{os.path.basename(chunk_key)}"
+    s3_client.put_object(
+        Bucket=TEST_CASES_BUCKET,
+        Key=partial_result_key,
+        Body=json.dumps(partial_results)
+    )
+    logging.info(f"Wrote partial results to S3: {partial_result_key}")
+
+    return {
+        "partial_result_key": partial_result_key,
+        "evaluation_id": evaluation_id,
+        "num_test_cases": num_succeeded,
+        "num_failed": num_failed,
+    }
 
 
 def process_test_case(idx, test_case):
@@ -145,12 +112,17 @@ def process_test_case(idx, test_case):
 
     logging.info(f"Processing test case {idx+1}: {question[:50]}...")
 
-    actual_response = invoke_generate_response_lambda(lambda_client, question)
+    actual_response, answer_context = invoke_generate_response_lambda(lambda_client, question)
     if not actual_response:
-        logging.warning(f"Empty response received for question: {question[:50]}...")
-        actual_response = "No response generated."
+        raise RuntimeError("generate-response returned no answer")
 
-    retrieved_context = invoke_generate_response_lambda(lambda_client, question, get_context_only=True)
+    # Formatted retrieval for the admin UI's "retrieved context" panel.
+    retrieved_context, _ = invoke_generate_response_lambda(lambda_client, question, get_context_only=True)
+
+    # Score faithfulness and the context metrics against the chunks the answer
+    # was actually generated from (the model's own tool queries). Fall back to a
+    # direct retrieval on the question only when the answer used no KB context.
+    ragas_context = answer_context or retrieved_context
 
     logging.info(f"Evaluating response for test case {idx+1}")
 
@@ -159,7 +131,7 @@ def process_test_case(idx, test_case):
 
     for retry in range(max_retries):
         try:
-            result = evaluate_with_ragas(question, expected_response, actual_response, retrieved_context)
+            result = evaluate_with_ragas(question, expected_response, actual_response, ragas_context)
             break
         except Exception as e:
             retry_delay = 5 * (2 ** retry)
@@ -169,25 +141,28 @@ def process_test_case(idx, test_case):
             else:
                 raise
 
-    logging.info(f"RAGAS evaluation complete with scores: similarity={result['scores']['similarity']:.2f}, "
-                 f"relevance={result['scores']['relevance']:.2f}, correctness={result['scores']['correctness']:.2f}")
+    logging.info(f"RAGAS evaluation complete with scores: {result['scores']}")
 
     return {
         'question': question,
         'expectedResponse': expected_response,
         'actualResponse': actual_response,
-        'similarity': result['scores']['similarity'],
-        'relevance': result['scores']['relevance'],
-        'correctness': result['scores']['correctness'],
-        'context_precision': result['scores']['context_precision'],
-        'context_recall': result['scores']['context_recall'],
-        'response_relevancy': result['scores']['response_relevancy'],
-        'faithfulness': result['scores']['faithfulness'],
-        'retrieved_context': retrieved_context
+        **{name: result['scores'][name] for name in METRIC_NAMES},
+        'retrieved_context': retrieved_context or ragas_context,
     }
 
 
+def _usable_context(value):
+    text = value if isinstance(value, str) else ""
+    text = text.strip()
+    if not text or text.startswith(_NO_CONTEXT_PREFIX):
+        return ""
+    return text
+
+
 def invoke_generate_response_lambda(lambda_client, question, get_context_only=False):
+    """Return (text, context). text is the answer, or the formatted retrieval when
+    get_context_only; context is the KB text the answer was generated from."""
     try:
         logging.info(f"Invoking generate-response Lambda for question: {question[:50]}...")
 
@@ -207,21 +182,23 @@ def invoke_generate_response_lambda(lambda_client, question, get_context_only=Fa
 
         if result.get('statusCode', 200) != 200:
             logging.error(f"Error response from Lambda: {result}")
-            return ""
+            return "", ""
 
         body = json.loads(result.get('body', '{}'))
 
         if get_context_only:
-            context = body.get('context', '')
+            context = _usable_context(body.get('context', ''))
             logging.info(f"Received context of length: {len(context)} characters")
-            return context
-        else:
-            response_text = body.get('modelResponse', '')
-            logging.info(f"Received response of length: {len(response_text)} characters")
-            return response_text
+            return context, context
+
+        response_text = body.get('modelResponse', '') or ''
+        sources = body.get('sources') or {}
+        answer_context = _usable_context(sources.get('content') if isinstance(sources, dict) else "")
+        logging.info(f"Received response of length: {len(response_text)} characters")
+        return response_text, answer_context
     except Exception as e:
         logging.error(f"Error invoking generateResponseLambda: {str(e)}")
-        return ""
+        return "", ""
 
 
 def evaluate_with_ragas(question, expected_response, actual_response, retrieved_context):
@@ -240,6 +217,7 @@ def evaluate_with_ragas(question, expected_response, actual_response, retrieved_
 
     semantic_similarity = SemanticSimilarity()
     metrics = [answer_correctness, semantic_similarity, answer_relevancy, context_precision, context_recall, faithfulness]
+    region = os.environ.get("AWS_REGION")
 
     if not actual_response:
         actual_response = "No response"
@@ -262,12 +240,12 @@ def evaluate_with_ragas(question, expected_response, actual_response, retrieved_
     dataset = EvaluationDataset(samples=[sample])
 
     evaluator_llm = LangchainLLMWrapper(ChatBedrockConverse(
-        region_name="us-east-1",
+        region_name=region,
         model=BEDROCK_MODEL_ID,
         temperature=0.0,
     ))
     evaluator_embeddings = LangchainEmbeddingsWrapper(BedrockEmbeddings(
-        region_name="us-east-1",
+        region_name=region,
         model_id='amazon.titan-embed-text-v2:0',
     ))
 
@@ -302,7 +280,6 @@ def evaluate_with_ragas(question, expected_response, actual_response, retrieved_
         "status": "success",
         "scores": {
             "similarity": safe_score('semantic_similarity'),
-            "relevance": safe_score('answer_relevancy'),
             "correctness": safe_score('answer_correctness'),
             "context_precision": safe_score('context_precision'),
             "context_recall": safe_score('context_recall'),

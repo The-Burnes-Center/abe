@@ -1,5 +1,6 @@
 import os
 import boto3
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 import json
 from datetime import datetime
@@ -16,405 +17,244 @@ EVALUATION_RESULTS_TABLE = os.environ.get("EVAL_RESULTS_TABLE")
 TEST_CASES_BUCKET = os.environ["TEST_CASES_BUCKET"]
 EVAL_RESULTS_BUCKET = os.environ.get("EVAL_RESULTS_BUCKET", TEST_CASES_BUCKET)  # Fallback to TEST_CASES_BUCKET if not set
 
-# Initialize a DynamoDB resource using boto3
-dynamodb = boto3.resource("dynamodb", region_name='us-east-1')
+dynamodb = boto3.resource("dynamodb")
 
-# Connect to the specified DynamoDB tables
 summaries_table = dynamodb.Table(EVALUATION_SUMMARIES_TABLE)
 results_table = dynamodb.Table(EVALUATION_RESULTS_TABLE)
 
-def convert_from_decimal(item):
-    if isinstance(item, list):
-        return [convert_from_decimal(i) for i in item]
-    elif isinstance(item, dict):
-        return {k: convert_from_decimal(v) for k, v in item.items()}
-    elif isinstance(item, Decimal):
-        return float(item)  # Convert Decimal to float
-    else:
-        return item
+# Summary metrics written by the save step. average_relevance is no longer
+# produced (it duplicated response_relevancy) but older rows still carry it.
+SUMMARY_METRICS = (
+    'average_similarity',
+    'average_correctness',
+    'average_context_precision',
+    'average_context_recall',
+    'average_response_relevancy',
+    'average_faithfulness',
+)
+RESULT_METRICS = (
+    'similarity',
+    'correctness',
+    'context_precision',
+    'context_recall',
+    'response_relevancy',
+    'faithfulness',
+)
+MAX_ERROR_LENGTH = 2000
+
+HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+    'Access-Control-Allow-Methods': 'OPTIONS,POST,GET',
+}
+
+
+def _decimal(value):
+    return Decimal(str(value))
+
 
 def _find_existing_placeholder(evaluation_id):
-    """Find the existing placeholder record created by start-llm-eval."""
-    from boto3.dynamodb.conditions import Key, Attr
-    try:
-        resp = summaries_table.query(
-            KeyConditionExpression=Key("PartitionKey").eq("Evaluation"),
-            FilterExpression=Attr("EvaluationId").eq(evaluation_id),
-            ScanIndexForward=False,
-        )
-        items = resp.get("Items", [])
-        for item in items:
+    """Find the placeholder summary row created by start-llm-eval.
+
+    The FilterExpression runs after each page is read, so keep paginating:
+    a page with no match doesn't mean the row doesn't exist.
+    """
+    matches = []
+    exclusive = None
+    while True:
+        qargs = {
+            "KeyConditionExpression": Key("PartitionKey").eq("Evaluation"),
+            "FilterExpression": Attr("EvaluationId").eq(evaluation_id),
+            "ScanIndexForward": False,
+        }
+        if exclusive:
+            qargs["ExclusiveStartKey"] = exclusive
+        resp = summaries_table.query(**qargs)
+        for item in resp.get("Items", []):
             if item.get("executionArn"):
                 return item
-        return items[0] if items else None
-    except Exception as e:
-        logger.warning(f"Could not find placeholder for {evaluation_id}: {e}")
-        return None
+            matches.append(item)
+        exclusive = resp.get("LastEvaluatedKey")
+        if not exclusive:
+            return matches[0] if matches else None
 
-def mark_evaluation_failed(evaluation_id, evaluation_name, error_message, headers=None):
+
+def mark_evaluation_failed(evaluation_id, evaluation_name, error_message):
     """Flip an evaluation's summary row to FAILED.
 
     Invoked by the Step Functions error-handling branch when any step fails, so the
     run stops showing as RUNNING (with a perpetual progress bar) in the admin UI.
+    Raises on failure so the execution history shows why the row wasn't updated.
     """
-    if headers is None:
-        headers = {}
-    # Keep the stored reason readable and comfortably under the DynamoDB item limit.
-    error_message = (error_message or "Evaluation failed")
-    if len(error_message) > 2000:
-        error_message = error_message[:2000] + "...(truncated)"
-    try:
-        existing = _find_existing_placeholder(evaluation_id)
-        if existing:
-            update_expr_parts = ["#st = :failed", "error_message = :em"]
-            expr_values = {":failed": "FAILED", ":em": error_message}
-            expr_names = {"#st": "status"}
-            if evaluation_name and evaluation_name.strip():
-                update_expr_parts.append("evaluation_name = :en")
-                expr_values[":en"] = evaluation_name.strip()
-            summaries_table.update_item(
-                Key={"PartitionKey": existing["PartitionKey"], "Timestamp": existing["Timestamp"]},
-                UpdateExpression="SET " + ", ".join(update_expr_parts),
-                ExpressionAttributeValues=expr_values,
-                ExpressionAttributeNames=expr_names,
-            )
-            logger.info(f"Marked evaluation {evaluation_id} as FAILED")
-        else:
-            # No placeholder found (e.g. split failed very early) -- create a minimal row.
-            summaries_table.put_item(Item={
-                "PartitionKey": "Evaluation",
-                "Timestamp": str(datetime.now()),
-                "EvaluationId": evaluation_id,
-                "evaluation_name": (evaluation_name or "").strip() or "Unnamed",
-                "status": "FAILED",
-                "error_message": error_message,
-            })
-            logger.info(f"Created FAILED summary row for {evaluation_id}")
-        return {
-            "statusCode": 200,
-            "headers": headers,
-            "body": json.dumps({"message": "Evaluation marked as failed", "evaluation_id": evaluation_id}),
-            "evaluation_id": evaluation_id,
-        }
-    except Exception as e:
-        logger.error(f"Error marking evaluation {evaluation_id} as failed: {str(e)}")
-        return {
-            "statusCode": 500,
-            "headers": headers,
-            "body": json.dumps({"message": "Failed to mark evaluation as failed", "error": str(e)}),
-            "evaluation_id": evaluation_id,
-        }
-
-
-def add_evaluation(evaluation_id, evaluation_name, average_similarity,
-                   average_relevance, average_correctness, total_questions, 
-                   detailed_results, test_cases_key, 
-                   average_context_precision=None, average_context_recall=None, 
-                   average_response_relevancy=None, average_faithfulness=None):
-    try:
-        existing = _find_existing_placeholder(evaluation_id)
-
-        if existing:
-            pk = existing["PartitionKey"]
-            ts = existing["Timestamp"]
-            update_expr_parts = [
-                "SET average_similarity = :sim",
-                "average_relevance = :rel",
-                "average_correctness = :cor",
-                "total_questions = :tq",
-                "#st = :done",
-            ]
-            expr_values = {
-                ":sim": Decimal(str(average_similarity)),
-                ":rel": Decimal(str(average_relevance)),
-                ":cor": Decimal(str(average_correctness)),
-                ":tq": total_questions,
-                ":done": "COMPLETED",
-            }
-            expr_names = {"#st": "status"}
-            if evaluation_name and evaluation_name.strip():
-                update_expr_parts.append("evaluation_name = :en")
-                expr_values[":en"] = evaluation_name.strip()
-            if test_cases_key:
-                update_expr_parts.append("test_cases_key = :tk")
-                expr_values[":tk"] = test_cases_key
-            if average_context_precision is not None:
-                update_expr_parts.append("average_context_precision = :cp")
-                expr_values[":cp"] = Decimal(str(average_context_precision))
-            if average_context_recall is not None:
-                update_expr_parts.append("average_context_recall = :cr")
-                expr_values[":cr"] = Decimal(str(average_context_recall))
-            if average_response_relevancy is not None:
-                update_expr_parts.append("average_response_relevancy = :rr")
-                expr_values[":rr"] = Decimal(str(average_response_relevancy))
-            if average_faithfulness is not None:
-                update_expr_parts.append("average_faithfulness = :fa")
-                expr_values[":fa"] = Decimal(str(average_faithfulness))
-
-            summaries_table.update_item(
-                Key={"PartitionKey": pk, "Timestamp": ts},
-                UpdateExpression=", ".join(update_expr_parts),
-                ExpressionAttributeValues=expr_values,
-                ExpressionAttributeNames=expr_names,
-            )
-            logger.info(f"Updated existing placeholder for {evaluation_id} at Timestamp={ts}")
-        else:
-            timestamp = str(datetime.now())
-            summary_item = {
-                'EvaluationId': evaluation_id,
-                'Timestamp': timestamp,
-                'average_similarity': Decimal(str(average_similarity)),
-                'average_relevance': Decimal(str(average_relevance)),
-                'average_correctness': Decimal(str(average_correctness)),
-                'total_questions': total_questions,
-                'evaluation_name': evaluation_name.strip() if evaluation_name else None,
-                'test_cases_key': test_cases_key,
-                'PartitionKey': "Evaluation",
-                'status': 'COMPLETED',
-            }
-            if average_context_precision is not None:
-                summary_item['average_context_precision'] = Decimal(str(average_context_precision))
-            if average_context_recall is not None:
-                summary_item['average_context_recall'] = Decimal(str(average_context_recall))
-            if average_response_relevancy is not None:
-                summary_item['average_response_relevancy'] = Decimal(str(average_response_relevancy))
-            if average_faithfulness is not None:
-                summary_item['average_faithfulness'] = Decimal(str(average_faithfulness))
-            summary_item = {k: v for k, v in summary_item.items() if v is not None}
-            summaries_table.put_item(Item=summary_item)
-            logger.info(f"Created new summary for {evaluation_id}")
-
-        # Add detailed results (batch write)
-        with results_table.batch_writer() as batch:
-            for idx, result in enumerate(detailed_results):
-                result_item = {
-                    'EvaluationId': evaluation_id,
-                    'QuestionId': str(idx),
-                    'question': result['question'],
-                    'expected_response': result['expectedResponse'],
-                    'actual_response': result['actualResponse'],
-                    'similarity': Decimal(str(result['similarity'])),
-                    'relevance': Decimal(str(result['relevance'])),
-                    'correctness': Decimal(str(result['correctness'])),
-                    'test_cases_key': test_cases_key
-                }
-                
-                # Add RAG metrics if they exist in the detailed results
-                if 'context_precision' in result:
-                    result_item['context_precision'] = Decimal(str(result['context_precision']))
-                if 'context_recall' in result:
-                    result_item['context_recall'] = Decimal(str(result['context_recall']))
-                if 'response_relevancy' in result:
-                    result_item['response_relevancy'] = Decimal(str(result['response_relevancy']))
-                if 'faithfulness' in result:
-                    result_item['faithfulness'] = Decimal(str(result['faithfulness']))
-                if 'retrieved_context' in result:
-                    result_item['retrieved_context'] = result['retrieved_context']
-                
-                batch.put_item(Item=result_item)
-
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET',
-            },
-            'body': json.dumps({
-                'message': 'Evaluation added successfully',
-                'evaluation_id': evaluation_id
-                })
-        }
-    except ClientError as error:
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET',
-            },
-            'body': json.dumps(str(error))
-        }
-    
-def read_detailed_results_from_s3(detailed_results_s3_key):
-    try:
-        s3_client = boto3.client('s3')
-        # First try to read from the EVAL_RESULTS_BUCKET
-        try:
-            response = s3_client.get_object(Bucket=EVAL_RESULTS_BUCKET, Key=detailed_results_s3_key)
-            content = response['Body'].read().decode('utf-8')
-            return json.loads(content)
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'NoSuchKey' and EVAL_RESULTS_BUCKET != TEST_CASES_BUCKET:
-                # If the key doesn't exist in EVAL_RESULTS_BUCKET, try TEST_CASES_BUCKET as a fallback
-                response = s3_client.get_object(Bucket=TEST_CASES_BUCKET, Key=detailed_results_s3_key)
-                content = response['Body'].read().decode('utf-8')
-                return json.loads(content)
-            else:
-                # Re-raise the error if it's not a NoSuchKey error
-                raise
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        error_message = e.response['Error']['Message']
-        raise Exception(f"Failed to read detailed results from S3: {error_code} - {error_message}. Primary bucket: {EVAL_RESULTS_BUCKET}, Key: {detailed_results_s3_key}")
-    except json.JSONDecodeError as e:
-        raise Exception(f"Failed to decode JSON from S3 object. Bucket: {EVAL_RESULTS_BUCKET}, Key: {detailed_results_s3_key}. Error: {str(e)}")
-    
-def lambda_handler(event, context):
-    # Get headers from request or use default
-    headers = {
-        'Access-Control-Allow-Origin': '*',  # Updated to allow all origins for testing
-        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-        'Access-Control-Allow-Methods': 'OPTIONS,POST,GET',
-        'Access-Control-Allow-Credentials': 'true'
+    error_message = error_message or "Evaluation failed"
+    if len(error_message) > MAX_ERROR_LENGTH:
+        error_message = error_message[:MAX_ERROR_LENGTH] + "...(truncated)"
+    existing = _find_existing_placeholder(evaluation_id)
+    if existing:
+        update_expr_parts = ["#st = :failed", "error_message = :em"]
+        expr_values = {":failed": "FAILED", ":em": error_message}
+        if evaluation_name and evaluation_name.strip():
+            update_expr_parts.append("evaluation_name = :en")
+            expr_values[":en"] = evaluation_name.strip()
+        summaries_table.update_item(
+            Key={"PartitionKey": existing["PartitionKey"], "Timestamp": existing["Timestamp"]},
+            UpdateExpression="SET " + ", ".join(update_expr_parts),
+            ExpressionAttributeValues=expr_values,
+            ExpressionAttributeNames={"#st": "status"},
+        )
+        logger.info(f"Marked evaluation {evaluation_id} as FAILED")
+    else:
+        # No placeholder found (e.g. split failed very early) -- create a minimal row.
+        summaries_table.put_item(Item={
+            "PartitionKey": "Evaluation",
+            "Timestamp": str(datetime.now()),
+            "EvaluationId": evaluation_id,
+            "evaluation_name": (evaluation_name or "").strip() or "Unnamed",
+            "status": "FAILED",
+            "error_message": error_message,
+        })
+        logger.info(f"Created FAILED summary row for {evaluation_id}")
+    return {
+        "statusCode": 200,
+        "headers": HEADERS,
+        "body": json.dumps({"message": "Evaluation marked as failed", "evaluation_id": evaluation_id}),
+        "evaluation_id": evaluation_id,
     }
-    
-    # Handle OPTIONS request if needed
-    if event.get('httpMethod') == 'OPTIONS':
-        return {
-            'statusCode': 200,
-            'headers': headers,
-            'body': json.dumps({'message': 'CORS preflight request successful'})
+
+
+def _result_item(evaluation_id, idx, result, test_cases_key):
+    item = {
+        'EvaluationId': evaluation_id,
+        'QuestionId': str(idx),
+        'question': result.get('question', ''),
+        'expected_response': result.get('expectedResponse', ''),
+        'actual_response': result.get('actualResponse', ''),
+        'test_cases_key': test_cases_key,
+    }
+    for name in RESULT_METRICS:
+        if result.get(name) is not None:
+            item[name] = _decimal(result[name])
+    if result.get('failed'):
+        item['failed'] = True
+        item['error'] = str(result.get('error', ''))[:MAX_ERROR_LENGTH]
+    if result.get('retrieved_context'):
+        item['retrieved_context'] = result['retrieved_context']
+    return item
+
+
+def add_evaluation(evaluation_id, evaluation_name, metrics, total_questions, failed_questions,
+                   detailed_results, test_cases_key):
+    """Write the summary row (updating the placeholder when present) and per-question rows."""
+    present = {name: value for name, value in metrics.items() if value is not None}
+    existing = _find_existing_placeholder(evaluation_id)
+
+    if existing:
+        update_expr_parts = ["total_questions = :tq", "failed_questions = :fq", "#st = :done"]
+        expr_values = {":tq": total_questions, ":fq": failed_questions, ":done": "COMPLETED"}
+        for i, (name, value) in enumerate(present.items()):
+            update_expr_parts.append(f"{name} = :m{i}")
+            expr_values[f":m{i}"] = _decimal(value)
+        if evaluation_name and evaluation_name.strip():
+            update_expr_parts.append("evaluation_name = :en")
+            expr_values[":en"] = evaluation_name.strip()
+        if test_cases_key:
+            update_expr_parts.append("test_cases_key = :tk")
+            expr_values[":tk"] = test_cases_key
+        summaries_table.update_item(
+            Key={"PartitionKey": existing["PartitionKey"], "Timestamp": existing["Timestamp"]},
+            UpdateExpression="SET " + ", ".join(update_expr_parts),
+            ExpressionAttributeValues=expr_values,
+            ExpressionAttributeNames={"#st": "status"},
+        )
+        logger.info(f"Updated existing placeholder for {evaluation_id} at Timestamp={existing['Timestamp']}")
+    else:
+        summary_item = {
+            'EvaluationId': evaluation_id,
+            'Timestamp': str(datetime.now()),
+            'total_questions': total_questions,
+            'failed_questions': failed_questions,
+            'evaluation_name': evaluation_name.strip() if evaluation_name else None,
+            'test_cases_key': test_cases_key,
+            'PartitionKey': "Evaluation",
+            'status': 'COMPLETED',
+            **{name: _decimal(value) for name, value in present.items()},
         }
-    
+        summaries_table.put_item(Item={k: v for k, v in summary_item.items() if v is not None})
+        logger.info(f"Created new summary for {evaluation_id}")
+
+    with results_table.batch_writer() as batch:
+        for idx, result in enumerate(detailed_results):
+            batch.put_item(Item=_result_item(evaluation_id, idx, result, test_cases_key))
+
+
+def read_detailed_results_from_s3(detailed_results_s3_key):
+    s3_client = boto3.client('s3')
     try:
-        # Extract data from event
-        if isinstance(event, dict) and 'body' in event and event['body']:
-            data = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-        else:
-            data = event
-        
-        # Log received data
-        logger.info(f"Received data: {json.dumps(data)}")
-            
-        evaluation_id = data.get('evaluation_id')
-        if not evaluation_id:
-            logger.error("Missing evaluation_id in input data")
-            return {
-                'statusCode': 400,
-                'headers': headers,
-                'body': json.dumps({'message': 'Missing evaluation_id'}),
-                'evaluation_id': None  # Add this to ensure the Step Function can continue
-            }
+        response = s3_client.get_object(Bucket=EVAL_RESULTS_BUCKET, Key=detailed_results_s3_key)
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'NoSuchKey' or EVAL_RESULTS_BUCKET == TEST_CASES_BUCKET:
+            raise
+        # Older runs wrote aggregated results to the test cases bucket.
+        response = s3_client.get_object(Bucket=TEST_CASES_BUCKET, Key=detailed_results_s3_key)
+    return json.loads(response['Body'].read().decode('utf-8'))
 
-        # Error-handling branch: the Step Functions failure path invokes this Lambda with
-        # mark_failed=True to record the failure (status=FAILED) so the run does not keep
-        # showing as RUNNING in the admin UI.
-        if data.get('mark_failed'):
-            return mark_evaluation_failed(
-                evaluation_id,
-                data.get('evaluation_name'),
-                data.get('error_message'),
-                headers,
-            )
 
-        # Check if we received an error status from previous step
-        if data.get('statusCode') == 500:
-            logger.error(f"Error received from previous step: {data.get('error', 'Unknown error')}")
-            return {
-                'statusCode': 500,
-                'headers': headers,
-                'body': json.dumps({
-                    'message': 'Error received from previous step',
-                    'error': data.get('error', 'Unknown error')
-                }),
-                'evaluation_id': evaluation_id  # Ensure the evaluation_id is returned
-            }
-        
-        evaluation_name = data.get('evaluation_name', f"Evaluation on {str(datetime.now())}")
-        average_similarity = data.get('average_similarity', 0)
-        average_relevance = data.get('average_relevance', 0)
-        average_correctness = data.get('average_correctness', 0)
-        detailed_results_s3_key = data.get('detailed_results_s3_key')
-        total_questions = data.get('total_questions', 0)
-        test_cases_key = data.get('test_cases_key')
-        
-        # Get RAG metrics if available
-        average_context_precision = data.get('average_context_precision', 0)
-        average_context_recall = data.get('average_context_recall', 0)
-        average_response_relevancy = data.get('average_response_relevancy', 0)
-        average_faithfulness = data.get('average_faithfulness', 0)
+def _parse_event(event):
+    if isinstance(event, dict) and event.get('body'):
+        return json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+    return event
 
-        # Validate required fields
-        required_fields = [evaluation_id, detailed_results_s3_key, test_cases_key]
-        if not all(required_fields):
-            missing_fields = [field for field, value in {
-                'evaluation_id': evaluation_id,
-                'detailed_results_s3_key': detailed_results_s3_key,
-                'test_cases_key': test_cases_key
-            }.items() if not value]
-            
-            logger.error(f"Missing required fields: {', '.join(missing_fields)}")
-            return {
-                'statusCode': 400,
-                'headers': headers,
-                'body': json.dumps({
-                    'message': 'Missing required parameters for adding evaluation',
-                    'missing_fields': missing_fields
-                }),
-                'evaluation_id': evaluation_id  # Ensure the evaluation_id is returned
-            }
-        
-        try:
-            # Read detailed results
-            logger.info(f"Retrieving detailed results from S3: {detailed_results_s3_key}")
-            detailed_results = read_detailed_results_from_s3(detailed_results_s3_key)
-            
-            # Add evaluation to DynamoDB
-            logger.info(f"Saving evaluation {evaluation_id} with {len(detailed_results)} results to DynamoDB")
-            response = add_evaluation(
-                evaluation_id,
-                evaluation_name,
-                average_similarity,
-                average_relevance,
-                average_correctness,
-                total_questions,
-                detailed_results, 
-                test_cases_key,
-                average_context_precision,
-                average_context_recall,
-                average_response_relevancy,
-                average_faithfulness
-            )
-            
-            logger.info(f"Successfully saved evaluation {evaluation_id} to DynamoDB")
-            # Return evaluation_id in the response for Step Function to continue
-            return {
-                'statusCode': 200,
-                'headers': headers,
-                'body': json.dumps({
-                    'message': 'Evaluation added successfully',
-                    'evaluation_id': evaluation_id
-                }),
-                'evaluation_id': evaluation_id  # Add evaluation_id directly at the top level for Step Function
-            }
-        except Exception as e:
-            logger.error(f"Error processing evaluation results: {str(e)}")
-            return {
-                'statusCode': 500,
-                'headers': headers,
-                'body': json.dumps({
-                    'message': 'Error processing evaluation results',
-                    'error': str(e),
-                    'evaluation_id': evaluation_id
-                }),
-                'evaluation_id': evaluation_id  # Add evaluation_id directly at the top level for Step Function
-            }
-    except Exception as e:
-        # Get evaluation_id from event if possible, even in case of error
-        evaluation_id = None
-        if isinstance(event, dict):
-            evaluation_id = event.get('evaluation_id')
-        
-        logger.error(f"General error in lambda_handler: {str(e)}")
-        return {
-            'statusCode': 500,
-            'headers': headers,
-            'body': json.dumps({
-                'message': 'Internal server error',
-                'error': str(e),
-                'summaries_table': EVALUATION_SUMMARIES_TABLE,
-                'results_table': EVALUATION_RESULTS_TABLE
-            }),
-            'evaluation_id': evaluation_id  # Include evaluation_id even in case of error
-        }
+
+def lambda_handler(event, context):
+    """Save step of the evaluation state machine (and its failure branch).
+
+    Errors raise instead of returning a 500-shaped dict: Step Functions treats a
+    returned dict as success, which used to let a failed save end the run as
+    SUCCEEDED with no results stored.
+    """
+    data = _parse_event(event)
+    logger.info(f"Received data: {json.dumps(data, default=str)}")
+
+    evaluation_id = data.get('evaluation_id')
+    if not evaluation_id:
+        raise ValueError("Missing evaluation_id")
+
+    # Error-handling branch: the Step Functions failure path invokes this Lambda with
+    # mark_failed=True to record the failure (status=FAILED).
+    if data.get('mark_failed'):
+        return mark_evaluation_failed(evaluation_id, data.get('evaluation_name'), data.get('error_message'))
+
+    detailed_results_s3_key = data.get('detailed_results_s3_key')
+    test_cases_key = data.get('test_cases_key')
+    missing = [name for name, value in (
+        ('detailed_results_s3_key', detailed_results_s3_key),
+        ('test_cases_key', test_cases_key),
+    ) if not value]
+    if missing:
+        raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
+    evaluation_name = data.get('evaluation_name', f"Evaluation on {str(datetime.now())}")
+    metrics = {name: data.get(name) for name in SUMMARY_METRICS}
+    total_questions = int(data.get('total_questions', 0) or 0)
+    failed_questions = int(data.get('failed_questions', 0) or 0)
+
+    logger.info(f"Retrieving detailed results from S3: {detailed_results_s3_key}")
+    detailed_results = read_detailed_results_from_s3(detailed_results_s3_key)
+
+    logger.info(f"Saving evaluation {evaluation_id} with {len(detailed_results)} results to DynamoDB")
+    add_evaluation(
+        evaluation_id,
+        evaluation_name,
+        metrics,
+        total_questions,
+        failed_questions,
+        detailed_results,
+        test_cases_key,
+    )
+    logger.info(f"Successfully saved evaluation {evaluation_id} to DynamoDB")
+    return {
+        'statusCode': 200,
+        'headers': HEADERS,
+        'body': json.dumps({'message': 'Evaluation added successfully', 'evaluation_id': evaluation_id}),
+        'evaluation_id': evaluation_id,
+    }
