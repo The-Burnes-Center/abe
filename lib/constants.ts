@@ -12,6 +12,11 @@ export const stackName =
 /** Prompt-registry partition key shared by the chat Lambda and the eval generator (e.g. "ABE_CHAT"). */
 export const PROMPT_FAMILY = `${brand.slug.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_CHAT`;
 
+/** CloudWatch namespace for custom metrics the chat Lambda emits via EMF (e.g. "ABE/Chat"). */
+export const METRICS_NAMESPACE = `${brand.slug.toUpperCase()}/Chat`;
+/** Separate namespace for the eval generator so eval runs never trip chat alarms. */
+export const EVAL_METRICS_NAMESPACE = `${brand.slug.toUpperCase()}/Eval`;
+
 /** Cognito group whose members get the admin UI and admin APIs (read from `cognito:groups`). */
 export const ADMIN_GROUP_NAME = "Admin";
 

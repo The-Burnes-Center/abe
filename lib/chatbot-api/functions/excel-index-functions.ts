@@ -17,7 +17,8 @@ import { Table } from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { S3EventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { anthropicInvokeResources, ModelIds } from '../../shared/bedrock';
-import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, pythonBundledCode } from '../../shared/lambda-defaults';
+import { ADMIN_GROUP_NAME } from '../../constants';
+import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, nodeCode, pythonBundledCode } from '../../shared/lambda-defaults';
 
 export interface ExcelIndexFunctionsProps {
   readonly pythonCommonLayer: lambda.ILayerVersion;
@@ -105,9 +106,10 @@ export class ExcelIndexFunctions extends Construct {
     const excelIndexApiFunction = new lambda.Function(scope, 'ExcelIndexApiFunction', {
       ...LAMBDA_DEFAULTS,
       runtime: NODE_RUNTIME,
-      code: lambda.Code.fromAsset(path.join(__dirname, 'excel-index/api')),
+      code: nodeCode(path.join(__dirname, 'excel-index/api')),
       handler: 'index.handler',
       environment: {
+        ADMIN_GROUP_NAME,
         QUERY_FUNCTION: excelIndexQueryFunction.functionName,
         BUCKET: props.contractIndexBucket.bucketName,
         INDEX_REGISTRY_TABLE: props.indexRegistryTable.tableName,
@@ -132,7 +134,8 @@ export class ExcelIndexFunctions extends Construct {
     }));
     excelIndexApiFunction.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['dynamodb:Scan', 'dynamodb:BatchWriteItem'],
+      // Query finds an index's rows; BatchWriteItem deletes them.
+      actions: ['dynamodb:Query', 'dynamodb:BatchWriteItem'],
       resources: [props.excelIndexDataTable.tableArn],
     }));
     this.excelIndexApiFunction = excelIndexApiFunction;

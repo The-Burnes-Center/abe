@@ -1,3 +1,4 @@
+import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 
@@ -17,6 +18,18 @@ export const LAMBDA_DEFAULTS: Partial<lambda.FunctionProps> = {
 
 export const NODE_RUNTIME = lambda.Runtime.NODEJS_22_X;
 export const PYTHON_RUNTIME = lambda.Runtime.PYTHON_3_12;
+
+/**
+ * Node Lambda source. Symlinks are followed so code shared by symlink (e.g.
+ * shared-node/auth.mjs, generate-response/chat -> websocket-chat) is copied
+ * into the package as real files. Unit tests are left out.
+ */
+export function nodeCode(dir: string): lambda.Code {
+  return lambda.Code.fromAsset(dir, {
+    followSymlinks: cdk.SymlinkFollowMode.ALWAYS,
+    exclude: ['*.test.mjs', '*.test.js', '__tests__'],
+  });
+}
 
 /** Test files and caches never ship inside a deployed Lambda package. */
 const PYTHON_ASSET_EXCLUDE = ['test_*.py', '*_test.py', 'tests', 'conftest.py', '__pycache__', '*.pyc', '.pytest_cache'];

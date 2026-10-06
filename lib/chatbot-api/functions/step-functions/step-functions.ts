@@ -11,9 +11,9 @@ import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 import { StateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import * as stepfunctions from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
-import { BRAND_PROMPT_ENV, PROMPT_FAMILY } from '../../../constants';
-import { anthropicInvokeResources, ModelIds } from '../../../shared/bedrock';
-import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, pythonCode } from '../../../shared/lambda-defaults';
+import { ADMIN_GROUP_NAME, BRAND_PROMPT_ENV, EVAL_METRICS_NAMESPACE, PROMPT_FAMILY } from '../../../constants';
+import { anthropicInvokeResources, guardrailEnv, ModelIds } from '../../../shared/bedrock';
+import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, nodeCode, pythonCode } from '../../../shared/lambda-defaults';
 
 interface StepFunctionsStackProps {
     readonly knowledgeBase : bedrock.CfnKnowledgeBase;
@@ -25,7 +25,16 @@ interface StepFunctionsStackProps {
     /** Same function the chat Lambda calls for the fetch_metadata tool. */
     readonly metadataRetrievalFunction : lambda.IFunction;
     readonly models : ModelIds;
+    readonly knowledgeBucket : s3.Bucket;
+    readonly excelIndexQueryFunction : lambda.IFunction;
+    readonly indexRegistryTable : Table;
 }
+
+// The generator runs the full production agent loop for one question, which can
+// take as long as a chat turn, so it gets the same 15-minute ceiling as chat.
+// The Docker eval Lambda budgets each question from its own remaining time.
+const GENERATE_RESPONSE_TIMEOUT = cdk.Duration.minutes(15);
+const EVAL_RUN_TIMEOUT = cdk.Duration.hours(6);
 
 export class StepFunctionsStack extends Construct {
     public readonly startLlmEvalStateMachineFunction: lambda.Function;
@@ -112,21 +121,27 @@ export class StepFunctionsStack extends Construct {
         const generateResponseFunction = new lambda.Function(this, 'GenerateResponseFunction', {
             ...LAMBDA_DEFAULTS,
             runtime: NODE_RUNTIME,
-            code: lambda.Code.fromAsset(path.join(__dirname, 'llm-evaluation/generate-response')),
+            code: nodeCode(path.join(__dirname, 'llm-evaluation/generate-response')),
             handler: 'index.handler',
             memorySize: 512,
-            // Mirrors the chat Lambda's prompt inputs so evals score the
-            // production prompt: same prompt family (read-only), same model,
-            // same brand values.
+            // Mirrors the chat Lambda's environment so evals score the
+            // production agent: same prompt family (read-only), model,
+            // guardrail, tools and brand values.
             environment: {
                 'KB_ID': props.knowledgeBase.attrKnowledgeBaseId,
+                'KNOWLEDGE_BUCKET': props.knowledgeBucket.bucketName,
                 'METADATA_RETRIEVAL_FUNCTION': props.metadataRetrievalFunction.functionArn,
+                'EXCEL_INDEX_QUERY_FUNCTION': props.excelIndexQueryFunction.functionName,
+                'INDEX_REGISTRY_TABLE': props.indexRegistryTable.tableName,
                 'PRIMARY_MODEL_ID': props.models.primary,
+                'FAST_MODEL_ID': props.models.fast,
+                ...guardrailEnv(),
                 'PROMPT_REGISTRY_TABLE': props.promptRegistryTable.tableName,
                 'PROMPT_FAMILY': PROMPT_FAMILY,
+                'METRICS_NAMESPACE': EVAL_METRICS_NAMESPACE,
                 ...BRAND_PROMPT_ENV,
             },
-            timeout: cdk.Duration.seconds(60),
+            timeout: GENERATE_RESPONSE_TIMEOUT,
         });
         generateResponseFunction.addToRolePolicy(new iam.PolicyStatement({
             effect: iam.Effect.ALLOW,
@@ -156,6 +171,18 @@ export class StepFunctionsStack extends Construct {
             ]
         }));
         props.metadataRetrievalFunction.grantInvoke(generateResponseFunction);
+        props.excelIndexQueryFunction.grantInvoke(generateResponseFunction);
+        generateResponseFunction.addToRolePolicy(new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: ['dynamodb:Query'],
+            resources: [props.indexRegistryTable.tableArn],
+        }));
+        // Source links: the chat tools presign knowledge-bucket objects.
+        generateResponseFunction.addToRolePolicy(new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: ['s3:GetObject'],
+            resources: [props.knowledgeBucket.bucketArn + '/*'],
+        }));
         this.generateResponseFunction = generateResponseFunction;
 
         const llmEvalFunction = new lambda.DockerImageFunction(this, 'LlmEvaluationFunction', {
@@ -356,7 +383,6 @@ export class StepFunctionsStack extends Construct {
                 'evaluation_id.$': '$.evaluation_id',
                 'evaluation_name.$': '$.evaluation_name',
                 'average_similarity.$': '$.average_similarity',
-                'average_relevance.$': '$.average_relevance',
                 'average_correctness.$': '$.average_correctness',
                 'total_questions.$': '$.total_questions',
                 'detailed_results_s3_key.$': '$.detailed_results_s3_key',
@@ -364,7 +390,8 @@ export class StepFunctionsStack extends Construct {
                 'average_context_precision.$': '$.average_context_precision',
                 'average_context_recall.$': '$.average_context_recall',
                 'average_response_relevancy.$': '$.average_response_relevancy',
-                'average_faithfulness.$': '$.average_faithfulness'
+                'average_faithfulness.$': '$.average_faithfulness',
+                'failed_questions.$': '$.failed_questions',
             }),
             resultPath: '$.saveResult',
             retryOnServiceExceptions: true,
@@ -413,7 +440,7 @@ export class StepFunctionsStack extends Construct {
 
         const llmEvalStateMachine = new stepfunctions.StateMachine(this, 'EvaluationStateMachine', {
             definitionBody: stepfunctions.DefinitionBody.fromChainable(definition),
-            timeout: cdk.Duration.hours(1),
+            timeout: EVAL_RUN_TIMEOUT,
             tracingEnabled: true,
             logs: {
                 destination: sfnLogGroup,
@@ -425,9 +452,10 @@ export class StepFunctionsStack extends Construct {
         const startLlmEvalStateMachineFunction = new lambda.Function(this, 'StartLlmEvalStateMachineFunction', {
             ...LAMBDA_DEFAULTS,
             runtime: NODE_RUNTIME,
-            code: lambda.Code.fromAsset(path.join(__dirname, 'llm-evaluation/start-llm-eval')),
+            code: nodeCode(path.join(__dirname, 'llm-evaluation/start-llm-eval')),
             handler: 'index.handler',
             environment: {
+                "ADMIN_GROUP_NAME": ADMIN_GROUP_NAME,
                 "STATE_MACHINE_ARN": this.llmEvalStateMachine.stateMachineArn,
                 "EVAL_SUMMARIES_TABLE": props.evalSummariesTable.tableName,
                 "TEST_CASES_BUCKET": props.evalTestCasesBucket.bucketName,

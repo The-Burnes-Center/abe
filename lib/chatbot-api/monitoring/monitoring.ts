@@ -6,6 +6,7 @@
  * Alarms (all fire to the SNS topic):
  *   Lambda       — errors >= 3 and throttles >= 1 per function (5-min windows)
  *   Chat Lambda  — avg duration > 60s (dedicated, since it has the longest timeout)
+ *   Chat         — any SessionSaveFailures (EMF metric) in 5 min
  *   PreSignUp    — errors/rejections >= 5 (failed trigger or a burst of refused sign-ups)
  *   DynamoDB     — read/write throttles >= 5 per table
  *   HTTP API     — 5xx >= 10, 4xx >= 50
@@ -30,6 +31,7 @@ import * as sqs from "aws-cdk-lib/aws-sqs";
 import { aws_apigatewayv2 as apigwv2 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { NagSuppressions } from "cdk-nag";
+import { METRICS_NAMESPACE } from "../../constants";
 
 export interface MonitoringProps {
   readonly lambdaFunctions: lambda.Function[];
@@ -118,6 +120,24 @@ export class MonitoringConstruct extends Construct {
       alarmDescription: "Chat Lambda avg duration >60s — potential upstream latency issue",
     });
     chatDurationAlarm.addAlarmAction(alarmAction);
+
+    // The chat Lambda emits SessionSaveFailures (Embedded Metric Format, no
+    // dimensions) when an answer was streamed but could not be saved to the
+    // session history: the user saw it, but it will be missing on reload.
+    const sessionSaveAlarm = new cloudwatch.Alarm(this, "ChatSessionSaveFailures", {
+      metric: new cloudwatch.Metric({
+        namespace: METRICS_NAMESPACE,
+        metricName: "SessionSaveFailures",
+        period: cdk.Duration.minutes(5),
+        statistic: "Sum",
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: "Chat: an answer could not be saved to session history",
+    });
+    sessionSaveAlarm.addAlarmAction(alarmAction);
 
     // A rejected sign-up surfaces as a PreSignUp invocation error, so this
     // covers both a broken trigger (which would block admin invites too) and

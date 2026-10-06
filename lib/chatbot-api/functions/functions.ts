@@ -50,9 +50,9 @@ import { S3EventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { SyncFunctions } from './sync-functions';
 import { ExcelIndexFunctions } from './excel-index-functions';
-import { ADMIN_GROUP_NAME, BRAND_PROMPT_ENV, BRAND_TIMEZONE, PROMPT_FAMILY } from '../../constants';
-import { anthropicInvokeResources, ModelIds, modelIds } from '../../shared/bedrock';
-import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, pythonBundledCode, pythonCode } from '../../shared/lambda-defaults';
+import { ADMIN_GROUP_NAME, BRAND_PROMPT_ENV, BRAND_TIMEZONE, METRICS_NAMESPACE, PROMPT_FAMILY } from '../../constants';
+import { anthropicInvokeResources, guardrailEnv, ModelIds, modelIds } from '../../shared/bedrock';
+import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, nodeCode, pythonBundledCode, pythonCode } from '../../shared/lambda-defaults';
 
 interface LambdaFunctionStackProps {
   readonly wsApiEndpoint: string;
@@ -158,19 +158,19 @@ export class LambdaFunctionStack extends Construct {
         const websocketAPIFunction = new lambda.Function(scope, 'ChatHandlerFunction', {
           ...LAMBDA_DEFAULTS,
           runtime: NODE_RUNTIME,
-          code: lambda.Code.fromAsset(path.join(__dirname, 'websocket-chat')),
+          code: nodeCode(path.join(__dirname, 'websocket-chat')),
           handler: 'index.handler',
           memorySize: 512,
           environment: {
             "WEBSOCKET_API_ENDPOINT": props.wsApiEndpoint.replace("wss", "https"),
             'KB_ID': props.knowledgeBase.attrKnowledgeBaseId,
-            'GUARDRAIL_ID': process.env.GUARDRAIL_ID || '',
-            'GUARDRAIL_VERSION': process.env.GUARDRAIL_VERSION || '1',
+            ...guardrailEnv(),
             'PRIMARY_MODEL_ID': models.primary,
             'FAST_MODEL_ID': models.fast,
             'PROMPT_REGISTRY_TABLE': props.promptRegistryTable.tableName,
             'RESPONSE_TRACE_TABLE': props.responseTraceTable.tableName,
             'PROMPT_FAMILY': PROMPT_FAMILY,
+            'METRICS_NAMESPACE': METRICS_NAMESPACE,
             ...BRAND_PROMPT_ENV,
           },
           // 15 min is the AWS Lambda max. Long agentic loops (e.g. exhaustive
@@ -253,6 +253,9 @@ export class LambdaFunctionStack extends Construct {
         "PROMPT_FAMILY": PROMPT_FAMILY,
         "FEEDBACK_ANALYSIS_MODEL_ID": models.fast,
         "PROMPT_REWRITE_MODEL_ID": models.primary,
+        "PRIMARY_MODEL_ID": models.primary,
+        "FAST_MODEL_ID": models.fast,
+        ...BRAND_PROMPT_ENV,
         "FEEDBACK_TO_TEST_LIBRARY_QUEUE_URL": props.feedbackToTestLibraryQueue?.queueUrl ?? "",
       },
       timeout: cdk.Duration.seconds(30),
@@ -355,9 +358,10 @@ export class LambdaFunctionStack extends Construct {
     const getS3APIHandlerFunction = new lambda.Function(scope, 'GetS3FilesHandlerFunction', {
       ...LAMBDA_DEFAULTS,
       runtime: NODE_RUNTIME,
-      code: lambda.Code.fromAsset(path.join(__dirname, 'knowledge-management/get-s3')),
+      code: nodeCode(path.join(__dirname, 'knowledge-management/get-s3')),
       handler: 'index.handler',
       environment: {
+        "ADMIN_GROUP_NAME": ADMIN_GROUP_NAME,
         "BUCKET": props.knowledgeBucket.bucketName,
         // Used to hydrate the per-document SyncStatus column in the admin
         // documents table via ListKnowledgeBaseDocuments.
@@ -417,9 +421,10 @@ export class LambdaFunctionStack extends Construct {
     const uploadS3APIHandlerFunction = new lambda.Function(scope, 'UploadS3FilesHandlerFunction', {
       ...LAMBDA_DEFAULTS,
       runtime: NODE_RUNTIME,
-      code: lambda.Code.fromAsset(path.join(__dirname, 'knowledge-management/upload-s3')),
+      code: nodeCode(path.join(__dirname, 'knowledge-management/upload-s3')),
       handler: 'index.handler',
       environment: {
+        "ADMIN_GROUP_NAME": ADMIN_GROUP_NAME,
         "BUCKET": props.knowledgeBucket.bucketName,
       },
       timeout: cdk.Duration.seconds(30),
@@ -659,7 +664,7 @@ websocketAPIFunction.addToRolePolicy(new iam.PolicyStatement({
 const sourcePresignFunction = new lambda.Function(scope, 'SourcePresignFunction', {
   ...LAMBDA_DEFAULTS,
   runtime: NODE_RUNTIME,
-  code: lambda.Code.fromAsset(path.join(__dirname, 'source-presign')),
+  code: nodeCode(path.join(__dirname, 'source-presign')),
   handler: 'index.handler',
   environment: {
     "BUCKET": props.knowledgeBucket.bucketName,
@@ -684,7 +689,7 @@ this.sourcePresignFunction = sourcePresignFunction;
 const transcribePresignFunction = new lambda.Function(scope, 'TranscribePresignFunction', {
   ...LAMBDA_DEFAULTS,
   runtime: NODE_RUNTIME,
-  code: lambda.Code.fromAsset(path.join(__dirname, 'transcribe-presign')),
+  code: nodeCode(path.join(__dirname, 'transcribe-presign')),
   handler: 'index.handler',
   environment: {
     "LANGUAGE_CODE": "en-US",
@@ -732,6 +737,7 @@ userAdminFunction.addToRolePolicy(new iam.PolicyStatement({
     'cognito-idp:AdminEnableUser',
     'cognito-idp:AdminDeleteUser',
     'cognito-idp:AdminListGroupsForUser',
+    'cognito-idp:AdminUserGlobalSignOut',
   ],
   resources: [props.userPool.userPoolArn],
 }));

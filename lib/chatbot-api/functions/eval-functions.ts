@@ -24,7 +24,8 @@ import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { NagSuppressions } from 'cdk-nag';
 import { StepFunctionsStack } from './step-functions/step-functions';
 import { anthropicInvokeResources, ModelIds } from '../../shared/bedrock';
-import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, pythonCode } from '../../shared/lambda-defaults';
+import { ADMIN_GROUP_NAME, BRAND_PROMPT_ENV } from '../../constants';
+import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, nodeCode, pythonCode } from '../../shared/lambda-defaults';
 
 export interface EvalFunctionsProps {
   readonly pythonCommonLayer: lambda.ILayerVersion;
@@ -38,6 +39,10 @@ export interface EvalFunctionsProps {
   readonly evalResultsBucket: s3.Bucket;
   readonly feedbackToTestLibraryQueue: sqs.Queue;
   readonly models: ModelIds;
+  /** Chat-tool dependencies: the eval generator runs the production agent loop. */
+  readonly knowledgeBucket: s3.Bucket;
+  readonly excelIndexQueryFunction: lambda.IFunction;
+  readonly indexRegistryTable: Table;
 }
 
 export class EvalFunctions extends Construct {
@@ -54,9 +59,10 @@ export class EvalFunctions extends Construct {
     const getS3TestCasesFunction = new lambda.Function(scope, 'GetS3TestCasesFilesHandlerFunction', {
       ...LAMBDA_DEFAULTS,
       runtime: NODE_RUNTIME,
-      code: lambda.Code.fromAsset(path.join(__dirname, 'llm-eval/S3-get-test-cases')),
+      code: nodeCode(path.join(__dirname, 'llm-eval/S3-get-test-cases')),
       handler: 'index.handler',
       environment: {
+        "ADMIN_GROUP_NAME": ADMIN_GROUP_NAME,
         "BUCKET": props.evalTestCasesBucket.bucketName,
       },
       timeout: cdk.Duration.seconds(30),
@@ -71,9 +77,10 @@ export class EvalFunctions extends Construct {
     const uploadS3TestCasesFunction = new lambda.Function(scope, 'UploadS3TestCasesFilesHandlerFunction', {
       ...LAMBDA_DEFAULTS,
       runtime: NODE_RUNTIME,
-      code: lambda.Code.fromAsset(path.join(__dirname, 'llm-eval/S3-upload')),
+      code: nodeCode(path.join(__dirname, 'llm-eval/S3-upload')),
       handler: 'index.handler',
       environment: {
+        "ADMIN_GROUP_NAME": ADMIN_GROUP_NAME,
         "BUCKET": props.evalTestCasesBucket.bucketName,
       },
       timeout: cdk.Duration.seconds(30),
@@ -137,6 +144,8 @@ export class EvalFunctions extends Construct {
       environment: {
         "TEST_LIBRARY_TABLE": props.testLibraryTable.tableName,
         "MODEL_ID": props.models.primary,
+        "PRIMARY_MODEL_ID": props.models.primary,
+        ...BRAND_PROMPT_ENV,
       },
       timeout: cdk.Duration.seconds(90),
       memorySize: 256,
@@ -165,6 +174,9 @@ export class EvalFunctions extends Construct {
       promptRegistryTable: props.promptRegistryTable,
       metadataRetrievalFunction: props.metadataRetrievalFunction,
       models: props.models,
+      knowledgeBucket: props.knowledgeBucket,
+      excelIndexQueryFunction: props.excelIndexQueryFunction,
+      indexRegistryTable: props.indexRegistryTable,
     });
 
     // The results handler polls run status and can stop a run: scope it to

@@ -34,6 +34,14 @@ export function modelIds(scope: IConstruct): ModelIds {
   };
 }
 
+/** Optional Bedrock Guardrail (GUARDRAIL_ID / GUARDRAIL_VERSION env at synth); empty id = disabled. */
+export function guardrailEnv(): Record<string, string> {
+  return {
+    GUARDRAIL_ID: process.env.GUARDRAIL_ID || '',
+    GUARDRAIL_VERSION: process.env.GUARDRAIL_VERSION || '1',
+  };
+}
+
 /**
  * IAM resources for invoking Anthropic models directly or through any
  * cross-region / global inference profile. The region wildcard is required

@@ -133,7 +133,9 @@ export class OpenSearchStack extends Construct {
         EMBEDDING_DIM: '1024',
         REGION: stack.region,
       },
-      timeout: cdk.Duration.seconds(120),
+      // The handler retries 403s/connection errors while the new collection's
+      // data access policy propagates, so give it room.
+      timeout: cdk.Duration.minutes(5),
     });
 
     indexFunctionRole.addToPolicy(new iam.PolicyStatement({
