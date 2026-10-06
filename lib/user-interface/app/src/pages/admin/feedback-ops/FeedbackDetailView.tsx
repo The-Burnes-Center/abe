@@ -20,7 +20,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { alpha, type Theme } from "@mui/material/styles";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import SkipNextIcon from "@mui/icons-material/SkipNext";
 import ThumbUpOutlinedIcon from "@mui/icons-material/ThumbUpOutlined";
@@ -38,6 +38,7 @@ import {
 import { ApiClient } from "../../../common/api-client/api-client";
 import AdminMarkdown from "../../../components/admin-markdown";
 import { useNotifications } from "../../../components/notif-manager";
+import { brand } from "../../../common/brand";
 
 const ISSUE_LABELS: Record<string, { label: string; color: "error" | "warning" | "info" | "default" }> = {
   retrieval_gap: { label: "Missing info", color: "warning" },
@@ -46,6 +47,15 @@ const ISSUE_LABELS: Record<string, { label: string; color: "error" | "warning" |
   answer_quality: { label: "Low quality", color: "warning" },
   product_bug: { label: "System bug", color: "error" },
 };
+
+/**
+ * Label color on a tinted `success.light` / `error.light` panel. The `.dark`
+ * shade reads well on the pale light-mode tint but is too dim on the dark-mode
+ * tint, where `.main` is the lighter, higher-contrast choice.
+ */
+function toneText(theme: Theme, tone: "success" | "error"): string {
+  return theme.palette.mode === "dark" ? theme.palette[tone].main : theme.palette[tone].dark;
+}
 
 interface FeedbackDetailViewProps {
   detail: FeedbackDetail | null;
@@ -234,7 +244,7 @@ export default function FeedbackDetailView(props: FeedbackDetailViewProps) {
 
           <Paper variant="outlined" sx={{ p: 2.5 }}>
             <Typography variant="overline" color="text.secondary" sx={{ fontSize: "0.6875rem", letterSpacing: 1 }}>
-              How ABE answered
+              How {brand.shortName} answered
             </Typography>
             <AdminMarkdown content={detail?.trace?.FinalAnswer || feedback.AnswerPreview || "N/A"} sx={{ mt: 0.5 }} />
           </Paper>
@@ -242,16 +252,22 @@ export default function FeedbackDetailView(props: FeedbackDetailViewProps) {
           {(feedback.WrongSnippet || feedback.ExpectedAnswer || feedback.UserComment) && (
             <Stack spacing={1.5}>
               {feedback.WrongSnippet && (
-                <Paper variant="outlined" sx={{ p: 2, bgcolor: "error.50", borderColor: "error.200" }}>
-                  <Typography variant="overline" color="error.dark" sx={{ fontSize: "0.6875rem" }}>
+                <Paper
+                  variant="outlined"
+                  sx={{ p: 2, bgcolor: "error.light", borderColor: (t) => alpha(t.palette.error.main, 0.4) }}
+                >
+                  <Typography variant="overline" sx={{ fontSize: "0.6875rem", color: (t) => toneText(t, "error") }}>
                     What was wrong
                   </Typography>
                   <AdminMarkdown content={feedback.WrongSnippet} compact sx={{ mt: 0.5 }} />
                 </Paper>
               )}
               {feedback.ExpectedAnswer && (
-                <Paper variant="outlined" sx={{ p: 2, bgcolor: "success.50", borderColor: "success.200" }}>
-                  <Typography variant="overline" color="success.dark" sx={{ fontSize: "0.6875rem" }}>
+                <Paper
+                  variant="outlined"
+                  sx={{ p: 2, bgcolor: "success.light", borderColor: (t) => alpha(t.palette.success.main, 0.4) }}
+                >
+                  <Typography variant="overline" sx={{ fontSize: "0.6875rem", color: (t) => toneText(t, "success") }}>
                     What they expected instead
                   </Typography>
                   <AdminMarkdown content={feedback.ExpectedAnswer} compact sx={{ mt: 0.5 }} />
@@ -402,8 +418,8 @@ export default function FeedbackDetailView(props: FeedbackDetailViewProps) {
         <DialogTitle sx={{ fontSize: "1rem", fontWeight: 600 }}>Save as a good example?</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.875rem" }}>
-            This question and ABE's answer will be saved as a good example. We use these examples to automatically check
-            that ABE keeps giving high-quality answers over time.
+            This question and {brand.shortName}&apos;s answer will be saved as a good example. We use these examples to
+            automatically check that {brand.shortName} keeps giving high-quality answers over time.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

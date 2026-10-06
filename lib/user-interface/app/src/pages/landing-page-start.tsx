@@ -1,177 +1,40 @@
-import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
-import styled, { keyframes } from "styled-components";
+import Button from "@mui/material/Button";
+import Typography from "@mui/material/Typography";
 import { useDocumentTitle } from "../common/hooks/use-document-title";
-
-const fadeIn = keyframes`
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-`;
-
-const PageContainer = styled.main`
-  position: relative;
-  background: linear-gradient(135deg, #0a2b48 0%, #14558f 100%);
-  width: 100%;
-  flex: 1 1 auto;
-  min-height: 0;
-  box-sizing: border-box;
-  padding: 24px clamp(20px, 5vw, 60px);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  overflow: hidden;
-`;
-
-const Circle = styled.div`
-  position: absolute;
-  border-radius: 50%;
-  z-index: 0;
-
-  &.darkBlue {
-    background-color: rgba(10, 43, 72, 0.5);
-    width: 160vw;
-    height: 95vw;
-    bottom: -100%;
-    left: -93%;
-    z-index: 1;
-  }
-
-  &.lightBlue {
-    background-color: rgba(20, 85, 143, 0.4);
-    width: 95vw;
-    height: 50vw;
-    bottom: -52%;
-    right: -44%;
-    z-index: 0;
-  }
-`;
-
-const HeaderBar = styled.div`
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  width: 100%;
-  position: absolute;
-  top: 0;
-  right: 0;
-  padding: 20px 24px 0 0;
-  z-index: 3;
-`;
-
-const SkipButton = styled.button`
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 0.875rem;
-  transition: all 0.2s ease;
-  font-weight: 600;
-  animation: ${fadeIn} 0.75s ease-out;
-  background: none;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 8px;
-  padding: 10px 18px;
-  min-height: 44px;
-  cursor: pointer;
-  font-family: inherit;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.5);
-  }
-
-  &:focus-visible {
-    outline: 2px solid rgba(255, 255, 255, 0.8);
-    outline-offset: 2px;
-  }
-`;
-
-const TextContent = styled.h1`
-  font-size: clamp(1.5rem, 4vw, 2.5rem);
-  font-weight: 600;
-  color: #ffffff;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-  animation: ${fadeIn} 0.75s ease-out;
-  z-index: 2;
-  text-align: center;
-  max-width: 700px;
-  line-height: 1.5;
-  margin: 0 0 24px 0;
-
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-  }
-`;
-
-const StartButton = styled.button`
-  font-size: clamp(1rem, 2vw, 1.25rem);
-  font-weight: 600;
-  color: #0a2b48;
-  background: #ffffff;
-  border: none;
-  border-radius: 12px;
-  padding: 14px 32px;
-  min-height: 44px;
-  cursor: pointer;
-  z-index: 2;
-  animation: ${fadeIn} 0.75s ease-out 0.15s both;
-  transition: all 0.2s ease;
-  font-family: inherit;
-
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-  }
-
-  &:active {
-    transform: translateY(0);
-  }
-
-  &:focus-visible {
-    outline: 2px solid rgba(255, 255, 255, 0.8);
-    outline-offset: 2px;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-
-    &:hover {
-      transform: none;
-    }
-  }
-`;
+import { brand } from "../common/brand";
+import LandingShell from "../components/landing/landing-shell";
+import { fadeInSx, slideHeadingSx } from "../components/landing/landing-styles";
 
 export default function LandingPageStart() {
   useDocumentTitle("Get started");
   const navigate = useNavigate();
 
-  const handleStart = () => navigate(`/chatbot/playground/${uuidv4()}`);
-  const handleBack = () => navigate("/about");
-  const handleSkip = () => navigate(`/chatbot/playground/${uuidv4()}`);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "ArrowRight" || event.key === "Enter") handleStart();
-      else if (event.key === "ArrowLeft") handleBack();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
   return (
-    <PageContainer id="main-content" tabIndex={-1}>
-      <HeaderBar>
-        <SkipButton onClick={handleSkip} aria-label="Skip introduction and go to chat">
-          Skip to Chat &rarr;
-        </SkipButton>
-      </HeaderBar>
-      <TextContent>
-        The more specific your questions, the better I can help you!
-      </TextContent>
-      <StartButton onClick={handleStart}>
-        Get Started <span aria-hidden="true">&rarr;</span>
-      </StartButton>
-      <Circle className="darkBlue" aria-hidden="true" />
-      <Circle className="lightBlue" aria-hidden="true" />
-    </PageContainer>
+    <LandingShell next="chat" back="/about">
+      <Typography
+        component="h1"
+        sx={{ ...slideHeadingSx, fontSize: "clamp(1.5rem, 4vw, 2.5rem)", fontWeight: 600, ...fadeInSx() }}
+      >
+        The more specific your questions, the better I can help.
+      </Typography>
+      <Button
+        onClick={() => navigate(`/chatbot/playground/${uuidv4()}`)}
+        variant="contained"
+        size="large"
+        sx={{
+          px: 4,
+          py: 1.5,
+          fontWeight: 700,
+          bgcolor: "#FFFFFF",
+          color: brand.colorsLight.headerBg,
+          "&:hover": { bgcolor: "rgba(255,255,255,0.9)" },
+          ...fadeInSx(0.15),
+        }}
+      >
+        Get started &rarr;
+      </Button>
+    </LandingShell>
   );
 }

@@ -33,6 +33,9 @@ import IndexCard, { type IndexApiAdapter } from "./index-card";
 const XLSX_MIME =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+const INDEX_EXPLAINER =
+  "A data index turns a spreadsheet (.xlsx) into structured rows the assistant can filter, count, and total. Use Documents for PDFs and text. Uploads apply automatically once processing finishes; no sync is needed.";
+
 function IndexCardSkeleton() {
   return (
     <Paper sx={{ p: 2.5 }}>
@@ -208,6 +211,16 @@ export default function DataIndexesTab() {
 
   return (
     <Stack spacing={2.5}>
+      <Box>
+        <Typography variant="h6" component="h2">Data Indexes</Typography>
+        {/* The empty state below carries the full explanation when there are no indexes. */}
+        {indexes.length > 0 && (
+          <Typography variant="body2" color="text.secondary">
+            {INDEX_EXPLAINER}
+          </Typography>
+        )}
+      </Box>
+
       {error && <Alert severity="error">{error}</Alert>}
 
       {indexes.map((idx) => (
@@ -234,14 +247,19 @@ export default function DataIndexesTab() {
       ))}
 
       {indexes.length === 0 && !error && (
-        <Box sx={{ textAlign: "center", p: 2 }}>
-          <Typography variant="subtitle1" component="h2" gutterBottom>
-            No indexes yet
+        <Paper sx={{ textAlign: "center", p: 4 }}>
+          <Typography variant="subtitle1" component="h3" gutterBottom>
+            No data indexes yet
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Click &ldquo;Add New Index&rdquo; to get started.
+          <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 560, mx: "auto" }}>
+            Upload a spreadsheet (.xlsx) to make it queryable as structured rows
+            (filters, counts, totals). Use Documents for PDFs and text.
           </Typography>
-        </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Click &ldquo;Add New Index&rdquo; to get started. Uploads apply
+            automatically once processing finishes; no sync is needed.
+          </Typography>
+        </Paper>
       )}
 
       <Button
@@ -265,7 +283,7 @@ export default function DataIndexesTab() {
           <Stack spacing={2.5} pt={1}>
             <TextField
               label="Index Name"
-              placeholder="e.g. Vehicle Fleet Index"
+              placeholder="e.g. Annual Budget"
               value={newDisplayName}
               onChange={(e) => setNewDisplayName(e.target.value)}
               fullWidth
@@ -278,7 +296,7 @@ export default function DataIndexesTab() {
             />
             <TextField
               label="Description (optional - AI will generate if left blank)"
-              placeholder="e.g. What this dataset contains (e.g. product catalog or vendor records)"
+              placeholder="What the spreadsheet contains and what each row represents"
               value={newDescription}
               onChange={(e) => setNewDescription(e.target.value)}
               fullWidth

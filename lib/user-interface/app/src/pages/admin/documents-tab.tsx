@@ -68,6 +68,8 @@ export interface DocumentsTabProps {
 }
 
 const PAGE_SIZE = 25;
+const NO_FILES_SYNC_HINT =
+  "There are no files to sync yet. Add files first; files placed in the staging bucket can be synced from the Automation tab.";
 type SyncChipStatus = "synced" | "syncing" | "failed" | "not_yet_synced";
 
 type DocItem = {
@@ -98,6 +100,7 @@ export default function DocumentsTab(props: DocumentsTabProps) {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const { addNotification } = useNotifications();
+  const { lastSyncTime, setShowUnsyncedAlert } = props;
   const previousSyncStatusRef = useRef<boolean>(false);
   // Stash the parent's status-refresh callback in a ref so loadDocuments and
   // the sync-poll effect don't depend on its identity. If the parent passes
@@ -118,15 +121,15 @@ export default function DocumentsTab(props: DocumentsTabProps) {
   }, [search]);
 
   useEffect(() => {
-    if (!props.lastSyncTime) {
-      props.setShowUnsyncedAlert(false);
+    if (!lastSyncTime) {
+      setShowUnsyncedAlert(false);
       return;
     }
     try {
-      const lastSyncDate = new Date(props.lastSyncTime);
+      const lastSyncDate = new Date(lastSyncTime);
       if (isNaN(lastSyncDate.getTime())) {
-        devError("Invalid lastSyncTime format:", props.lastSyncTime);
-        props.setShowUnsyncedAlert(false);
+        devError("Invalid lastSyncTime format:", lastSyncTime);
+        setShowUnsyncedAlert(false);
         return;
       }
       // A file counts as "unsynced" only if it's both newer than the last
@@ -140,12 +143,12 @@ export default function DocumentsTab(props: DocumentsTabProps) {
         if (!file.LastModified) return false;
         return new Date(file.LastModified) > lastSyncDate;
       });
-      props.setShowUnsyncedAlert(hasUnsyncedFiles);
+      setShowUnsyncedAlert(hasUnsyncedFiles);
     } catch (error) {
       devError("Error comparing sync time:", error);
-      props.setShowUnsyncedAlert(false);
+      setShowUnsyncedAlert(false);
     }
-  }, [allItems, props.lastSyncTime, props.setShowUnsyncedAlert]);
+  }, [allItems, lastSyncTime, setShowUnsyncedAlert]);
 
   // Load the file list (fast path -- S3 list + metadata flags only). The
   // sync-status column is hydrated separately by loadSyncStatuses() so the
@@ -187,7 +190,9 @@ export default function DocumentsTab(props: DocumentsTabProps) {
         );
       } catch (e) {
         devError("Error loading sync statuses:", e);
-        if (!silent) setStatusError("Could not load sync status — chips may be out of date.");
+        if (!silent) {
+          setStatusError(`Could not load sync status (${Utils.getErrorMessage(e)}). Sync chips may be out of date.`);
+        }
       } finally {
         if (!silent) setStatusLoading(false);
       }
@@ -368,7 +373,11 @@ export default function DocumentsTab(props: DocumentsTabProps) {
   const handleUploadComplete = () => {
     setShowUploadArea(false);
     refreshPage();
-    props.setShowUnsyncedAlert(true);
+    setShowUnsyncedAlert(true);
+    addNotification(
+      "success",
+      "Upload complete. The assistant can use these files after you click \u201cSync data now\u201d.",
+    );
   };
 
   // Filter the FULL inventory by debounced search query. Previously search
@@ -436,6 +445,14 @@ export default function DocumentsTab(props: DocumentsTabProps) {
   );
 
   const showSkeletonRows = filesLoading && allItems.length === 0;
+  // Sync needs something to ingest. Deletes remove chunks from the knowledge
+  // base directly, so an empty bucket never needs a sync to "catch up".
+  const hasFiles = filesLoading || allItems.length > 0;
+  const syncTooltip = syncing
+    ? "A sync is in progress"
+    : hasFiles
+      ? "Move uploads into the knowledge base so the assistant can use them"
+      : NO_FILES_SYNC_HINT;
   const skeletonRowCount = 6;
 
   return (
@@ -516,8 +533,10 @@ export default function DocumentsTab(props: DocumentsTabProps) {
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography variant="h6" component="h2">Files</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              Files in the knowledge bucket. After uploading or deleting, run a
-              sync so the chatbot reflects the changes.
+              PDFs and text documents the assistant searches. New uploads are
+              staged (shown as &ldquo;Not synced&rdquo;) and go live only after
+              you click &ldquo;Sync data now&rdquo; or the scheduled sync runs.
+              For spreadsheets you want to filter or total, use Data Indexes.
             </Typography>
             <TextField
               size="small"
@@ -581,21 +600,27 @@ export default function DocumentsTab(props: DocumentsTabProps) {
                 ? `Delete (${selectedItems.length})`
                 : "Delete"}
             </Button>
-            <Button
-              variant="contained"
-              size="small"
-              disabled={syncing}
-              onClick={syncKendra}
-            >
-              {syncing ? (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <span>{formatSyncLabel(syncStats, allItems.length)}</span>
-                  <CircularProgress size={16} color="inherit" aria-hidden="true" />
-                </Stack>
-              ) : (
-                "Sync data now"
-              )}
-            </Button>
+            <Tooltip title={syncTooltip}>
+              {/* span keeps the tooltip working while the button is disabled */}
+              <span>
+                <Button
+                  variant="contained"
+                  size="small"
+                  disabled={syncing || !hasFiles}
+                  onClick={syncKendra}
+                >
+                  {syncing ? (
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <span>{formatSyncLabel(syncStats, allItems.length)}</span>
+                      <CircularProgress size={16} color="inherit" aria-hidden="true" />
+                    </Stack>
+                  ) : (
+                    "Sync data now"
+                  )}
+                </Button>
+              </span>
+            </Tooltip>
+
           </Stack>
         </Stack>
 
@@ -649,7 +674,9 @@ export default function DocumentsTab(props: DocumentsTabProps) {
               No files yet
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Add files to the knowledge base using the &ldquo;Add Files&rdquo; button above.
+              Add PDFs or text documents with the &ldquo;Add Files&rdquo; button
+              above. &ldquo;Sync data now&rdquo; becomes available once there is
+              something to sync.
             </Typography>
             <Button
               variant="contained"
@@ -735,7 +762,7 @@ export default function DocumentsTab(props: DocumentsTabProps) {
                 ? `${filteredItems.length} of ${allItems.length} file${allItems.length === 1 ? "" : "s"}`
                 : `${allItems.length} file${allItems.length === 1 ? "" : "s"}`}
               {filteredItems.length > 0 &&
-                ` — showing ${pageStart + 1}–${Math.min(
+                `, showing ${pageStart + 1}–${Math.min(
                   pageStart + PAGE_SIZE,
                   filteredItems.length,
                 )}`}

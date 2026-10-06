@@ -25,10 +25,33 @@ import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { PromptData, formatDate } from "./types";
 import { ApiClient } from "../../../common/api-client/api-client";
 import { useNotifications } from "../../../components/notif-manager";
+import { brand } from "../../../common/brand";
+import LoadErrorAlert from "./LoadErrorAlert";
+
+const NAME = brand.shortName;
+
+/** Starting point when there are no live instructions to copy from. */
+const DEFAULT_TEMPLATE = [
+  `# ${brand.assistantName} instructions`,
+  "",
+  `You are ${brand.assistantName}, an AI assistant${brand.organizationName ? ` for ${brand.organizationName}` : ""}.`,
+  "Answer questions using the documents and data in the knowledge base, and cite the sources you used.",
+  "If the knowledge base does not contain the answer, say so instead of guessing.",
+  "",
+  "Today's date: {{current_date}}",
+].join("\n");
+
+function errorText(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 interface PromptWorkspaceProps {
   promptData: PromptData;
   loadingMeta: boolean;
+  /** Message from the last failed instructions load, or null when it succeeded. */
+  loadError?: string | null;
+  /** Re-run the instructions fetch after a failure. */
+  onRetry: () => void;
   apiClient: ApiClient | null;
   onRefresh: () => Promise<void>;
   selectedFeedbackIds: string[];
@@ -44,7 +67,7 @@ function PromptSkeleton() {
 }
 
 export default function PromptWorkspace(props: PromptWorkspaceProps) {
-  const { promptData, loadingMeta, apiClient, onRefresh, selectedFeedbackIds } = props;
+  const { promptData, loadingMeta, loadError, onRetry, apiClient, onRefresh, selectedFeedbackIds } = props;
   const { addNotification } = useNotifications();
 
   const [selectedPromptId, setSelectedPromptId] = useState("");
@@ -127,12 +150,12 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
       const result = await apiClient.userFeedback.createPrompt({
         title: livePrompt ? `Copy of ${livePrompt.title || "current instructions"}` : "New instructions",
         parentVersionId: livePrompt?.versionId,
-        template: livePrompt?.template || "# ABE Instructions\n\n{{current_date}}",
+        template: livePrompt?.template || DEFAULT_TEMPLATE,
       });
       await onRefresh();
       setSelectedPromptId(result.prompt.versionId);
-    } catch (error: any) {
-      addNotification("error", error?.message || "Could not start a draft.");
+    } catch (error: unknown) {
+      addNotification("error", errorText(error, "Could not start a draft."));
     } finally {
       setActionLoading(false);
     }
@@ -146,8 +169,8 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
       setSavedDraft({ ...draft });
       await onRefresh();
       addNotification("success", "Draft saved.");
-    } catch (error: any) {
-      addNotification("error", error?.message || "Could not save.");
+    } catch (error: unknown) {
+      addNotification("error", errorText(error, "Could not save."));
     } finally {
       setActionLoading(false);
     }
@@ -162,8 +185,8 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
       await onRefresh();
       setSelectedPromptId(selectedPromptId);
       addNotification("success", "These instructions are now live for all users.");
-    } catch (error: any) {
-      addNotification("error", error?.message || "Could not publish.");
+    } catch (error: unknown) {
+      addNotification("error", errorText(error, "Could not publish."));
     } finally {
       setActionLoading(false);
     }
@@ -182,8 +205,8 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
       setSelectedPromptId(result.prompt.versionId);
       setAiNote("");
       addNotification("success", "AI created a new draft with suggested changes.");
-    } catch (error: any) {
-      addNotification("error", error?.message || "AI could not suggest changes.");
+    } catch (error: unknown) {
+      addNotification("error", errorText(error, "AI could not suggest changes."));
     } finally {
       setActionLoading(false);
     }
@@ -198,14 +221,24 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
       setSelectedPromptId(promptData.liveVersionId || "");
       await onRefresh();
       addNotification("success", "Draft deleted.");
-    } catch (error: any) {
-      addNotification("error", error?.message || "Could not delete.");
+    } catch (error: unknown) {
+      addNotification("error", errorText(error, "Could not delete."));
     } finally {
       setActionLoading(false);
     }
   };
 
   if (loadingMeta && promptData.items.length === 0) return <PromptSkeleton />;
+
+  // Without the list we can't tell "no instructions yet" from "failed to load",
+  // so don't offer to start a draft from scratch until the load succeeds.
+  if (loadError && promptData.items.length === 0) {
+    return (
+      <Box sx={{ maxWidth: 820, mx: "auto" }}>
+        <LoadErrorAlert title="Instructions could not be loaded" message={loadError} onRetry={onRetry} retrying={loadingMeta} />
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ maxWidth: 820, mx: "auto" }}>
@@ -215,8 +248,14 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
         </Box>
       )}
 
+      {loadError && (
+        <Box sx={{ mb: 2 }}>
+          <LoadErrorAlert title="Instructions could not be refreshed" message={loadError} onRetry={onRetry} retrying={loadingMeta} />
+        </Box>
+      )}
+
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        These are the instructions ABE follows when answering. Editing and publishing them changes how ABE responds
+        These are the instructions {NAME} follows when answering. Editing and publishing them changes how {NAME} responds
         for <strong>everyone</strong>, so changes are saved as a draft first and only go live when you publish.
       </Typography>
 
@@ -234,13 +273,14 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
             {livePrompt ? (
               <>
                 <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                  {livePrompt.title || "ABE instructions"}
+                  {livePrompt.title || `${NAME} instructions`}
                 </Typography>
                 <Box
                   sx={{
                     p: 1.5,
                     borderRadius: 1,
-                    bgcolor: "grey.50",
+                    bgcolor: "action.hover",
+                    color: "text.primary",
                     border: "1px solid",
                     borderColor: "divider",
                     fontFamily: "ui-monospace, monospace",
@@ -275,7 +315,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
             </Typography>
             {drafts.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
-                No drafts yet. Click “Edit a copy” above to start changing ABE's instructions.
+                No drafts yet. Click “Edit a copy” above to start changing {NAME}&apos;s instructions.
               </Typography>
             ) : (
               <Stack spacing={1}>
@@ -306,7 +346,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
                           {item.title || "Untitled draft"}
                         </Typography>
                         {item.isSystemDefault && (
-                          <Chip size="small" variant="outlined" label="ABE's original" sx={{ height: 20, fontSize: "0.7rem" }} />
+                          <Chip size="small" variant="outlined" label={`${NAME}'s original`} sx={{ height: 20, fontSize: "0.7rem" }} />
                         )}
                       </Stack>
                       <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
@@ -335,7 +375,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
             <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} flexWrap="wrap">
               <Stack direction="row" gap={1} alignItems="center">
                 <Typography variant="h6" sx={{ fontSize: "1.0625rem", fontWeight: 600 }}>
-                  {isSystemDefault ? "ABE's original instructions" : "Edit draft"}
+                  {isSystemDefault ? `${NAME}'s original instructions` : "Edit draft"}
                 </Typography>
                 {isSystemDefault && (
                   <Chip size="small" variant="outlined" label="Read-only" sx={{ height: 22, fontSize: "0.75rem" }} />
@@ -383,7 +423,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
               disabled={isReadOnly}
             />
             <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block" }}>
-              Tip: leave <code>{"{{current_date}}"}</code> in place — ABE replaces it with today's date when it answers.
+              Tip: leave <code>{"{{current_date}}"}</code> in place: {NAME} replaces it with today&apos;s date when it answers.
             </Typography>
             <TextField
               fullWidth
@@ -450,7 +490,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
         <DialogTitle>Make these instructions live?</DialogTitle>
         <DialogContent>
           <Typography variant="body2" gutterBottom>
-            <strong>{currentPrompt?.title || "This draft"}</strong> will immediately become the instructions ABE uses
+            <strong>{currentPrompt?.title || "This draft"}</strong> will immediately become the instructions {NAME} uses
             for <strong>all users</strong>.
           </Typography>
           {livePrompt && (
@@ -518,7 +558,7 @@ export default function PromptWorkspace(props: PromptWorkspaceProps) {
               multiline
               minRows={3}
               maxRows={6}
-              label="What should ABE do better? (optional)"
+              label={`What should ${NAME} do better? (optional)`}
               placeholder="e.g. Be more concise, always cite the source document, avoid legal advice…"
               value={aiNote}
               onChange={(e) => setAiNote(e.target.value)}

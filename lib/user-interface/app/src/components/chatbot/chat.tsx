@@ -20,21 +20,23 @@ import { ApiClient } from "../../common/api-client/api-client";
 import ChatMessage from "./chat-message";
 import ChatInputPanel from "./chat-input-panel";
 import styles from "../../styles/chat.module.scss";
-import { CHATBOT_NAME, WELCOME_PAGE, SUGGESTED_PROMPTS } from "../../common/constants";
+import { brand } from "../../common/brand";
 import { useNotifications } from "../notif-manager";
 import { Utils } from "../../common/utils";
 import { useWebSocketChat, StreamingStatus } from "../../hooks/useWebSocketChat";
 
 export default function Chat(props: { sessionId?: string }) {
   const appContext = useContext(AppContext);
-  const [running, setRunning] = useState<boolean>(true);
+  const [running, setRunning] = useState<boolean>(false);
   const [session, setSession] = useState<{ id: string; loading: boolean }>({
     id: props.sessionId ?? uuidv4(),
     loading: typeof props.sessionId !== "undefined",
   });
 
   const { addNotification } = useNotifications();
-  const { abort } = useWebSocketChat();
+  // The one socket owner for this chat: send and abort share the same
+  // connection, and unmounting (session switch, navigation) aborts it.
+  const { send, abort } = useWebSocketChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
@@ -52,48 +54,51 @@ export default function Chat(props: { sessionId?: string }) {
     active: false,
   });
   const [queuedPrompt, setQueuedPrompt] = useState<string | null>(null);
+  const clearQueuedPrompt = useCallback(() => setQueuedPrompt(null), []);
 
   useEffect(() => {
     if (!appContext) return;
     setMessageHistory([]);
+    if (!props.sessionId) {
+      setSession({ id: uuidv4(), loading: false });
+      setRunning(false);
+      return;
+    }
 
+    // Ignore a slow response for a session the user already navigated away from.
+    let cancelled = false;
+    const sessionId = props.sessionId;
+    setSession({ id: sessionId, loading: true });
+    const apiClient = new ApiClient(appContext);
     (async () => {
-      if (!props.sessionId) {
-        setSession({ id: uuidv4(), loading: false });
-        return;
-      }
-
-      setSession({ id: props.sessionId, loading: true });
-      const apiClient = new ApiClient(appContext);
       try {
-        let username: string | undefined;
-        await getCurrentUser().then(
-          (value) => (username = value.username)
-        );
-        if (!username) return;
-        const hist = await apiClient.sessions.getSession(
-          props.sessionId,
-          username
-        );
-
-        if (hist) {
-          const restored = hist
+        const { username } = await getCurrentUser();
+        const hist = await apiClient.sessions.getSession(sessionId, username);
+        if (cancelled || !hist) return;
+        setMessageHistory(
+          hist
             .filter((x) => x !== null)
             .map((x) => ({
               type: x!.type as ChatBotMessageType,
               metadata: x!.metadata!,
               content: x!.content,
-            }));
-          setMessageHistory(restored);
+            }))
+        );
+      } catch (error) {
+        if (!cancelled) {
+          addNotification("error", `Could not load this conversation: ${Utils.getErrorMessage(error)}`);
         }
-        setSession({ id: props.sessionId, loading: false });
-        setRunning(false);
-      } catch (error: any) {
-        addNotification("error", error.message);
-        addNotification("info", "Please refresh the page");
+      } finally {
+        if (!cancelled) {
+          setSession({ id: sessionId, loading: false });
+          setRunning(false);
+        }
       }
     })();
-  }, [appContext, props.sessionId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [appContext, props.sessionId, addNotification]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -101,18 +106,20 @@ export default function Chat(props: { sessionId?: string }) {
     const el = scrollContainerRef.current;
     if (!el) return;
 
+    // Only follow the stream when the reader is already at the bottom, so
+    // scrolling up to re-read is never yanked back down mid-answer.
     const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
-    if (isNearBottom || running) {
+    if (isNearBottom) {
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     }
-  }, [messageHistory, running]);
+  }, [messageHistory]);
 
   // Announce when the assistant finishes responding (accessibility)
   useEffect(() => {
     if (!running && messageHistory.length > 0) {
       const lastMsg = messageHistory[messageHistory.length - 1];
       if (lastMsg.type === ChatBotMessageType.AI) {
-        setAnnouncement(`${CHATBOT_NAME} has responded`);
+        setAnnouncement(`${brand.shortName} has responded`);
         const timer = setTimeout(() => setAnnouncement(""), 1000);
         return () => clearTimeout(timer);
       }
@@ -183,9 +190,18 @@ export default function Chat(props: { sessionId?: string }) {
     return `Please answer my previous question again.\n\nOriginal question: ${originalQuestion}\n\nWhat went wrong: ${contextParts.join("\n")}`;
   };
 
+  /**
+   * Open a cited document. Stored history carries only the S3 key (presigned
+   * URLs expire and are stripped server-side), so always ask the
+   * source-presign endpoint for a fresh link. The tab is opened synchronously
+   * inside the click so popup blockers allow it, then pointed at the URL.
+   * HTML sources come back as downloads rather than rendering inline.
+   */
   const handleOpenSource = useCallback(async (s3Key: string) => {
     if (!appContext) return;
-    const api = appContext.httpEndpoint.slice(0, -1);
+    const tab = window.open("", "_blank");
+    if (tab) tab.opener = null;
+    const api = appContext.httpEndpoint.replace(/\/$/, "");
     try {
       const auth = await Utils.authenticate();
       const res = await fetch(`${api}/source-presign`, {
@@ -193,10 +209,17 @@ export default function Chat(props: { sessionId?: string }) {
         headers: { "Content-Type": "application/json", Authorization: auth },
         body: JSON.stringify({ s3Key }),
       });
-      if (!res.ok) throw new Error("Failed to get source URL");
-      const { signedUrl } = await res.json();
-      window.open(signedUrl, "_blank", "noopener,noreferrer");
-    } catch {
+      if (!res.ok) throw new Error(await Utils.extractServerError(res, "Failed to get source URL"));
+      const { signedUrl } = (await res.json()) as { signedUrl?: string };
+      if (!signedUrl) throw new Error("Failed to get source URL");
+      if (tab) {
+        tab.location.href = signedUrl;
+      } else {
+        window.open(signedUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      tab?.close();
+      console.error("Could not open source", error);
       addNotification("error", "Could not open source document. Please try again.");
     }
   }, [appContext, addNotification]);
@@ -212,7 +235,7 @@ export default function Chat(props: { sessionId?: string }) {
 
   return (
     <div className={styles.chat_container} style={{ position: "relative" }}>
-      <Typography variant="h1" className="sr-only">{CHATBOT_NAME} Chat</Typography>
+      <Typography variant="h1" className="sr-only">{brand.assistantName} chat</Typography>
       {/* Scroll-jump FAB — direction depends on current scroll position */}
       {scrollFab && (
         <div className={styles.scrollToBottom}>
@@ -316,19 +339,11 @@ export default function Chat(props: { sessionId?: string }) {
             }}
           >
             <Avatar
-              sx={{
-                width: 56,
-                height: 56,
-                bgcolor: "primary.light",
-                color: "primary.main",
-                mb: 2.5,
-                fontWeight: 800,
-                fontSize: "1.25rem",
-                letterSpacing: "-0.02em",
-              }}
-            >
-              {CHATBOT_NAME.charAt(0)}
-            </Avatar>
+              src={brand.assets.icon}
+              alt=""
+              aria-hidden="true"
+              sx={{ width: 56, height: 56, bgcolor: "transparent", mb: 2.5 }}
+            />
             <Typography
               variant="h2"
               sx={{
@@ -337,17 +352,17 @@ export default function Chat(props: { sessionId?: string }) {
                 fontSize: { xs: "1.25rem", sm: "1.5rem" },
               }}
             >
-              {WELCOME_PAGE}
+              {brand.welcomeMessage}
             </Typography>
             <Typography
               variant="body2"
               sx={{ color: "text.secondary", mb: 3, maxWidth: 420 }}
             >
-              Ask me anything — I'll answer from the documents and data
+              Ask me anything. I'll answer from the documents and data
               available to me.
             </Typography>
             <div className={styles.suggestedPrompts}>
-              {SUGGESTED_PROMPTS.map((prompt, idx) => (
+              {brand.suggestedPrompts.map((prompt, idx) => (
                 <button
                   key={idx}
                   className={styles.suggestedPromptCard}
@@ -403,9 +418,10 @@ export default function Chat(props: { sessionId?: string }) {
           setMessageHistory={(history) => setMessageHistory(history)}
           streamingStatus={streamingStatus}
           setStreamingStatus={setStreamingStatus}
+          send={send}
           onStop={abort}
           queuedPrompt={queuedPrompt}
-          onQueuedPromptHandled={() => setQueuedPrompt(null)}
+          onQueuedPromptHandled={clearQueuedPrompt}
         />
       </section>
     </div>

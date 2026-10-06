@@ -11,7 +11,7 @@ import { useDocumentTitle } from "../../common/hooks/use-document-title";
 const TAB_IDS = ["dashboard", "run", "history", "library"];
 
 export default function LlmEvaluationPage() {
-  useDocumentTitle("Admin \u00b7 LLM evaluation");
+  useDocumentTitle("Admin \u00b7 Quality monitoring");
   const [activeTab, setActiveTab] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();

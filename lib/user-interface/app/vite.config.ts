@@ -1,14 +1,81 @@
 /// <reference types="vitest" />
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import fs from "fs";
 import path from "path";
 import react from "@vitejs/plugin-react";
 import { brand } from "./src/common/brand";
 
-const isDev = process.env.NODE_ENV === "development";
+const TRUE_VALUES = ["1", "true", "yes", "on"];
+
+/**
+ * Build the runtime config (same shape CDK writes to aws-exports.json at
+ * deploy time, see lib/user-interface/index.ts) from ABE_* variables in
+ * `.env` / `.env.local`. Returns null when the required values are missing.
+ */
+function awsExportsFromEnv(env: Record<string, string>) {
+  const required = [
+    "ABE_REGION",
+    "ABE_USER_POOL_ID",
+    "ABE_USER_POOL_CLIENT_ID",
+    "ABE_HTTP_ENDPOINT",
+    "ABE_WS_ENDPOINT",
+  ];
+  const missing = required.filter((key) => !env[key]);
+  if (missing.length > 0) return { config: null, missing };
+  const flag = (key: string, fallback: boolean) =>
+    env[key] ? TRUE_VALUES.includes(env[key].toLowerCase()) : fallback;
+  return {
+    missing,
+    config: {
+      Auth: {
+        region: env.ABE_REGION,
+        userPoolId: env.ABE_USER_POOL_ID,
+        userPoolWebClientId: env.ABE_USER_POOL_CLIENT_ID,
+      },
+      // Same form as the deployed config: HTTP API URL with a trailing slash.
+      httpEndpoint: env.ABE_HTTP_ENDPOINT.replace(/\/?$/, "/"),
+      wsEndpoint: env.ABE_WS_ENDPOINT,
+      selfSignUpEnabled: flag("ABE_SELF_SIGNUP_ENABLED", false),
+      evalEnabled: flag("ABE_EVAL_ENABLED", true),
+    },
+  };
+}
+
+/**
+ * Local development only: serve /aws-exports.json from `.env` so
+ * `npm run dev` works against a deployed stack. If the ABE_* values aren't
+ * set, a hand-copied public/aws-exports.json (ignored by git) is served as a
+ * normal static file instead.
+ */
+function devAwsExports(mode: string): Plugin {
+  return {
+    name: "dev-aws-exports",
+    apply: "serve",
+    configureServer(server) {
+      const env = loadEnv(mode, process.cwd(), "ABE_");
+      const { config, missing } = awsExportsFromEnv(env);
+      const publicCopy = path.resolve("public/aws-exports.json");
+      if (!config) {
+        if (!fs.existsSync(publicCopy)) {
+          server.config.logger.warn(
+            `[aws-exports] Missing ${missing.join(", ")} in .env and no public/aws-exports.json. ` +
+              "Copy .env.example to .env and fill it from your stack outputs (see README.md)."
+          );
+        }
+        return;
+      }
+      const body = JSON.stringify(config, null, 2);
+      server.middlewares.use("/aws-exports.json", (_req, res) => {
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Cache-Control", "no-store");
+        res.end(body);
+      });
+    },
+  };
+}
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   define: {
     "process.env": {},
   },
@@ -27,39 +94,7 @@ export default defineConfig({
           .replace(/%APP_THEME_DARK%/g, brand.themeColorDark);
       },
     },
-    isDev && {
-      name: "aws-exports",
-      writeBundle() {
-        const outputPath = path.resolve("public/aws-exports.json");
-
-        // Write the modified JSON data to the public folder
-        fs.writeFileSync(
-          outputPath,
-          JSON.stringify(
-            {
-              aws_project_region: process.env.AWS_PROJECT_REGION,
-              aws_cognito_region: process.env.AWS_COGNITO_REGION,
-              aws_user_pools_id: process.env.AWS_USER_POOLS_ID,
-              aws_user_pools_web_client_id:
-                process.env.AWS_USER_POOLS_WEB_CLIENT_ID,
-              config: {
-                api_endpoint: `https://${process.env.API_DISTRIBUTION_DOMAIN_NAME}/api`,
-                websocket_endpoint: `wss://${process.env.API_DISTRIBUTION_DOMAIN_NAME}/socket`,
-                rag_enabled: ["T", "t", "true", "True", "TRUE", "1"].includes(
-                  process.env.RAG_ENABLED
-                ),
-                default_embeddings_model: process.env.DEFAULT_EMBEDDINGS_MODEL,
-                default_cross_encoder_model:
-                  process.env.DEFAULT_CROSS_ENCODER_MODEL,
-              },
-            },
-            null,
-            2
-          ),
-          "utf-8"
-        );
-      },
-    },
+    devAwsExports(mode),
     react(),
   ],
   build: {
@@ -92,4 +127,4 @@ export default defineConfig({
       include: ["src/**"],
     },
   },
-});
+}));

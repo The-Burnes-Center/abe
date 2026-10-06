@@ -1,6 +1,6 @@
-# ABE Accessibility (WCAG 2.1 AA)
+# Accessibility (WCAG 2.1 AA)
 
-ABE targets **WCAG 2.1 AA**. This document captures
+The app targets **WCAG 2.1 AA**. This document captures
 the accessibility patterns we follow, how to test changes, and known
 limitations.
 
@@ -29,12 +29,10 @@ limitations.
 ### 4. Manual keyboard pass
 
 - Tab from page load. Expected order:
-  1. Mass.gov BrandBanner expansion toggle
-  2. "Skip to main content" link (`components/mds/SkipLink.tsx`)
-  3. ABE GlobalHeader items (logo, help, theme, account)
-  4. NavigationPanel items (sidebar routes only)
-  5. Main content interactive elements
-  6. Mass.gov Footer links
+  1. "Skip to main content" link (`components/skip-link.tsx`)
+  2. GlobalHeader items (menu, logo, help, theme, account)
+  3. NavigationPanel items (sidebar routes only)
+  4. Main content interactive elements
 - No keyboard traps. Focus must always be visible.
 - `Esc` closes any open dialog/drawer and returns focus to its trigger.
 
@@ -55,7 +53,8 @@ limitations.
 ## Routes covered
 
 Document titles are produced by `useDocumentTitle(...)` in
-`src/common/hooks/use-document-title.ts`, which appends ` | ABE`.
+`src/common/hooks/use-document-title.ts`, which appends ` | {brand.shortName}`
+(shown below with the default short name, ABE).
 
 | Route | Document title | Notes |
 | ----- | -------------- | ----- |
@@ -68,8 +67,9 @@ Document titles are produced by `useDocumentTitle(...)` in
 | `/admin/metrics` | Admin · Metrics \| ABE | MUI charts have `aria-label`; consider tabular alternative |
 | `/admin/user-feedback` | Admin · User feedback \| ABE | Drawer dialogs with `role="dialog"` + `aria-modal` |
 | `/admin/user-feedback/:feedbackId` | Admin · User feedback \| ABE | Detail view |
-| `/admin/llm-evaluation` | Admin · LLM evaluation \| ABE | Sortable result tables |
+| `/admin/llm-evaluation` | Admin · Quality monitoring \| ABE | Sortable result tables |
 | `/admin/llm-evaluation/:evaluationId` | Admin · Evaluation details \| ABE | |
+| `/admin/users` | Admin · Users \| ABE | Table with per-row action menu; self actions disabled with a tooltip |
 | `/help` | Help \| ABE | Single `<h1>`, semantic sections, tabbed panels with `role="tabpanel"` |
 | `*` (wildcard) | Page not found \| ABE | Clear "Return to home" CTA |
 
@@ -80,37 +80,42 @@ Legacy routes that redirect (no titled page):
 
 ## Patterns we use
 
-- **Skip link** (`components/mds/SkipLink.tsx`) — first focusable element on
+- **Skip link** (`components/skip-link.tsx`): first focusable element on
   every page; targets `#main-content` (the `<main tabIndex={-1}>` wrapper in
   `components/base-app-layout.tsx`).
-- **Live regions** — chat stream uses `role="log" aria-live="polite"`;
+- **Live regions**: chat stream uses `role="log" aria-live="polite"`;
   toasts/alerts use `notif-flashbar`'s per-alert `role` (`assertive` for
   errors, `polite` otherwise).
-- **Dialogs** — MUI `<Drawer>` / `<Dialog>` with
+- **Dialogs**: MUI `<Drawer>` / `<Dialog>` with
   `role="dialog" aria-modal="true"` and an `aria-label` or
   `aria-labelledby`.
-- **Tabs** — MUI `<Tabs>` with explicit `id` + `aria-controls` and a
+- **Tabs**: MUI `<Tabs>` with explicit `id` + `aria-controls` and a
   matching `role="tabpanel"` `<Box>` wrapping each panel
   (see `pages/help/how-to-use.tsx`).
-- **Forms** — every input has a label (visible or `aria-label`); validation
+- **Forms**: every input has a label (visible or `aria-label`); validation
   errors associated via `aria-describedby` + `role="alert"`.
-- **Status not by colour alone** — `status-chip.tsx` always pairs colour
+- **Status not by colour alone**: `status-chip.tsx` always pairs colour
   with an icon and text.
-- **Decorative imagery** — MUI icons that sit next to text labels are
+- **Decorative imagery**: MUI icons that sit next to text labels are
   `aria-hidden="true"` (e.g. expand chevrons, sidebar admin icons,
   the error-boundary `ErrorOutlineIcon`).
-- **`aria-current="page"`** — set on the active session and admin link in
+- **`aria-current="page"`**: set on the active session and admin link in
   `components/navigation-panel.tsx` so screen readers announce the current
   location.
-- **Error boundary** (`components/error-boundary.tsx`) — fallback `<Paper>`
+- **Error boundary** (`components/error-boundary.tsx`): fallback `<Paper>`
   has `role="alert"` and an `<h2>` heading; both buttons carry an
   `aria-label`.
-- **Reduced motion** — global `@media (prefers-reduced-motion: reduce)`
-  rule in `styles/app.scss` disables animations.
-- **Focus indicators** — global 3px solid `#0088FF` `outline-offset: 2px`
-  in `styles/app.scss`. Never set `outline: none` without an equivalent
-  replacement.
-- **External links** — open with `target="_blank" rel="noopener noreferrer"`
+- **Reduced motion**: a global `@media (prefers-reduced-motion: reduce)`
+  rule (in `common/theme.ts`) disables animations.
+- **Focus indicators**: one global 3px ring in the brand primary color with
+  `outline-offset: 2px`, defined in `common/theme.ts` (`MuiCssBaseline`); inside
+  the header it switches to the header text color so it stays visible. Never
+  set `outline: none` without an equivalent replacement.
+- **Contrast**: brand colors in `config/brand.ts` are chosen so every
+  text/background pair meets AA in light and dark mode (dark mode's light
+  primary uses dark button text), and outlined inputs use a border token with
+  at least 3:1 contrast against the surface.
+- **External links**: open with `target="_blank" rel="noopener noreferrer"`
   and a visible "(opens in new tab)" cue or equivalent `aria-label`.
 
 ## Resolved findings (historical scans)
@@ -119,8 +124,8 @@ Legacy routes that redirect (no titled page):
 
 | Severity | Rule | Page | Status |
 | -------- | ---- | ---- | ------ |
-| Serious  | [`aria-progressbar-name`](https://dequeuniversity.com/rules/axe/4.11/aria-progressbar-name) | Chatbot playground (small `<CircularProgress>` had `role="progressbar"` but no accessible name) | **Fixed** — every `<CircularProgress>` in the codebase now either carries `aria-label` + `role="status"` (when it is the sole loading indicator) or `aria-hidden="true"` (when paired text or a parent `role="status"` already conveys the loading state). |
-| Serious  | [`list`](https://dequeuniversity.com/rules/axe/4.11/list) | `/help` (Tips & Questions) — a `<ul>` from MUI `<List>` had `<div>` children | **Fixed** — `pages/help/how-to-use.tsx` now wraps each prompt / sample-question row in `<Box component="li">` so the `<ul>`'s direct children are real `<li>` elements. |
+| Serious  | [`aria-progressbar-name`](https://dequeuniversity.com/rules/axe/4.11/aria-progressbar-name) | Chatbot playground (small `<CircularProgress>` had `role="progressbar"` but no accessible name) | **Fixed**: every `<CircularProgress>` in the codebase now either carries `aria-label` + `role="status"` (when it is the sole loading indicator) or `aria-hidden="true"` (when paired text or a parent `role="status"` already conveys the loading state). |
+| Serious  | [`list`](https://dequeuniversity.com/rules/axe/4.11/list) | `/help` (Tips & Questions): a `<ul>` from MUI `<List>` had `<div>` children | **Fixed**: `pages/help/how-to-use.tsx` now wraps each prompt / sample-question row in `<Box component="li">` so the `<ul>`'s direct children are real `<li>` elements. |
 
 ## Known limitations
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext, useRef, useMemo } from "react";
+import { useState, useEffect, useContext, useRef, useMemo, useCallback } from "react";
 import {
   Table,
   TableHead,
@@ -21,38 +21,41 @@ import {
   DialogActions,
   Stack,
   Tooltip,
+  Alert,
 } from "@mui/material";
 import Grid from "@mui/material/Grid2";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { AppContext } from "../../common/app-context";
 import { ApiClient } from "../../common/api-client/api-client";
 import { Utils } from "../../common/utils";
-import { getColumnDefinition, METRIC_DESCRIPTIONS } from "./columns";
-import { useNotifications } from "../../components/notif-manager";
+import { brand } from "../../common/brand";
+import { v4 as uuidv4 } from "uuid";
+import { ColumnItem, getColumnDefinition } from "./columns";
+import {
+  METRIC_DESCRIPTIONS,
+  METRIC_GROUPS,
+  QUESTION_PREFIX,
+  aggregateGroupPct,
+  failedQuestionsLabel,
+  isFailedRow,
+  scoreBand,
+  scoreBgKey,
+  scoreColor,
+} from "./eval-metrics";
+import type {
+  EvaluationResult,
+  Page,
+  PageToken,
+} from "../../common/api-client/evaluations-client";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { useDocumentTitle } from "../../common/hooks/use-document-title";
 import AdminMarkdown from "../../components/admin-markdown";
 
-function scoreColor(pct: number): "success" | "warning" | "error" {
-  if (pct >= 75) return "success";
-  if (pct >= 50) return "warning";
-  return "error";
-}
-
-function scoreBgKey(pct: number) {
-  if (pct >= 75) return "success.light";
-  if (pct >= 50) return "warning.light";
-  return "error.light";
-}
-
-function scoreTierLabel(pct: number): string {
-  if (pct >= 75) return "Strong";
-  if (pct >= 50) return "Moderate";
-  return "Needs improvement";
-}
+const RESULTS_PAGE_SIZE = 100;
+const HISTORY_PATH = "/admin/llm-evaluation#history";
 
 function SummaryCard({ title, pct, description }: { title: string; pct: number; description: string }) {
-  const tier = scoreTierLabel(pct);
+  const tier = scoreBand(pct, "Strong", "Moderate", "Needs improvement");
   const color = scoreColor(pct);
   const summary = `${title}: ${pct.toFixed(0)}%. ${tier} performance band.`;
   return (
@@ -82,7 +85,7 @@ function SummaryCard({ title, pct, description }: { title: string; pct: number; 
   );
 }
 
-function escapeCSVValue(val: any): string {
+function escapeCSVValue(val: unknown): string {
   const str = typeof val === "string" ? val : String(val ?? "");
   const escaped = str.replace(/"/g, '""');
   if (/^[=+\-@\t\r]/.test(escaped)) {
@@ -92,17 +95,16 @@ function escapeCSVValue(val: any): string {
 }
 
 function DetailedEvaluationPage() {
-  useDocumentTitle("Admin \u00b7 Evaluation details");
+  useDocumentTitle("Admin \u00b7 Quality monitoring \u00b7 Evaluation details");
   const { evaluationId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const appContext = useContext(AppContext);
-  const apiClient = new ApiClient(appContext!);
+  const apiClient = useMemo(() => new ApiClient(appContext!), [appContext]);
   const [loading, setLoading] = useState(true);
-  const { addNotification } = useNotifications();
   const [evaluationName, setEvaluationName] = useState(searchParams.get("name") || "");
   const [currentPageIndex, setCurrentPageIndex] = useState(1);
-  const [pages, setPages] = useState<any[]>([]);
+  const [pages, setPages] = useState<Page<EvaluationResult>[]>([]);
   const needsRefresh = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [isContextModalVisible, setContextModalVisible] = useState(false);
@@ -110,58 +112,57 @@ function DetailedEvaluationPage() {
   const [selectedQuestion, setSelectedQuestion] = useState("");
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const [allItems, setAllItems] = useState<any[]>([]);
+  const [allItems, setAllItems] = useState<EvaluationResult[]>([]);
+
+  const handleContextClick = useCallback((item: ColumnItem) => {
+    const context = typeof item.retrieved_context === "string" ? item.retrieved_context : "";
+    const question = typeof item.question === "string" ? item.question : "";
+    setSelectedContext(context || "No context available");
+    setSelectedQuestion(question || "Unknown question");
+    setContextModalVisible(true);
+  }, []);
+
+  const fetchEvaluationDetails = useCallback(
+    async (params: { pageIndex?: number; nextPageToken?: PageToken | null }) => {
+      if (!evaluationId) return;
+      setLoading(true);
+      try {
+        const result = await apiClient.evaluations.getEvaluationResults(
+          evaluationId,
+          params.nextPageToken,
+          RESULTS_PAGE_SIZE
+        );
+        setError(null);
+        setPages((current) => {
+          if (needsRefresh.current) {
+            needsRefresh.current = false;
+            return [result];
+          }
+          if (typeof params.pageIndex !== "undefined") {
+            const next = [...current];
+            next[params.pageIndex - 1] = result;
+            return next;
+          }
+          return [...current, result];
+        });
+        if (result.Items.length > 0) {
+          const firstName = result.Items[0].evaluation_name;
+          if (firstName) setEvaluationName((name) => name || firstName);
+          setAllItems(result.Items);
+        }
+      } catch (error) {
+        setError(`Could not load evaluation results: ${Utils.getErrorMessage(error)}`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [apiClient, evaluationId]
+  );
 
   useEffect(() => {
     setCurrentPageIndex(1);
     fetchEvaluationDetails({ pageIndex: 1 });
-  }, [evaluationId]);
-
-  const handleContextClick = (item: any) => {
-    setSelectedContext(item.retrieved_context || "No context available");
-    setSelectedQuestion(item.question || "Unknown question");
-    setContextModalVisible(true);
-  };
-
-  const fetchEvaluationDetails = async (params: { pageIndex?: number; nextPageToken?: any }) => {
-    setLoading(true);
-    try {
-      const result = await apiClient.evaluations.getEvaluationResults(
-        evaluationId!,
-        params.nextPageToken,
-        100
-      );
-
-      if (result.error) {
-        setError(result.error);
-        setLoading(false);
-        return;
-      }
-
-      setError(null);
-      setPages((current) => {
-        if (needsRefresh.current) {
-          needsRefresh.current = false;
-          return [result];
-        }
-        if (typeof params.pageIndex !== "undefined") {
-          current[params.pageIndex - 1] = result;
-          return [...current];
-        }
-        return [...current, result];
-      });
-      if (result.Items?.length > 0) {
-        if (!evaluationName && result.Items[0].evaluation_name) {
-          setEvaluationName(result.Items[0].evaluation_name);
-        }
-        setAllItems(result.Items);
-      }
-    } catch (error) {
-      setError(`Error: ${Utils.getErrorMessage(error)}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [fetchEvaluationDetails]);
 
   const columnDefinitions = useMemo(() => {
     const base = getColumnDefinition("detailedEvaluation", () => {});
@@ -169,7 +170,7 @@ function DetailedEvaluationPage() {
       col.id === "retrievedContext"
         ? {
             ...col,
-            cell: (item: any) => (
+            cell: (item: ColumnItem) => (
               <Button onClick={() => handleContextClick(item)} variant="text" size="small">
                 View
               </Button>
@@ -177,9 +178,12 @@ function DetailedEvaluationPage() {
           }
         : col
     );
-  }, []);
+  }, [handleContextClick]);
 
-  const currentPageItems = pages[Math.min(pages.length - 1, currentPageIndex - 1)]?.Items || [];
+  const currentPageItems = useMemo<EvaluationResult[]>(
+    () => pages[Math.min(pages.length - 1, currentPageIndex - 1)]?.Items ?? [],
+    [pages, currentPageIndex]
+  );
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -192,31 +196,37 @@ function DetailedEvaluationPage() {
 
   const sortedItems = useMemo(() => {
     if (!sortField || !currentPageItems.length) return currentPageItems;
-    const sorted = [...currentPageItems].sort((a: any, b: any) => {
-      const aVal = a[sortField] ?? "";
-      const bVal = b[sortField] ?? "";
-      return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
-    });
+    const col = columnDefinitions.find((c) => c.sortingField === sortField);
+    const sorted = col?.sortingComparator
+      ? [...currentPageItems].sort(col.sortingComparator)
+      : [...currentPageItems].sort((a, b) => {
+          const aVal = String(a[sortField] ?? "");
+          const bVal = String(b[sortField] ?? "");
+          return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+        });
     return sortDirection === "desc" ? sorted.reverse() : sorted;
-  }, [currentPageItems, sortField, sortDirection]);
+  }, [currentPageItems, sortField, sortDirection, columnDefinitions]);
 
-  const summaryMetrics = useMemo(() => {
-    if (allItems.length === 0) return null;
-    const avg = (field: string) => {
-      const vals = allItems.map((i) => parseFloat(i[field]) || 0);
-      return vals.reduce((a, b) => a + b, 0) / vals.length;
-    };
-    return {
-      answer: ((avg("correctness") + avg("similarity")) / 2) * 100,
-      retrieval: ((avg("context_precision") + avg("context_recall")) / 2) * 100,
-      response: ((avg("response_relevancy") + avg("faithfulness")) / 2) * 100,
-    };
-  }, [allItems]);
+  // Only groups with at least one scored metric get a card; each metric is
+  // averaged over the questions that have it (no 0 placeholders).
+  const summaryMetrics = useMemo(
+    () =>
+      METRIC_GROUPS.flatMap((group) => {
+        const pct = aggregateGroupPct(allItems, group, QUESTION_PREFIX);
+        return pct === null ? [] : [{ group, pct }];
+      }),
+    [allItems]
+  );
+
+  const failedCount = useMemo(
+    () => pages.reduce((sum, page) => sum + page.Items.filter((item) => isFailedRow(item)).length, 0),
+    [pages]
+  );
 
   const handleDownload = () => {
     if (sortedItems.length === 0) return;
-    const headers = Object.keys(sortedItems[0] as object);
-    const rows = sortedItems.map((item: any) =>
+    const headers = Object.keys(sortedItems[0]);
+    const rows = sortedItems.map((item) =>
       headers.map((h) => escapeCSVValue(item[h])).join(",")
     );
     const csv = "\uFEFF" + headers.join(",") + "\n" + rows.join("\n");
@@ -229,40 +239,52 @@ function DetailedEvaluationPage() {
 
   return (
     <Stack spacing={2}>
-      <Breadcrumbs aria-label="Breadcrumb">
+      <Breadcrumbs aria-label="breadcrumb">
         <Link
           component="button"
           underline="hover"
-          onClick={() => navigate("/admin/llm-evaluation#history")}
+          color="inherit"
+          onClick={() => navigate(`/chatbot/playground/${uuidv4()}`)}
+          sx={{ fontSize: "0.8125rem" }}
+        >
+          {brand.shortName}
+        </Link>
+        <Link
+          component="button"
+          underline="hover"
+          color="inherit"
+          onClick={() => navigate(HISTORY_PATH)}
+          sx={{ fontSize: "0.8125rem" }}
         >
           Quality Monitoring
         </Link>
-        <Typography color="text.primary">
+        <Typography color="text.primary" sx={{ fontSize: "0.8125rem" }}>
           {evaluationName || evaluationId}
         </Typography>
       </Breadcrumbs>
 
       <Stack direction="row" justifyContent="space-between" alignItems="center">
-        <Typography variant="h5" component="h1">Evaluation Details</Typography>
-        <Button
-          onClick={() => navigate("/admin/llm-evaluation#history")}
-          variant="text"
-        >
-          Back to History
+        <Typography variant="h5" component="h1">
+          Evaluation Details{evaluationName ? `: ${evaluationName}` : ""}
+        </Typography>
+        <Button onClick={() => navigate(HISTORY_PATH)} variant="text">
+          Back to Quality Monitoring
         </Button>
       </Stack>
 
-      {summaryMetrics && (
+      {failedCount > 0 && (
+        <Alert severity="warning">
+          {failedQuestionsLabel(failedCount)}. Failed questions are marked below and excluded from the scores.
+        </Alert>
+      )}
+
+      {summaryMetrics.length > 0 && (
         <Grid container spacing={2}>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <SummaryCard title="Answer Quality" pct={summaryMetrics.answer} description={METRIC_DESCRIPTIONS.answerQuality.detail} />
-          </Grid>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <SummaryCard title="Retrieval Quality" pct={summaryMetrics.retrieval} description={METRIC_DESCRIPTIONS.retrievalQuality.detail} />
-          </Grid>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <SummaryCard title="Response Quality" pct={summaryMetrics.response} description={METRIC_DESCRIPTIONS.responseQuality.detail} />
-          </Grid>
+          {summaryMetrics.map(({ group, pct }) => (
+            <Grid key={group.id} size={{ xs: 12, md: 12 / summaryMetrics.length }}>
+              <SummaryCard title={group.label} pct={pct} description={METRIC_DESCRIPTIONS[group.id].detail} />
+            </Grid>
+          ))}
         </Grid>
       )}
 
@@ -328,8 +350,8 @@ function DetailedEvaluationPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {sortedItems.map((item: any, index: number) => (
-                <TableRow key={item.question_id || index} hover>
+              {sortedItems.map((item, index) => (
+                <TableRow key={item.question_id || item.QuestionId || index} hover>
                   {columnDefinitions.map((col) => (
                     <TableCell key={col.id}>{col.cell(item)}</TableCell>
                   ))}

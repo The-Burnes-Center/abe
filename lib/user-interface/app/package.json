@@ -1,5 +1,5 @@
 {
-  "name": "aws-genai-llm-chatbot",
+  "name": "abe",
   "private": true,
   "version": "3.0.0",
   "type": "module",
@@ -15,9 +15,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@aws-amplify/ui-react": "^6.15.4",
-    "@aws-sdk/eventstream-marshaller": "^3.118.1",
-    "@aws-sdk/util-utf8": "^3.310.0",
     "@emotion/cache": "^11.14.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.0",
@@ -25,15 +22,17 @@
     "@mui/material": "^6.5.0",
     "@mui/system": "^6.5.0",
     "@mui/x-charts": "^7.29.1",
+    "@smithy/eventstream-codec": "^4.5.2",
+    "@smithy/util-utf8": "^4.5.2",
     "aws-amplify": "^6.17.0",
     "luxon": "^3.4.3",
+    "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.0.0",
     "react-router-dom": "^6.30.2",
     "react-textarea-autosize": "^8.5.3",
     "remark-gfm": "^4.0.0",
-    "styled-components": "^6.1.13",
     "uuid": "^14.0.0"
   },
   "devDependencies": {
@@ -43,6 +42,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/luxon": "^3.3.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
@@ -84,8 +84,9 @@
     "immutable": "^4.3.8",
     "flatted": "^3.4.2",
     "@babel/runtime": "^7.26.10",
-    "ajv": "^8.18.0",
     "esbuild": "^0.25.0",
-    "@smithy/config-resolver": "^4.4.0"
+    "@smithy/config-resolver": "^4.4.0",
+    "ajv@^6": "^6.14.0",
+    "ajv@^8": "^8.18.0"
   }
 }

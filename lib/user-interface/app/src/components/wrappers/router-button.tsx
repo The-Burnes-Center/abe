@@ -11,9 +11,7 @@ interface RouterButtonProps extends Omit<ButtonProps, "href"> {
 
 const RouterButton = forwardRef<HTMLButtonElement, RouterButtonProps>(
   function RouterButton({ href, loading, iconSvg, children, disabled, ...rest }, ref) {
-    const linkProps = href
-      ? { component: RouterLink as any, to: href }
-      : {};
+    const linkProps = href ? { component: RouterLink, to: href } : {};
 
     return (
       <Button

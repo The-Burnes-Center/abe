@@ -3,7 +3,7 @@
  * Transcribe streaming.
  *
  * The browser's Web Speech API was removed because it streams microphone audio
- * to Google's servers, which the OSD network blocks. Instead we:
+ * to Google's servers, which many organization networks block. Instead we:
  *   1. ask the backend for a short-lived presigned Transcribe WebSocket URL
  *      (no AWS credentials ever reach the browser),
  *   2. capture mic audio, downsample it to 16 kHz signed 16-bit PCM,
@@ -13,10 +13,10 @@
  * Audio goes browser → Transcribe directly; the backend only signs the URL.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EventStreamMarshaller } from "@aws-sdk/eventstream-marshaller";
-import { toUtf8, fromUtf8 } from "@aws-sdk/util-utf8";
+import { EventStreamCodec } from "@smithy/eventstream-codec";
+import { toUtf8, fromUtf8 } from "@smithy/util-utf8";
 
-const marshaller = new EventStreamMarshaller(toUtf8, fromUtf8);
+const codec = new EventStreamCodec(toUtf8, fromUtf8);
 
 export interface TranscribePresign {
   url: string;
@@ -83,7 +83,7 @@ function pcmEncode(input: Float32Array): ArrayBuffer {
 
 /** Wrap a PCM chunk in an AWS event-stream AudioEvent frame. */
 function encodeAudioEvent(pcm: ArrayBuffer): Uint8Array {
-  return marshaller.marshall({
+  return codec.encode({
     headers: {
       ":message-type": { type: "string", value: "event" },
       ":event-type": { type: "string", value: "AudioEvent" },
@@ -200,7 +200,7 @@ export function useTranscribeDictation({
 
     ws.onmessage = (event) => {
       try {
-        const wrapper = marshaller.unmarshall(new Uint8Array(event.data as ArrayBuffer));
+        const wrapper = codec.decode(new Uint8Array(event.data as ArrayBuffer));
         const messageType = wrapper.headers[":message-type"]?.value as string | undefined;
         const body = JSON.parse(toUtf8(wrapper.body as Uint8Array));
         if (messageType === "exception") {

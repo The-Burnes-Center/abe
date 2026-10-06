@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import Typography from "@mui/material/Typography";
 import Stack from "@mui/material/Stack";
 import Paper from "@mui/material/Paper";
@@ -15,16 +15,17 @@ import MuiLink from "@mui/material/Link";
 import ExpandMore from "@mui/icons-material/ExpandMore";
 import ExpandLess from "@mui/icons-material/ExpandLess";
 import { Link as RouterLink } from "react-router-dom";
-import { CHATBOT_NAME } from "../../common/constants";
+import { brand } from "../../common/brand";
 import { useDocumentTitle } from "../../common/hooks/use-document-title";
 import DemoVideo from "../../components/onboarding/demo-video";
+import { useVideoAvailable } from "../../components/onboarding/use-video-available";
 
 const prompts = [
-  { title: "Spell out acronyms", details: "Avoid abbreviations. For example, write 'Request for Proposal' instead of 'RFP'." },
-  { title: "Be specific and concise", details: "Provide clear and precise questions to help ABE give accurate responses." },
-  { title: "Use keywords", details: "Include important terms in your query, such as 'vendor' or 'contract'." },
+  { title: "Spell out acronyms", details: "Avoid abbreviations that may be unclear. Write out the full name, at least the first time you mention it." },
+  { title: "Be specific and concise", details: `Provide clear and precise questions to help ${brand.shortName} give accurate responses.` },
+  { title: "Use keywords", details: "Include the important terms for your topic, such as the name of a policy, program, or document." },
   { title: "Ask one question at a time", details: "Breaking down complex questions ensures better answers." },
-  { title: "Include relevant details", details: "Specify important context, like names, dates, or locations, to guide the chatbot's response." },
+  { title: "Include relevant details", details: "Specify important context, like names, dates, or locations, to guide the answer." },
   { title: "Ask follow-up questions", details: "Build on previous responses by asking follow-ups to get further clarity or additional details." },
 ];
 
@@ -61,6 +62,12 @@ function TipsTab() {
   const toggle = (key: string) =>
     setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  // Hide the whole demo card when this deployment has no clip (or it fails to load).
+  const videoAvailability = useVideoAvailable(brand.assets.demoVideo);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const handleVideoUnavailable = useCallback(() => setVideoFailed(true), []);
+  const showVideo = videoAvailability === "available" && !videoFailed;
+
   return (
     <Stack spacing={3} sx={{ mt: 3 }}>
       <Paper sx={{ p: 3 }}>
@@ -70,15 +77,17 @@ function TipsTab() {
         </Typography>
       </Paper>
 
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h4" component="h2" sx={{ mb: 1 }}>
-          See ABE in action
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          A quick walkthrough of asking a question and getting an answer with sources.
-        </Typography>
-        <DemoVideo />
-      </Paper>
+      {showVideo && (
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h4" component="h2" sx={{ mb: 1 }}>
+            See {brand.shortName} in action
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            A quick walkthrough of asking a question and getting an answer with sources.
+          </Typography>
+          <DemoVideo onUnavailable={handleVideoUnavailable} />
+        </Paper>
+      )}
 
       <Paper sx={{ p: 3 }}>
         <Typography variant="h4" component="h2" sx={{ mb: 2 }}>
@@ -129,8 +138,8 @@ function TipsTab() {
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           These are examples to get you started. Replace anything in [brackets] with
-          your own details &mdash; like the product, contract, or company you&apos;re
-          asking about.
+          your own details, like the document, topic, or name you&apos;re asking
+          about.
         </Typography>
         <Divider />
         <List disablePadding>
@@ -183,10 +192,10 @@ function AboutTab() {
     <Stack spacing={3} sx={{ mt: 3 }}>
       <Paper sx={{ p: 3 }}>
         <Typography variant="h4" component="h2" gutterBottom>
-          ABE
+          {brand.assistantName}
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          ABE is an AI-powered assistant that answers questions from your
+          {brand.assistantName} is an AI-powered assistant that answers questions from your
           organization's knowledge base. It uses advanced language models and
           retrieval over your curated documents to help users find answers
           quickly and accurately, with links to the sources.
@@ -198,7 +207,7 @@ function AboutTab() {
           How It Works
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          ABE uses Retrieval-Augmented Generation (RAG) to search through your
+          {brand.shortName} uses Retrieval-Augmented Generation (RAG) to search through your
           organization's documents and data and provide contextually relevant answers.
           Source documents are linked with each response so you can verify the information.
         </Typography>
@@ -209,7 +218,7 @@ function AboutTab() {
           Important Notes
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          ABE provides guidance based on available documentation. Always verify
+          {brand.shortName} provides guidance based on available documentation. Always verify
           critical decisions against the official source documents, and consult the
           appropriate team for complex situations.
         </Typography>
@@ -226,8 +235,8 @@ function SupportTab() {
           Need Help?
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          If you encounter any issues or have questions about using ABE,
-          please reach out to your system administrator or the ABE support team.
+          If you encounter any issues or have questions about using{" "}
+          {brand.shortName}, please contact {brand.supportContact}.
         </Typography>
       </Paper>
 
@@ -237,8 +246,8 @@ function SupportTab() {
         </Typography>
         <Typography variant="body1" color="text.secondary">
           Use the thumbs-down feedback button on any response to report
-          inaccurate or unhelpful answers. Your feedback helps improve ABE&apos;s
-          accuracy over time.
+          inaccurate or unhelpful answers. Your feedback helps improve{" "}
+          {brand.shortName}&apos;s accuracy over time.
         </Typography>
       </Paper>
     </Stack>
@@ -253,7 +262,7 @@ export default function HelpPage() {
     <Box>
       <Breadcrumbs sx={{ mb: 2 }} aria-label="breadcrumb">
         <MuiLink component={RouterLink} to="/" underline="hover" color="inherit" sx={{ fontSize: "0.8125rem" }}>
-          {CHATBOT_NAME}
+          {brand.shortName}
         </MuiLink>
         <Typography color="text.primary" sx={{ fontSize: "0.8125rem" }}>
           Help & Guide
@@ -271,7 +280,7 @@ export default function HelpPage() {
         sx={{ borderBottom: 1, borderColor: "divider" }}
       >
         <Tab label="Tips & Questions" id="help-tab-0" aria-controls="help-tabpanel-0" />
-        <Tab label="About ABE" id="help-tab-1" aria-controls="help-tabpanel-1" />
+        <Tab label={`About ${brand.shortName}`} id="help-tab-1" aria-controls="help-tabpanel-1" />
         <Tab label="Support" id="help-tab-2" aria-controls="help-tabpanel-2" />
       </Tabs>
 

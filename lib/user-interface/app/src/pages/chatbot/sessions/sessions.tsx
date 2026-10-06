@@ -3,7 +3,7 @@ import Breadcrumbs from "@mui/material/Breadcrumbs";
 import MuiLink from "@mui/material/Link";
 import Typography from "@mui/material/Typography";
 import { Link as RouterLink } from "react-router-dom";
-import { CHATBOT_NAME } from "../../../common/constants";
+import { brand } from "../../../common/brand";
 import { useDocumentTitle } from "../../../common/hooks/use-document-title";
 
 export default function SessionPage() {
@@ -12,7 +12,7 @@ export default function SessionPage() {
     <>
       <Breadcrumbs sx={{ mb: 2 }}>
         <MuiLink component={RouterLink} to="/" underline="hover" color="inherit">
-          {CHATBOT_NAME}
+          {brand.shortName}
         </MuiLink>
         <Typography color="text.primary">Sessions</Typography>
       </Breadcrumbs>

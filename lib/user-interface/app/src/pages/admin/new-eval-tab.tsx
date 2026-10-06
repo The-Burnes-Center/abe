@@ -33,6 +33,7 @@ import { AppContext } from "../../common/app-context";
 import { ApiClient } from "../../common/api-client/api-client";
 import { Utils } from "../../common/utils";
 import { useNotifications } from "../../components/notif-manager";
+import type { EvalStep, TestCaseFile } from "../../common/api-client/evaluations-client";
 
 interface RunEvalTabProps {
   onComplete: () => void;
@@ -40,11 +41,28 @@ interface RunEvalTabProps {
 
 type SourceType = "upload" | "past" | "library";
 
-interface EvalStep {
-  name: string;
-  status: string;
-  chunksCompleted?: number;
-  chunksTotal?: number;
+const RUNNING_EVAL_KEY = "runningEvalId";
+const POLL_INTERVAL_MS = 3000;
+const MAX_CONSECUTIVE_POLL_ERRORS = 6;
+const TERMINAL_STATUSES = ["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"];
+
+// sessionStorage can throw (private mode, blocked storage); a lost resume
+// marker only means a reload won't reattach to a running evaluation.
+function readRunningEvalId(): string | null {
+  try {
+    return sessionStorage.getItem(RUNNING_EVAL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeRunningEvalId(id: string | null): void {
+  try {
+    if (id) sessionStorage.setItem(RUNNING_EVAL_KEY, id);
+    else sessionStorage.removeItem(RUNNING_EVAL_KEY);
+  } catch {
+    // See readRunningEvalId.
+  }
 }
 
 export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
@@ -56,8 +74,8 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
   const [evalName, setEvalName] = useState("");
   const [globalError, setGlobalError] = useState<string | undefined>();
 
-  const [pastFiles, setPastFiles] = useState<any[]>([]);
-  const [selectedFile, setSelectedFile] = useState<any>(null);
+  const [pastFiles, setPastFiles] = useState<TestCaseFile[]>([]);
+  const [selectedFile, setSelectedFile] = useState<TestCaseFile | null>(null);
   const [loadingFiles, setLoadingFiles] = useState(false);
 
   const [libraryCount, setLibraryCount] = useState<number | null>(null);
@@ -66,22 +84,22 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
   const [uploadedFile, setUploadedFile] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [running, setRunning] = useState(false);
-  const [evaluationId, setEvaluationId] = useState<string | null>(() =>
-    sessionStorage.getItem("runningEvalId")
-  );
+  // The evaluation being polled. Initialized from sessionStorage so a reload
+  // reattaches to a run that is still in progress.
+  const [pollingId, setPollingId] = useState<string | null>(readRunningEvalId);
+  const [running, setRunning] = useState(() => pollingId !== null);
   const [evalStatus, setEvalStatus] = useState<string>("PENDING");
   const [evalSteps, setEvalSteps] = useState<EvalStep[]>([]);
   const [elapsed, setElapsed] = useState(0);
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadPastFiles = useCallback(async () => {
     setLoadingFiles(true);
     try {
       const result = await apiClient.evaluations.getDocuments();
       setPastFiles(result?.Contents || []);
-    } catch {
+    } catch (err) {
       setPastFiles([]);
+      setGlobalError(`Could not load past uploads: ${Utils.getErrorMessage(err)}`);
     } finally {
       setLoadingFiles(false);
     }
@@ -101,54 +119,51 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
     loadLibraryStats();
   }, [loadPastFiles, loadLibraryStats]);
 
+  // Poll the run's status while pollingId is set. Keyed on the id, so
+  // starting a new run (or unmounting) tears down the previous interval.
   useEffect(() => {
-    if (evaluationId) {
-      setRunning(true);
-      startPolling(evaluationId);
-    }
-    return () => stopPolling();
-  }, []);
-
-  const startPolling = (id: string) => {
-    stopPolling();
+    if (!pollingId) return undefined;
+    let cancelled = false;
     let consecutiveErrors = 0;
+
+    const finish = () => {
+      clearInterval(intervalId);
+      writeRunningEvalId(null);
+      setPollingId(null);
+    };
+
     const poll = async () => {
       try {
-        const status = await apiClient.evaluations.getEvalStatus(id);
+        const status = await apiClient.evaluations.getEvalStatus(pollingId);
+        if (cancelled) return;
         consecutiveErrors = 0;
         setEvalStatus(status.status);
         setEvalSteps(status.steps || []);
         setElapsed(status.elapsedSeconds || 0);
-
-        if (status.status === "SUCCEEDED" || status.status === "FAILED" || status.status === "TIMED_OUT" || status.status === "ABORTED") {
-          stopPolling();
-          sessionStorage.removeItem("runningEvalId");
-          if (status.status === "SUCCEEDED") {
-            addNotification("success", "Evaluation completed successfully!");
-          } else {
-            addNotification("error", `Evaluation ${status.status.toLowerCase()}`);
-          }
+        if (!TERMINAL_STATUSES.includes(status.status)) return;
+        finish();
+        if (status.status === "SUCCEEDED") {
+          addNotification("success", "Evaluation completed successfully!");
+        } else {
+          addNotification("error", `Evaluation ${status.status.toLowerCase()}`);
         }
-      } catch (err) {
-        consecutiveErrors++;
-        if (consecutiveErrors >= 6) {
-          stopPolling();
-          setEvalStatus("FAILED");
-          setGlobalError("Lost connection to evaluation status. Please check the History tab for results.");
-          sessionStorage.removeItem("runningEvalId");
-        }
+      } catch {
+        if (cancelled) return;
+        consecutiveErrors += 1;
+        if (consecutiveErrors < MAX_CONSECUTIVE_POLL_ERRORS) return;
+        finish();
+        setEvalStatus("FAILED");
+        setGlobalError("Lost connection to evaluation status. Please check the History tab for results.");
       }
     };
-    poll();
-    pollRef.current = setInterval(poll, 3000);
-  };
 
-  const stopPolling = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  };
+    const intervalId = setInterval(poll, POLL_INTERVAL_MS);
+    poll();
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [pollingId, apiClient, addNotification]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -162,7 +177,14 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
     setGlobalError(undefined);
     try {
       const signedUrl = await apiClient.evaluations.getUploadURL(file.name, file.type);
-      await fetch(signedUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+      const uploadResponse = await fetch(signedUrl, {
+        method: "PUT",
+        body: file,
+        headers: { "Content-Type": file.type },
+      });
+      if (!uploadResponse.ok) {
+        throw new Error(`storage rejected the file (${uploadResponse.status})`);
+      }
       setUploadedFile(`test-cases/${file.name}`);
       addNotification("success", `Uploaded ${file.name}`);
     } catch (err) {
@@ -178,7 +200,7 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
 
     try {
       setRunning(true);
-      let result: any;
+      let result: { evaluationId: string };
 
       if (sourceType === "upload") {
         if (!uploadedFile) {
@@ -205,9 +227,10 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
       }
 
       const id = result.evaluationId;
-      setEvaluationId(id);
-      sessionStorage.setItem("runningEvalId", id);
-      startPolling(id);
+      writeRunningEvalId(id);
+      setEvalStatus("PENDING");
+      setEvalSteps([]);
+      setPollingId(id);
     } catch (err) {
       setGlobalError(`Failed to start: ${Utils.getErrorMessage(err)}`);
       setRunning(false);
@@ -224,7 +247,7 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
       ? (evalSteps.filter((s) => s.status === "completed").length / evalSteps.length) * 100
       : 0;
 
-    const isTerminal = ["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"].includes(evalStatus);
+    const isTerminal = TERMINAL_STATUSES.includes(evalStatus);
 
     return (
       <Paper sx={{ p: 3 }}>
@@ -233,7 +256,7 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
         </Typography>
 
         <Stepper orientation="vertical" activeStep={evalSteps.findIndex((s) => s.status === "running")}>
-          {evalSteps.map((step, i) => (
+          {evalSteps.map((step) => (
             <Step key={step.name} completed={step.status === "completed"}>
               <StepLabel
                 error={step.status === "failed"}
@@ -287,7 +310,7 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
               variant="outlined"
               onClick={() => {
                 setRunning(false);
-                setEvaluationId(null);
+                setPollingId(null);
                 setEvalSteps([]);
                 setEvalStatus("PENDING");
               }}
@@ -395,10 +418,8 @@ export default function NewEvalTab({ onComplete }: RunEvalTabProps) {
                         <Radio checked={selectedFile?.Key === file.Key} size="small" />
                       </TableCell>
                       <TableCell>{file.Key}</TableCell>
-                      <TableCell>
-                        {new Date(file.LastModified).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell>{Utils.bytesToSize(file.Size)}</TableCell>
+                      <TableCell>{Utils.formatTimestamp(file.LastModified)}</TableCell>
+                      <TableCell>{Utils.bytesToSize(file.Size ?? 0)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

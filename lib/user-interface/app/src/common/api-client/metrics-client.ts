@@ -1,263 +1,149 @@
-import {
-  Utils
-} from "../utils"
+import { Utils } from "../utils";
 import { AppConfig } from "../types";
 
 function devLog(...args: unknown[]) {
   if (import.meta.env.DEV) console.log(...args);
 }
 
-// This was made by cohort 1. I'm using it to add KPI data
+const DEFAULT_LOOKBACK_DAYS = 30;
+
+/** Range echoed back by GET /metrics so the UI can label what it is showing. */
+export interface RangeMeta {
+  from: string;
+  to: string;
+  days: number;
+  hour_from: number | null;
+  hour_to: number | null;
+  timezone: string;
+}
+
+export interface DailyUser {
+  user_id: string;
+  display_name: string;
+  sessions: number;
+  messages: number;
+}
+
+export interface DailyBreakdownRow {
+  date: string;
+  sessions: number;
+  messages: number;
+  unique_users: number;
+  users?: DailyUser[];
+}
+
+export interface HourlyBucket {
+  hour: string;
+  sessions: number;
+}
+
+/** GET /metrics (no type): headline KPIs plus daily and hourly series. */
+export interface MetricsOverview {
+  unique_users: number;
+  total_sessions: number;
+  total_messages: number;
+  avg_messages_per_session: number;
+  peak_hour: string;
+  hourly_distribution?: HourlyBucket[];
+  /** 24 rows x 7 cols (Mon..Sun), bucketed server-side in the deployment time zone. */
+  hour_by_weekday?: number[][];
+  daily_breakdown: DailyBreakdownRow[];
+  timezone?: string;
+  range?: RangeMeta;
+}
+
+export interface FAQSample {
+  question: string;
+  display_name?: string;
+}
+
+export interface FAQTopic {
+  topic: string;
+  count: number;
+  sample_questions: FAQSample[];
+}
+
+/** GET /metrics?type=faq */
+export interface FAQInsights {
+  topics: FAQTopic[];
+  total_classified: number;
+  range?: RangeMeta;
+}
+
+export interface TopicCount {
+  topic: string;
+  count: number;
+}
+
+export interface UserRecentQuestion {
+  question: string;
+  topic: string;
+  timestamp: string;
+}
+
+export interface UserBreakdownRow {
+  user_id: string;
+  display_name: string;
+  messages: number;
+  top_topics: TopicCount[];
+  recent_questions: UserRecentQuestion[];
+}
+
+/** GET /metrics?type=by_user */
+export interface UserBreakdown {
+  users: UserBreakdownRow[];
+  total_messages: number;
+  range?: RangeMeta;
+}
+
+/** GET /metrics?type=traffic */
+export interface TrafficDetails {
+  daily_breakdown: DailyBreakdownRow[];
+  hourly_distribution: HourlyBucket[];
+  hour_by_weekday: number[][];
+  avg_messages_per_session: number;
+  peak_hour: string;
+  timezone?: string;
+  range?: RangeMeta;
+}
+
+export interface MetricsFilters {
+  /** ISO date YYYY-MM-DD in the deployment time zone. Takes precedence over `days`. */
+  from?: string;
+  /** ISO date YYYY-MM-DD in the deployment time zone. Takes precedence over `days`. */
+  to?: string;
+  /** Trailing-N-days lookback (fallback when from/to omitted). */
+  days?: number;
+  /** Hour-of-day window in the deployment time zone, inclusive. 0-23. */
+  hourFrom?: number;
+  hourTo?: number;
+}
+
+type MetricType = "" | "faq" | "by_user" | "traffic";
+
+/** Admin analytics client for the GET /metrics endpoint. */
 export class MetricClient {
   private readonly API: string;
   constructor(protected _appConfig: AppConfig) {
-    this.API = _appConfig.httpEndpoint.slice(0,-1);}
-
-  async getInvocationCount() {
-    try {
-      const auth = await Utils.authenticate();      
-      const response = await fetch(this.API + '/chat-invocations-count', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization' : auth,
-          "Access-Control-Allow-Origin": "*",
-        },        
-      });
-      //console.log(response);
-      return await response.json()
-    }
-    catch (err) {
-      devLog(err);
-      return "unknown";
-    }
+    this.API = _appConfig.httpEndpoint.slice(0, -1);
   }
 
-  async getResponseTime() {
-    try {
-      const auth = await Utils.authenticate();      
-      const response = await fetch(this.API + '/response-time', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization' : auth
-        },        
-      });
-      //console.log(response);
-      return await response.json()
-    }
-    catch (err) {
-      devLog(err);
-      return "unknown";
-    }
-  }
-
-  async saveChatInteraction(interactionData) {
-    // timestamp generated in lambda function
-    //console.log(interactionData["interaction_data"]);//.interaction_data);
-    //console.log("hi hi")
-    try {
-      const auth = await Utils.authenticate();      
-      const response = await fetch(this.API + '/chatbot-use', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization' : auth,
-        },
-        body: JSON.stringify({interaction_data: interactionData}),
-      })
-      //console.log(JSON.stringify({interaction_data: interactionData}));
-      if (!response.ok) {
-        const errorText = await response.text();
-        devLog("Error response:", response.status, errorText);
-      }
-    } catch (e) {
-      devLog("Error saving chatbot interaction", e);
-    }
-  }
-
-  async getChatbotUse(startTime? : string, endTime? : string, nextPageToken? : string) {
-    try {
-      const auth = await Utils.authenticate();
-      //console.log("Parameters: " + {startTime,endTime,nextPageToken});
-      const params = new URLSearchParams();
-      if (startTime) params.append("startTime", startTime);
-      if (endTime) params.append("endTime", endTime);
-      if (nextPageToken) params.append("nextPageToken", nextPageToken);
-
-      const url = `${this.API}/chatbot-use?${params.toString()}`;
-      //console.log("This is the link we're using to fetch response:", url);
-    
-      const response = await fetch(this.API + '/chatbot-use?' + params.toString(), {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization' : auth,
-        },        
-      });
-      return await response.json()
-    } catch (e) {
-      devLog("Error retrieving chatbot use data", e);
-    }
-}
-
-  async deleteChatbotUses(timestamp: string) {
-    try {
-      const auth = await Utils.authenticate();
-      const params = new URLSearchParams({Timestamp: timestamp});
-      await fetch(this.API + '/chatbot-use?' + params.toString(), {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': auth
-        },      
-      });
-    } catch (e) {
-      devLog("Error deleting chatbot use datapoints", e);
-    }
-    
-  }
-
-  async downloadChatbotUses(startTime?: string, endTime?: string) {
-    try {
-        const auth = await Utils.authenticate();
-        const response = await fetch(this.API + '/chatbot-use/download', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': auth
-            },
-            body: JSON.stringify({ startTime, endTime })
-        });
-
-        // Check if the response is OK, else throw an error
-        if (!response.ok) {
-            throw new Error(`Failed to fetch download URL: ${response.statusText}`);
-        }
-
-        const result = await response.json();
-
-        // Fetch the actual file for download
-        const fileResponse = await fetch(result.download_url);
-        if (!fileResponse.ok) {
-            throw new Error("Failed to download the file.");
-        }
-
-        const blob = await fileResponse.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-
-        // readable dates yyyy-mm-dd
-        if (!startTime) throw new Error("startTime is required for download filename");
-        const [startYear, startMonth, startDayTime] = startTime.split('-');
-        const startDay = startDayTime.split('T')[0];
-        const newStart = `${startYear}-${startMonth}-${startDay}`;
-        const [endYear, endtMonth, endDayTime] = startTime.split('-');
-        const endDay = endDayTime.split('T')[0];
-        const newEnd = `${endYear}-${endtMonth}-${endDay}`;
-        a.download = `interaction-data-${newStart}_to_${newEnd}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-    } catch (error) {
-        devLog("Download failed:", error);
-        throw error;
-    }
-  }
-
-  async incrementLogin() {
-    //console.log(JSON.stringify({interaction_data: interactionData}));
-    try {
-      const auth = await Utils.authenticate();      
-      const response = await fetch(this.API + '/daily-logins', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization' : auth,
-        },
-        //body: JSON.stringify({date: date}), // does something need to be here?
-      })
-      //console.log(JSON.stringify({interaction_data: interactionData}));
-      if (!response.ok) {
-        const errorText = await response.text();
-        devLog("Error response:", response.status, errorText);
-      }
-    } catch (e) {
-      devLog("Error incrementing daily logins", e);
-    }
-  }
-
-  async getDailyLogins(startDate? : string, endDate? : string) {
-    try {
-      const auth = await Utils.authenticate();
-      const params = new URLSearchParams();
-      if (startDate) params.append("startDate", startDate);
-      if (endDate) params.append("endDate", endDate);
-
-      const url = `${this.API}/daily-logins?${params.toString()}`;
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization' : auth,
-        },        
-      });
-      const data = await response.json();
-      // return the data part of the series BarChart
-      const chartData = data['logins'].map((item) => ({x: item['Timestamp'], y: parseInt(item['Count'])}));
-    
-      return chartData;
-    } catch (e) {
-      devLog("Error retrieving daily logins", e);
-      return [];
-    }
-  }
-
-  async getDailyUses(startDate?: string, endDate?: string) {
-    const uses = await this.getChatbotUse(startDate, endDate);
-    const objs = uses.Items;
-    let dict: {string: number};
-    objs.array.forEach(obj => {
-      const date = obj['Timestamp'].split('T')[0];
-
-      if (dict[date]) {
-        dict[date] += 1;
-      } else {
-          dict[date] = 1;
-      }
-    });
-  }
-
-  async getAvgUsesPerUsers(startDate: string, endDate: string) {
-    // calculates the average daily usage in the last week
-
-    const logins = await this.getDailyLogins(startDate.split('T')[0], endDate.split('T')[0]);
-    const users = logins.length;
-
-    const uses = await this.getChatbotUse(startDate, endDate);
-    return uses['Items'].length / users;
-  }
-
-  private buildMetricsParams(type: string, filters?: MetricsFilters): URLSearchParams {
+  private buildMetricsParams(type: MetricType, filters?: MetricsFilters): URLSearchParams {
     const params = new URLSearchParams();
     if (type) params.set("type", type);
     if (filters?.from) params.set("from", filters.from);
     if (filters?.to) params.set("to", filters.to);
     if (filters?.from === undefined && filters?.to === undefined) {
-      params.set("days", String(filters?.days ?? 30));
+      params.set("days", String(filters?.days ?? DEFAULT_LOOKBACK_DAYS));
     }
-    if (filters?.agency) params.set("agency", filters.agency);
     if (typeof filters?.hourFrom === "number") params.set("hour_from", String(filters.hourFrom));
     if (typeof filters?.hourTo === "number") params.set("hour_to", String(filters.hourTo));
     return params;
   }
 
-  private async fetchMetrics(type: string, filters?: MetricsFilters) {
+  private async fetchMetrics<T>(type: MetricType, filters?: MetricsFilters): Promise<T> {
     const auth = await Utils.authenticate();
-    const params = this.buildMetricsParams(type, filters);
-    const qs = params.toString();
+    const qs = this.buildMetricsParams(type, filters).toString();
     const url = qs ? `${this.API}/metrics?${qs}` : `${this.API}/metrics`;
     const response = await fetch(url, {
       method: "GET",
@@ -267,70 +153,29 @@ export class MetricClient {
       },
     });
     if (!response.ok) {
-      throw new Error(`Failed to fetch metrics (${type || "overview"}): ${response.statusText}`);
+      const fallback = `Failed to load ${type || "overview"} metrics`;
+      const message = await Utils.extractServerError(response, fallback);
+      devLog("Metrics request failed:", response.status, message);
+      throw new Error(message);
     }
-    return response.json();
+    return (await response.json()) as T;
   }
 
-  async getMetrics(filters?: MetricsFilters) {
-    try {
-      return await this.fetchMetrics("", filters);
-    } catch (err) {
-      devLog("Error retrieving metrics:", err);
-      throw err;
-    }
+  async getMetrics(filters?: MetricsFilters): Promise<MetricsOverview> {
+    return this.fetchMetrics<MetricsOverview>("", filters);
   }
 
-  async getFAQInsights(filters?: MetricsFilters | number) {
-    try {
-      return await this.fetchMetrics("faq", normalizeFilters(filters));
-    } catch (err) {
-      devLog("Error retrieving FAQ insights:", err);
-      throw err;
-    }
+  async getFAQInsights(filters?: MetricsFilters | number): Promise<FAQInsights> {
+    return this.fetchMetrics<FAQInsights>("faq", normalizeFilters(filters));
   }
 
-  async getAgencyBreakdown(filters?: MetricsFilters | number) {
-    try {
-      return await this.fetchMetrics("by_agency", normalizeFilters(filters));
-    } catch (err) {
-      devLog("Error retrieving agency breakdown:", err);
-      throw err;
-    }
+  async getUserBreakdown(filters?: MetricsFilters | number): Promise<UserBreakdown> {
+    return this.fetchMetrics<UserBreakdown>("by_user", normalizeFilters(filters));
   }
 
-  async getUserBreakdown(filters?: MetricsFilters | number) {
-    try {
-      return await this.fetchMetrics("by_user", normalizeFilters(filters));
-    } catch (err) {
-      devLog("Error retrieving user breakdown:", err);
-      throw err;
-    }
+  async getTrafficDetails(filters?: MetricsFilters | number): Promise<TrafficDetails> {
+    return this.fetchMetrics<TrafficDetails>("traffic", normalizeFilters(filters));
   }
-
-  async getTrafficDetails(filters?: MetricsFilters | number) {
-    try {
-      return await this.fetchMetrics("traffic", normalizeFilters(filters));
-    } catch (err) {
-      devLog("Error retrieving traffic details:", err);
-      throw err;
-    }
-  }
-
-}
-
-export interface MetricsFilters {
-  /** ISO date YYYY-MM-DD (ET). If provided, takes precedence over `days`. */
-  from?: string;
-  /** ISO date YYYY-MM-DD (ET). If provided, takes precedence over `days`. */
-  to?: string;
-  /** Trailing-N-days lookback (fallback when from/to omitted). */
-  days?: number;
-  /** Restrict to a single agency. */
-  agency?: string;
-  /** Hour-of-day window in ET, inclusive. 0–23. */
-  hourFrom?: number;
-  hourTo?: number;
 }
 
 function normalizeFilters(input?: MetricsFilters | number): MetricsFilters | undefined {

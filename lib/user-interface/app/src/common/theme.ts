@@ -78,6 +78,8 @@ export const tokens = {
       paper: "#FFFFFF",
       border: "#E2E5EA",
       borderSubtle: "#EEF0F3",
+      // Form-control outlines need >= 3:1 against the surface (WCAG 1.4.11).
+      inputBorder: "#858D9C",
       textPrimary: "#1A1D23",
       textSecondary: "#555D6B",
       textTertiary: "#6B7280",
@@ -120,6 +122,7 @@ export const tokens = {
       paper: "#1A2B40",
       border: "#2A3B52",
       borderSubtle: "#1F3048",
+      inputBorder: "#71809A",
       textPrimary: "#E8EDF2",
       textSecondary: "#9DABB8",
       textTertiary: "#8D97A8",
@@ -163,9 +166,17 @@ export const tokens = {
  * Only color, radius, shadow, and transition tokens are injected -- the
  * full typography scale lives exclusively in the MUI theme object.
  */
+/**
+ * The active color set: brand-driven colors (config/brand.ts) overlaid on the
+ * neutral default tokens. Use this instead of `tokens.colors[mode]` so
+ * components pick up the brand.
+ */
+export function themeColors(mode: ThemeMode) {
+  return { ...tokens.colors[mode], ...(mode === "dark" ? brand.colorsDark : brand.colorsLight) };
+}
+
 function applyTokensAsCSSVars(mode: ThemeMode) {
-  // Brand-driven colors (config/brand.ts) overlay the neutral default tokens.
-  const c = { ...tokens.colors[mode], ...(mode === "dark" ? brand.colorsDark : brand.colorsLight) };
+  const c = themeColors(mode);
   const root = document.documentElement;
   // Surface the active mode to plain CSS via the [data-theme] attribute so
   // non-MUI / third-party components can override their colors for dark mode.
@@ -198,13 +209,13 @@ function applyTokensAsCSSVars(mode: ThemeMode) {
  */
 export function buildTheme(mode: ThemeMode): Theme {
   applyTokensAsCSSVars(mode);
-  // Brand-driven colors (config/brand.ts) overlay the neutral default tokens.
-  const c = { ...tokens.colors[mode], ...(mode === "dark" ? brand.colorsDark : brand.colorsLight) };
+  const c = themeColors(mode);
 
   return createTheme({
     palette: {
       mode,
-      primary: { main: c.primary, dark: c.primaryDark, light: c.primaryLight },
+      // contrastText from the brand: dark mode's light primary needs dark text.
+      primary: { main: c.primary, dark: c.primaryDark, light: c.primaryLight, contrastText: c.primaryContrast },
       background: { default: c.surface, paper: c.paper },
       text: { primary: c.textPrimary, secondary: c.textSecondary },
       success: { main: c.success, light: c.successLight },
@@ -267,10 +278,10 @@ export function buildTheme(mode: ThemeMode): Theme {
             backgroundColor: c.surface,
             transition: `background-color ${tokens.transitions.normal}`,
           },
+          // The one focus ring for the app (WCAG 2.4.7 / 1.4.11), brand-driven.
           "*:focus-visible": {
-            outline: `2px solid ${c.primary}`,
+            outline: `3px solid ${c.primary}`,
             outlineOffset: "2px",
-            borderRadius: tokens.radii.xs,
           },
           ".sr-only": {
             position: "absolute",
@@ -379,18 +390,16 @@ export function buildTheme(mode: ThemeMode): Theme {
           },
         },
       },
-      MuiTextField: {
+      MuiOutlinedInput: {
         styleOverrides: {
           root: {
-            "& .MuiOutlinedInput-root": {
-              borderRadius: tokens.radii.sm,
-              "& fieldset": {
-                borderColor: c.border,
-                transition: `border-color ${tokens.transitions.fast}`,
-              },
-              "&:hover fieldset": {
-                borderColor: c.textTertiary,
-              },
+            borderRadius: tokens.radii.sm,
+            "& .MuiOutlinedInput-notchedOutline": {
+              borderColor: c.inputBorder,
+              transition: `border-color ${tokens.transitions.fast}`,
+            },
+            "&:hover .MuiOutlinedInput-notchedOutline": {
+              borderColor: c.textSecondary,
             },
           },
         },
@@ -435,6 +444,8 @@ export function buildTheme(mode: ThemeMode): Theme {
         styleOverrides: {
           root: {
             boxShadow: mode === "light" ? "0 1px 3px rgba(0,0,0,0.1)" : "0 1px 3px rgba(0,0,0,0.3)",
+            // The primary ring is too close to the header color; use the header text color.
+            "& *:focus-visible": { outlineColor: c.headerText },
           },
         },
       },

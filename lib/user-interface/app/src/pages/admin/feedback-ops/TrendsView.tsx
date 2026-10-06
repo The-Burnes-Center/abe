@@ -14,20 +14,29 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import type { Theme } from "@mui/material/styles";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import BubbleChartOutlinedIcon from "@mui/icons-material/BubbleChartOutlined";
 import SourceOutlinedIcon from "@mui/icons-material/SourceOutlined";
-import {
-  MonitoringData,
-  ClusterSummary,
-  formatDate,
-  label,
-} from "./types";
+import { MonitoringData, formatDate, label } from "./types";
+import LoadErrorAlert from "./LoadErrorAlert";
 
 interface TrendsViewProps {
   monitoring: MonitoringData | null;
   loadingMeta: boolean;
-  onCreateDraftFromCluster?: (cluster: ClusterSummary) => void;
+  /** Message from the last failed trends load, or null when it succeeded. */
+  error?: string | null;
+  /** Re-run the trends fetch after a failure. */
+  onRetry: () => void;
+}
+
+const FALLBACK_BAR_COLOR = "grey.400";
+
+/** Resolve a palette path like "warning.main" to a CSS color for the active theme. */
+function paletteColor(theme: Theme, path: string): string {
+  const [group, shade] = path.split(".");
+  const entry = (theme.palette as unknown as Record<string, Record<string, string> | undefined>)[group];
+  return entry?.[shade] ?? theme.palette.grey[400];
 }
 
 const ROOT_CAUSE_COLORS: Record<string, string> = {
@@ -107,14 +116,22 @@ function BreakdownTable({
                 width: `${pct}%`,
                 minWidth: pct > 5 ? 40 : 20,
                 height: "100%",
-                bgcolor: colorMap[key] || "grey.400",
+                bgcolor: colorMap[key] || FALLBACK_BAR_COLOR,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
               {pct > 12 && (
-                <Typography variant="caption" sx={{ color: "#fff", fontSize: "0.75rem", fontWeight: 600 }}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    // Bar colors get lighter in dark mode, so pick the label color per segment.
+                    color: (t) => t.palette.getContrastText(paletteColor(t, colorMap[key] || FALLBACK_BAR_COLOR)),
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                  }}
+                >
                   {count}
                 </Typography>
               )}
@@ -136,7 +153,7 @@ function BreakdownTable({
               <TableCell sx={{ py: 0.75, fontSize: "0.8125rem" }}>
                 <Stack direction="row" gap={1} alignItems="center">
                   <Box
-                    sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: colorMap[key] || "grey.400", flexShrink: 0 }}
+                    sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: colorMap[key] || FALLBACK_BAR_COLOR, flexShrink: 0 }}
                     aria-hidden="true"
                   />
                   {label(key)}
@@ -156,11 +173,14 @@ function BreakdownTable({
   );
 }
 
-export default function TrendsView({ monitoring, loadingMeta, onCreateDraftFromCluster }: TrendsViewProps) {
+export default function TrendsView({ monitoring, loadingMeta, error, onRetry }: TrendsViewProps) {
   const navigate = useNavigate();
 
   if (loadingMeta && !monitoring) return <TrendsSkeleton />;
-  if (!monitoring) return <EmptyTrends />;
+  const errorAlert = error ? (
+    <LoadErrorAlert title="Trends could not be loaded" message={error} onRetry={onRetry} retrying={loadingMeta} />
+  ) : null;
+  if (!monitoring) return errorAlert ?? <EmptyTrends />;
 
   const overview = monitoring.feedbackOverview;
   const clusters = (monitoring.clusterSummaries || []).filter(
@@ -170,6 +190,8 @@ export default function TrendsView({ monitoring, loadingMeta, onCreateDraftFromC
 
   return (
     <Stack spacing={3}>
+      {errorAlert}
+
       {/* Issue patterns */}
       {clusters.length > 0 && (
         <Box>
@@ -297,7 +319,7 @@ export default function TrendsView({ monitoring, loadingMeta, onCreateDraftFromC
                 {sources.map((row, index) => (
                   <TableRow
                     key={row.sourceTitle}
-                    sx={{ bgcolor: index < 3 ? "error.50" : undefined }}
+                    sx={{ bgcolor: index < 3 ? "error.light" : undefined }}
                   >
                     <TableCell sx={{ fontSize: "0.8125rem" }}>
                       <Stack direction="row" gap={1} alignItems="center">

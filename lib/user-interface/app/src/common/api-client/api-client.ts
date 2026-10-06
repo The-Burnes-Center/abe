@@ -19,6 +19,7 @@ import { MetricClient } from "./metrics-client";
 import { EvaluationsClient } from "./evaluations-client";
 import { ExcelIndexClient } from "./excel-index-client";
 import { SyncClient } from "./sync-client";
+import { UsersClient } from "./users-client";
 
 export class ApiClient {
 
@@ -37,6 +38,7 @@ export class ApiClient {
   private _evaluationsClient: EvaluationsClient | undefined;
   private _excelIndexClient: ExcelIndexClient | undefined;
   private _syncClient: SyncClient | undefined;
+  private _usersClient: UsersClient | undefined;
 
 
 
@@ -98,6 +100,14 @@ export class ApiClient {
       this._syncClient = new SyncClient(this._appConfig);
     }
     return this._syncClient;
+  }
+
+  /** Lazily construct and cache the admin Users sub-client. */
+  public get users() {
+    if (!this._usersClient) {
+      this._usersClient = new UsersClient(this._appConfig);
+    }
+    return this._usersClient;
   }
 
   /**

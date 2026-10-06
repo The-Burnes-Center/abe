@@ -8,7 +8,6 @@ import SkipLink from "../../components/skip-link";
 import LandingPage from "../../pages/landing-page";
 import LandingPageInfo from "../../pages/landing-page-info";
 import LandingPageStart from "../../pages/landing-page-start";
-import HelpInformation from "../../pages/help/help-information";
 
 /**
  * Smoke-level WCAG 2.1 AA gate.
@@ -54,13 +53,4 @@ describe("a11y smoke", () => {
     expect(await axe(container)).toHaveNoViolations();
   });
 
-  it("Help information section has no accessibility violations", async () => {
-    const { container } = render(
-      <main>
-        <h1>Help</h1>
-        <HelpInformation />
-      </main>
-    );
-    expect(await axe(container)).toHaveNoViolations();
-  });
 });

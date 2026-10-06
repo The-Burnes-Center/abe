@@ -38,16 +38,8 @@ import type {
 } from "../../common/api-client/sync-client";
 import { useNotifications } from "../../components/notif-manager";
 import { Utils } from "../../common/utils";
-
-const DAYS = [
-  { value: "SUN", label: "Sunday" },
-  { value: "MON", label: "Monday" },
-  { value: "TUE", label: "Tuesday" },
-  { value: "WED", label: "Wednesday" },
-  { value: "THU", label: "Thursday" },
-  { value: "FRI", label: "Friday" },
-  { value: "SAT", label: "Saturday" },
-];
+import { brand } from "../../common/brand";
+import { DAYS, describeSchedule, scheduleZone, zoneShortName } from "./sync-schedule-format";
 
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => {
   const ampm = i < 12 ? "AM" : "PM";
@@ -138,7 +130,7 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
       setEditOpen(false);
       addNotification("success", "Sync schedule updated");
     } catch (e) {
-      addNotification("error", "Failed to update schedule");
+      addNotification("error", `Could not update the schedule: ${Utils.getErrorMessage(e)}`);
     } finally {
       setSaving(false);
     }
@@ -149,19 +141,27 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
     setConfirmSyncOpen(false);
     try {
       await apiClient.sync.triggerSyncNow();
-      addNotification("success", "Sync started — check history for progress");
+      addNotification("success", "Sync started. Check Sync History below for progress.");
       setTimeout(() => loadAll(), 3000);
     } catch (e) {
-      addNotification("error", "Failed to trigger sync");
+      addNotification("error", `Could not start the sync: ${Utils.getErrorMessage(e)}`);
     } finally {
       setTriggering(false);
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    addNotification("info", "Copied to clipboard");
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      addNotification("info", "Copied to clipboard");
+    } catch {
+      addNotification("error", "Could not copy to the clipboard. Select the path and copy it manually.");
+    }
   };
+
+  const zone = scheduleZone(schedule);
+  const zoneLabel = zoneShortName(zone);
+  const matchesHistoryZone = zone === brand.timezone;
 
   if (loading) {
     return (
@@ -189,11 +189,11 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
               Weekly Auto-Sync Schedule
             </Typography>
             <Typography variant="h6" sx={{ mt: 0.5 }}>
-              {schedule?.humanReadable ?? "Not configured"}
+              {describeSchedule(schedule)}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               {schedule?.enabled
-                ? "Enabled — files in staging will be synced automatically"
+                ? "Enabled: staged files are synced automatically at this time."
                 : "Disabled"}
             </Typography>
           </Box>
@@ -213,7 +213,7 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
               disabled={triggering}
               onClick={() => setConfirmSyncOpen(true)}
             >
-              {triggering ? "Starting\u2026" : "Run Now"}
+              {triggering ? "Starting\u2026" : "Sync staged files now"}
             </Button>
           </Stack>
         </Stack>
@@ -228,23 +228,24 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
             </Typography>
             <Typography variant="body2" color="text.secondary">
               Configure your automation tool to upload files to these S3 paths.
-              Files will be synced at the scheduled time.
+              Staged files are synced at the scheduled time, or right away with
+              &ldquo;Sync staged files now&rdquo;.
             </Typography>
           </Box>
 
           {/* KB Documents */}
           <DestinationRow
-            label="Knowledge Base Documents"
+            label="Documents"
             path={destinations?.kbDocuments.path ?? ""}
             stagedCount={destinations?.kbDocuments.stagedCount ?? 0}
             onCopy={copyToClipboard}
           />
 
-          {/* Excel Indexes */}
+          {/* Data Indexes */}
           {destinations?.indexes.map((idx) => (
             <DestinationRow
               key={idx.indexName}
-              label={idx.displayName}
+              label={`Data index: ${idx.displayName || idx.indexName}`}
               path={idx.path}
               onCopy={copyToClipboard}
             />
@@ -252,8 +253,7 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
 
           {destinations?.indexes.length === 0 && (
             <Typography variant="body2" color="text.secondary" sx={{ pl: 1 }}>
-              No Excel indexes registered. Create one in the Data Indexes tab
-              first.
+              No data indexes yet. Create one in the Data Indexes tab first.
             </Typography>
           )}
         </Stack>
@@ -284,13 +284,13 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
             <Table size="small" aria-label="Sync history">
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: "bold" }}>Date / Time</TableCell>
+                  <TableCell sx={{ fontWeight: "bold" }}>Date / Time ({Utils.timezoneLabel()})</TableCell>
                   <TableCell sx={{ fontWeight: "bold" }}>Status</TableCell>
                   <TableCell sx={{ fontWeight: "bold" }} align="right">
-                    KB Docs
+                    Documents
                   </TableCell>
                   <TableCell sx={{ fontWeight: "bold" }} align="right">
-                    Index Files
+                    Data Index Files
                   </TableCell>
                   <TableCell sx={{ fontWeight: "bold" }} align="right">
                     Duration
@@ -301,7 +301,7 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
                 {history.map((run) => (
                   <TableRow key={run.sk}>
                     <TableCell>
-                      {Utils.formatToEasternTime(run.sk)}
+                      {Utils.formatTimestamp(run.sk)}
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -358,11 +358,11 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
             <Box>
               <Stack direction="row" spacing={1.5} alignItems="flex-start">
                 <FormControl fullWidth>
-                  <InputLabel id="hour-select-label">Hour (Eastern Time)</InputLabel>
+                  <InputLabel id="hour-select-label">Hour ({zoneLabel})</InputLabel>
                   <Select
                     labelId="hour-select-label"
                     value={editHour}
-                    label="Hour (Eastern Time)"
+                    label={`Hour (${zoneLabel})`}
                     onChange={(e) => setEditHour(Number(e.target.value))}
                     disabled={saving}
                   >
@@ -396,8 +396,8 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
                 display="block"
                 sx={{ mt: 0.5 }}
               >
-                Uses the America/New_York time zone (including daylight saving
-                time), matching sync history.
+                Uses the {zone} time zone (including daylight saving time where
+                it applies){matchesHistoryZone ? ", matching sync history" : ""}.
               </Typography>
             </Box>
           </Stack>
@@ -419,7 +419,7 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
         aria-labelledby="confirm-sync-dialog-title"
       >
         <DialogTitle id="confirm-sync-dialog-title">
-          Run Sync Now?
+          Sync staged files now?
         </DialogTitle>
         <DialogContent>
           <Typography>
@@ -430,7 +430,7 @@ export default function AutomationTab({ onScheduleChange }: AutomationTabProps) 
         <DialogActions>
           <Button onClick={() => setConfirmSyncOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={handleTriggerSync}>
-            Run Sync
+            Sync now
           </Button>
         </DialogActions>
       </Dialog>

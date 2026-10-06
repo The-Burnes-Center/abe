@@ -33,43 +33,84 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import { Utils } from "../../common/utils";
 import { AppContext } from "../../common/app-context";
 import { ApiClient } from "../../common/api-client/api-client";
-import { getColumnDefinition } from "./columns";
+import { ColumnItem, getColumnDefinition } from "./columns";
+import { hasAnyScore, serverTimestampMs } from "./eval-metrics";
+import type {
+  EvaluationSummary,
+  Page,
+  PageToken,
+} from "../../common/api-client/evaluations-client";
 import { useNavigate } from "react-router-dom";
+
+const TERMINAL_FAILURE_STATUSES = ["FAILED", "TIMED_OUT", "ABORTED"];
+
+/**
+ * A run can have two summary rows (a RUNNING placeholder and the finished
+ * record). Keep one per EvaluationId, preferring the one with scores, then
+ * the newest, and carry over whichever executionArn is known.
+ */
+function dedupeSummaries(items: EvaluationSummary[]): EvaluationSummary[] {
+  const byId = new Map<string, EvaluationSummary>();
+  for (const item of items) {
+    const id = item.EvaluationId;
+    if (!id) continue;
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, item);
+      continue;
+    }
+    const itemScored = hasAnyScore(item);
+    const existingScored = hasAnyScore(existing);
+    const preferItem =
+      itemScored !== existingScored
+        ? itemScored
+        : serverTimestampMs(item.Timestamp) > serverTimestampMs(existing.Timestamp);
+    const [winner, loser] = preferItem ? [item, existing] : [existing, item];
+    byId.set(id, { ...winner, executionArn: winner.executionArn || loser.executionArn });
+  }
+  return Array.from(byId.values());
+}
 
 export default function PastEvalsTab() {
   const appContext = useContext(AppContext);
   const apiClient = useMemo(() => new ApiClient(appContext!), [appContext]);
   const [loading, setLoading] = useState(true);
   const [currentPageIndex, setCurrentPageIndex] = useState(1);
-  const [pages, setPages] = useState<any[]>([]);
+  const [pages, setPages] = useState<Page<EvaluationSummary>[]>([]);
   const needsRefresh = useRef(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ColumnItem | null>(null);
   const [deleteInProgress, setDeleteInProgress] = useState(false);
 
   const onProblemClick = useCallback(
-    (evaluationItem: any) => {
+    (evaluationItem: ColumnItem) => {
       const evaluationId = evaluationItem.EvaluationId || evaluationItem.evaluationId;
-      if (evaluationId) {
+      if (typeof evaluationId === "string" && evaluationId) {
         navigate(`/admin/llm-evaluation/details/${evaluationId}`);
       }
     },
     [navigate]
   );
 
-  const onRequestDeleteEvaluation = useCallback((item: any) => {
+  const onRequestDeleteEvaluation = useCallback((item: ColumnItem) => {
     setDeleteTarget(item);
   }, []);
 
-  const columnDefinitions = getColumnDefinition("evaluationSummary", onProblemClick, {
-    onDeleteEvaluation: onRequestDeleteEvaluation,
-  });
+  const columnDefinitions = useMemo(
+    () =>
+      getColumnDefinition("evaluationSummary", onProblemClick, {
+        onDeleteEvaluation: onRequestDeleteEvaluation,
+      }),
+    [onProblemClick, onRequestDeleteEvaluation]
+  );
 
-  const currentPageItems =
-    pages[Math.min(pages.length - 1, currentPageIndex - 1)]?.Items || [];
+  const currentPageItems = useMemo<EvaluationSummary[]>(
+    () => pages[Math.min(pages.length - 1, currentPageIndex - 1)]?.Items ?? [],
+    [pages, currentPageIndex]
+  );
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -86,70 +127,32 @@ export default function PastEvalsTab() {
     if (!col) return currentPageItems;
     const sorted = col.sortingComparator
       ? [...currentPageItems].sort(col.sortingComparator)
-      : [...currentPageItems].sort((a: any, b: any) => {
-          const aVal = a[sortField] ?? "";
-          const bVal = b[sortField] ?? "";
+      : [...currentPageItems].sort((a, b) => {
+          const aVal = String(a[sortField] ?? "");
+          const bVal = String(b[sortField] ?? "");
           return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
         });
     return sortDirection === "desc" ? sorted.reverse() : sorted;
   }, [currentPageItems, sortField, sortDirection, columnDefinitions]);
 
   const getEvaluations = useCallback(
-    async (params: { pageIndex?: number; nextPageToken?: any }) => {
+    async (params: { pageIndex?: number; nextPageToken?: PageToken | null }) => {
       setLoading(true);
       try {
         const result = await apiClient.evaluations.getEvaluationSummaries(
           params.nextPageToken
         );
 
-        if (!result?.Items) {
-          setError("No evaluation data available.");
-          setPages([]);
-          setLoading(false);
-          return;
-        }
-
-        const mapped = result.Items.map((evaluation: any) => ({
+        // Metric fields are left as-is (absent stays absent) so the score
+        // cells can show "n/a" instead of a fake 0%.
+        const named = result.Items.map((evaluation) => ({
           ...evaluation,
-          EvaluationId: evaluation.EvaluationId,
           evaluation_name: evaluation.evaluation_name || "Unnamed",
-          Timestamp: evaluation.Timestamp,
-          average_similarity: typeof evaluation.average_similarity === "number" ? evaluation.average_similarity : 0,
-          average_relevance: typeof evaluation.average_relevance === "number" ? evaluation.average_relevance : 0,
-          average_correctness: typeof evaluation.average_correctness === "number" ? evaluation.average_correctness : 0,
-          average_context_precision: typeof evaluation.average_context_precision === "number" ? evaluation.average_context_precision : 0,
-          average_context_recall: typeof evaluation.average_context_recall === "number" ? evaluation.average_context_recall : 0,
-          average_response_relevancy: typeof evaluation.average_response_relevancy === "number" ? evaluation.average_response_relevancy : 0,
-          average_faithfulness: typeof evaluation.average_faithfulness === "number" ? evaluation.average_faithfulness : 0,
-          total_questions: evaluation.total_questions || 0,
         }));
 
-        const deduped = new Map<string, any>();
-        for (const item of mapped) {
-          const id = item.EvaluationId;
-          if (!id) continue;
-          const existing = deduped.get(id);
-          if (!existing) {
-            deduped.set(id, item);
-          } else {
-            const hasScores = (e: any) => e.average_correctness > 0 || e.average_similarity > 0;
-            if (hasScores(item) && !hasScores(existing)) {
-              deduped.set(id, { ...item, executionArn: existing.executionArn || item.executionArn });
-            } else if (!hasScores(item) && hasScores(existing)) {
-              deduped.set(id, { ...existing, executionArn: item.executionArn || existing.executionArn });
-            } else {
-              const itemTime = new Date(item.Timestamp).getTime();
-              const existingTime = new Date(existing.Timestamp).getTime();
-              if (itemTime > existingTime) {
-                deduped.set(id, { ...item, executionArn: existing.executionArn || item.executionArn });
-              }
-            }
-          }
-        }
-
-        const processedResult = {
+        const processedResult: Page<EvaluationSummary> = {
           ...result,
-          Items: Array.from(deduped.values()),
+          Items: dedupeSummaries(named),
         };
 
         setError(null);
@@ -177,7 +180,7 @@ export default function PastEvalsTab() {
 
   const confirmDeleteEvaluation = useCallback(async () => {
     const id = deleteTarget?.EvaluationId;
-    if (!id) return;
+    if (typeof id !== "string" || !id) return;
     setDeleteInProgress(true);
     setError(null);
     try {
@@ -224,7 +227,7 @@ export default function PastEvalsTab() {
           </Typography>
           {deleteTarget ? (
             <Typography variant="body2" sx={{ mt: 1, fontWeight: 600 }}>
-              {deleteTarget.evaluation_name || "Unnamed"} ({deleteTarget.EvaluationId})
+              {String(deleteTarget.evaluation_name || "Unnamed")} ({String(deleteTarget.EvaluationId)})
             </Typography>
           ) : null}
         </DialogContent>
@@ -306,9 +309,9 @@ export default function PastEvalsTab() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {sortedItems.map((item: any, index: number) => {
-                const hasScores = item.average_correctness > 0 || item.average_similarity > 0;
-                const isFailed = ["FAILED", "TIMED_OUT", "ABORTED"].includes(item.status);
+              {sortedItems.map((item, index) => {
+                const hasScores = hasAnyScore(item);
+                const isFailed = TERMINAL_FAILURE_STATUSES.includes(item.status ?? "");
                 // A run is only "still running" if it hasn't reached a terminal state.
                 // Failed/timed-out/aborted runs are terminal, so they must NOT render as
                 // running (otherwise a failed eval shows progress bars forever).
@@ -333,7 +336,7 @@ export default function PastEvalsTab() {
                               <Chip label="Failed" color="error" size="small" variant="outlined" sx={{ cursor: "help" }} />
                             </Tooltip>
                           ) : (
-                            "—"
+                            "n/a"
                           )
                         ) : (
                           col.cell(item)

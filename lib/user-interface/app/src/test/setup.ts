@@ -11,3 +11,8 @@ declare module "vitest" {
   }
   interface AsymmetricMatchersContaining extends matchers.AxeMatchers {}
 }
+
+// jsdom has no layout engine; scrolling is a no-op in tests.
+if (!Element.prototype.scrollTo) {
+  Element.prototype.scrollTo = () => {};
+}

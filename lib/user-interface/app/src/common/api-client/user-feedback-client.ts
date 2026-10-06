@@ -1,6 +1,28 @@
 import { Utils } from "../utils";
 import { AppConfig } from "../types";
 import { FeedbackSubmission } from "../../components/chatbot/types";
+import type {
+  ActivityLogEntry,
+  FeedbackDetail,
+  FeedbackItem,
+  MonitoringData,
+  PromptData,
+  PromptItem,
+} from "../../pages/admin/feedback-ops/types";
+
+/** Error codes the backend uses that are not meaningful to show to people. */
+const OPAQUE_ERROR_CODES = new Set(["internal_error"]);
+const GENERIC_ERROR = "Something went wrong. Please try again.";
+
+function errorMessageFrom(body: unknown): string {
+  if (typeof body === "string" && body.trim()) return body;
+  if (body && typeof body === "object") {
+    const { message, error } = body as { message?: unknown; error?: unknown };
+    if (typeof message === "string" && message) return message;
+    if (typeof error === "string" && error && !OPAQUE_ERROR_CODES.has(error)) return error;
+  }
+  return GENERIC_ERROR;
+}
 
 export class UserFeedbackClient {
   private readonly API;
@@ -9,7 +31,8 @@ export class UserFeedbackClient {
     this.API = _appConfig.httpEndpoint.slice(0, -1);
   }
 
-  private async request(path: string, init: RequestInit = {}) {
+  /** Fetch JSON; non-OK responses throw with the server's message. */
+  private async request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
     const auth = await Utils.authenticate();
     const response = await fetch(this.API + path, {
       ...init,
@@ -20,7 +43,7 @@ export class UserFeedbackClient {
       },
     });
 
-    let body: any = null;
+    let body: unknown = null;
     const text = await response.text();
     if (text) {
       try {
@@ -31,18 +54,10 @@ export class UserFeedbackClient {
     }
 
     if (!response.ok) {
-      const message =
-        typeof body === "string"
-          ? body
-          : body?.message ||
-            (typeof body?.error === "string" && body.error !== "internal_error"
-              ? body.error
-              : null) ||
-            "Something went wrong. Please try again.";
-      throw new Error(message);
+      throw new Error(errorMessageFrom(body));
     }
 
-    return body;
+    return body as T;
   }
 
   async submitFeedback(payload: FeedbackSubmission) {
@@ -66,13 +81,13 @@ export class UserFeedbackClient {
         params.set(key, value);
       }
     });
-    return this.request(`/admin/feedback${params.toString() ? `?${params.toString()}` : ""}`, {
+    return this.request<{ items?: FeedbackItem[] }>(`/admin/feedback${params.toString() ? `?${params.toString()}` : ""}`, {
       method: "GET",
     });
   }
 
   async getAdminFeedbackDetail(feedbackId: string) {
-    return this.request(`/admin/feedback/${feedbackId}`, { method: "GET" });
+    return this.request<FeedbackDetail>(`/admin/feedback/${feedbackId}`, { method: "GET" });
   }
 
   async analyzeFeedback(feedbackId: string) {
@@ -108,11 +123,11 @@ export class UserFeedbackClient {
   }
 
   async getPrompts() {
-    return this.request("/admin/prompts", { method: "GET" });
+    return this.request<PromptData>("/admin/prompts", { method: "GET" });
   }
 
   async getPrompt(versionId: string) {
-    return this.request(`/admin/prompts/${versionId}`, { method: "GET" });
+    return this.request<{ prompt: PromptItem }>(`/admin/prompts/${versionId}`, { method: "GET" });
   }
 
   async createPrompt(payload: {
@@ -123,7 +138,7 @@ export class UserFeedbackClient {
     linkedFeedbackIds?: string[];
     aiSummary?: string;
   }) {
-    return this.request("/admin/prompts", {
+    return this.request<{ prompt: PromptItem }>("/admin/prompts", {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -155,17 +170,17 @@ export class UserFeedbackClient {
   }
 
   async aiSuggestPrompt(versionId: string, payload: { feedbackIds?: string[]; note?: string }) {
-    return this.request(`/admin/prompts/${versionId}/ai-suggest`, {
+    return this.request<{ prompt: PromptItem }>(`/admin/prompts/${versionId}/ai-suggest`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
   }
 
   async getMonitoring() {
-    return this.request("/admin/monitoring", { method: "GET" });
+    return this.request<MonitoringData>("/admin/monitoring", { method: "GET" });
   }
 
   async getActivityLog() {
-    return this.request("/admin/activity-log", { method: "GET" });
+    return this.request<{ entries?: ActivityLogEntry[] }>("/admin/activity-log", { method: "GET" });
   }
 }
