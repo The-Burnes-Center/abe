@@ -16,30 +16,27 @@ from common_utils import (
     get_audit_actor_label,
     get_claims,
     get_logger,
-    is_admin_request,
+    is_admin,
     json_response,
     parse_json_body,
     safe_int,
 )
+from common_utils.brand import assistant_name
+from common_utils.models import fast_model_id, primary_model_id
 
 
 logger = get_logger(__name__)
-dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+dynamodb = boto3.resource("dynamodb")
 feedback_records_table = dynamodb.Table(os.environ["FEEDBACK_RECORDS_TABLE"])
 response_trace_table = dynamodb.Table(os.environ["RESPONSE_TRACE_TABLE"])
 prompt_registry_table = dynamodb.Table(os.environ["PROMPT_REGISTRY_TABLE"])
 monitoring_cases_table = dynamodb.Table(os.environ["MONITORING_CASES_TABLE"])
-bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+bedrock = boto3.client("bedrock-runtime")
 
 PROMPT_FAMILY = os.environ.get("PROMPT_FAMILY", "ASSISTANT_CHAT")
-ANALYSIS_MODEL_ID = os.environ.get(
-    "FEEDBACK_ANALYSIS_MODEL_ID",
-    os.environ.get("FAST_MODEL_ID", "us.anthropic.claude-3-5-haiku-20241022-v1:0"),
-)
-REWRITE_MODEL_ID = os.environ.get(
-    "PROMPT_REWRITE_MODEL_ID",
-    os.environ.get("PRIMARY_MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
-)
+ANALYSIS_MODEL_ID = os.environ.get("FEEDBACK_ANALYSIS_MODEL_ID") or fast_model_id()
+REWRITE_MODEL_ID = os.environ.get("PROMPT_REWRITE_MODEL_ID") or primary_model_id()
+ASSISTANT_NAME = assistant_name()
 
 ALLOWED_DISPOSITIONS = {
     "pending",
@@ -62,6 +59,7 @@ ALLOWED_FEEDBACK_KINDS = {"helpful", "not_helpful"}
 MAX_TEXT_LENGTH = 2000
 MAX_TEMPLATE_LENGTH = 50000
 MAX_COMMENT_LENGTH = 5000
+MAX_TITLE_LENGTH = 200
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
 
@@ -144,7 +142,7 @@ def get_query_params(event: dict[str, Any]) -> dict[str, str]:
 
 
 def ensure_admin(event: dict[str, Any]):
-    if not is_admin_request(event):
+    if not is_admin(event):
         raise PermissionError("Forbidden: Admin access required")
 
 
@@ -255,7 +253,7 @@ def build_follow_up_questions(issue_tags: list[str]) -> list[dict[str, str]]:
             {
                 "id": "userComment",
                 "label": "What were you trying to do?",
-                "prompt": "Tell us the real goal so ABE can be corrected.",
+                "prompt": f"Tell us the real goal so {ASSISTANT_NAME} can be corrected.",
             }
         )
     if "bad_source" in tag_set:
@@ -279,7 +277,7 @@ def build_follow_up_questions(issue_tags: list[str]) -> list[dict[str, str]]:
             {
                 "id": "userComment",
                 "label": "Additional context",
-                "prompt": "Share any details that will help us improve ABE.",
+                "prompt": f"Share any details that will help us improve {ASSISTANT_NAME}.",
             }
         )
     return follow_ups
@@ -529,7 +527,7 @@ def create_feedback(event: dict[str, Any]):
     # trace that slips past this check cannot leak the question/answer.
     trace_owner = str(trace.get("UserId") or "").strip()
     if trace_owner:
-        if trace_owner != caller_id and not is_admin_request(event):
+        if trace_owner != caller_id and not is_admin(event):
             logger.warning(
                 "Rejected cross-user feedback creation: caller=%s trace_owner=%s message_id=%s",
                 caller_id, trace_owner, message_id,
@@ -628,7 +626,7 @@ def append_feedback_follow_up(event: dict[str, Any], feedback_id: str):
     # the feedback id. Admin role bypasses for moderation/cleanup.
     owner_sub = str(item.get("CreatedBySub") or "").strip()
     if owner_sub:
-        if owner_sub != caller_id and not is_admin_request(event):
+        if owner_sub != caller_id and not is_admin(event):
             logger.warning(
                 "Rejected cross-user follow-up: caller=%s owner=%s feedback_id=%s",
                 caller_id, owner_sub, feedback_id,
@@ -638,14 +636,14 @@ def append_feedback_follow_up(event: dict[str, Any], feedback_id: str):
         # Legacy record written before CreatedBySub was added. Allow but log.
         logger.info("Legacy feedback without CreatedBySub: feedback_id=%s caller=%s", feedback_id, caller_id)
 
-    for field_name, attr_name in (
-        ("userComment", "UserComment"),
-        ("expectedAnswer", "ExpectedAnswer"),
-        ("wrongSnippet", "WrongSnippet"),
-        ("sourceAssessment", "SourceAssessment"),
+    for field_name, attr_name, limit in (
+        ("userComment", "UserComment", MAX_COMMENT_LENGTH),
+        ("expectedAnswer", "ExpectedAnswer", MAX_TEXT_LENGTH),
+        ("wrongSnippet", "WrongSnippet", MAX_TEXT_LENGTH),
+        ("sourceAssessment", "SourceAssessment", MAX_TEXT_LENGTH),
     ):
         if field_name in payload:
-            item[attr_name] = str(payload.get(field_name, "")).strip()
+            item[attr_name] = truncate(str(payload.get(field_name) or "").strip(), limit)
 
     if "regenerateRequested" in payload:
         item["RegenerateRequested"] = bool(payload.get("regenerateRequested"))
@@ -659,11 +657,12 @@ def append_feedback_follow_up(event: dict[str, Any], feedback_id: str):
     item["UpdatedAt"] = utc_now_iso()
     feedback_records_table.put_item(Item=_sanitize_value(item))
 
+    # Same reasoning as create_feedback: the analysis embeds the trace Q&A, so it
+    # is only exposed through the admin-gated endpoints.
     return json_response(
         200,
         {
             "feedbackId": feedback_id,
-            "analysis": item["Analysis"],
             "followUpQuestions": build_follow_up_questions(item.get("IssueTags", [])),
         },
     )
@@ -805,9 +804,11 @@ def set_disposition(event: dict[str, Any], feedback_id: str):
 
     item["Disposition"] = disposition
     item["ReviewStatus"] = review_status
-    item["Owner"] = str(payload.get("owner", item.get("Owner", ""))).strip()
-    item["ResolutionNote"] = str(payload.get("resolutionNote", item.get("ResolutionNote", ""))).strip()
-    item["AdminNotes"] = str(payload.get("adminNotes", item.get("AdminNotes", ""))).strip()
+    item["Owner"] = truncate(str(payload.get("owner", item.get("Owner", ""))).strip(), MAX_TITLE_LENGTH)
+    item["ResolutionNote"] = truncate(
+        str(payload.get("resolutionNote", item.get("ResolutionNote", ""))).strip(), MAX_COMMENT_LENGTH
+    )
+    item["AdminNotes"] = truncate(str(payload.get("adminNotes", item.get("AdminNotes", ""))).strip(), MAX_COMMENT_LENGTH)
     item["UpdatedAt"] = utc_now_iso()
     feedback_records_table.put_item(Item=_sanitize_value(item))
     write_audit_log(
@@ -876,7 +877,7 @@ def promote_to_candidate(event: dict[str, Any], feedback_id: str):
         "submittedAt": utc_now_iso(),
     }
 
-    sqs_client = boto3.client("sqs", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    sqs_client = boto3.client("sqs")
     sqs_client.send_message(QueueUrl=queue_url, MessageBody=json.dumps(payload))
 
     now = utc_now_iso()
@@ -952,8 +953,8 @@ def create_prompt(event: dict[str, Any]):
         "PromptFamily": PROMPT_FAMILY,
         "VersionId": version_id,
         "ItemType": "PromptVersion",
-        "Title": str(payload.get("title", "Untitled draft")).strip() or "Untitled draft",
-        "Notes": str(payload.get("notes", "")).strip(),
+        "Title": truncate(str(payload.get("title", "Untitled draft")).strip(), MAX_TITLE_LENGTH) or "Untitled draft",
+        "Notes": truncate(str(payload.get("notes", "")).strip(), MAX_COMMENT_LENGTH),
         "Template": template,
         "Status": "draft",
         "ParentVersionId": parent_version_id,
@@ -962,7 +963,7 @@ def create_prompt(event: dict[str, Any]):
         "UpdatedAt": now,
         "CreatedBy": created_by,
         "PublishedAt": "",
-        "AiSummary": str(payload.get("aiSummary", "")).strip(),
+        "AiSummary": truncate(str(payload.get("aiSummary", "")).strip(), MAX_COMMENT_LENGTH),
     }
     prompt_registry_table.put_item(Item=item)
     write_audit_log("prompt_created", "prompt", version_id, {"title": item.get("Title", "")}, event=event)
@@ -979,12 +980,18 @@ def update_prompt(event: dict[str, Any], version_id: str):
     if item.get("Status") == "published" and get_live_prompt_version_id() == version_id:
         return json_response(400, {"error": "Edit the draft, not the live version"})
 
-    if "title" in payload:
-        item["Title"] = str(payload.get("title", "")).strip() or item.get("Title", "Untitled draft")
-    if "notes" in payload:
-        item["Notes"] = str(payload.get("notes", "")).strip()
     if "template" in payload:
-        item["Template"] = str(payload.get("template", "")).strip()
+        template = str(payload.get("template") or "").strip()
+        if not template:
+            return validation_error("template", "template is required")
+        if len(template) > MAX_TEMPLATE_LENGTH:
+            return validation_error("template", f"template exceeds maximum length of {MAX_TEMPLATE_LENGTH} characters")
+        item["Template"] = template
+    if "title" in payload:
+        title = truncate(str(payload.get("title") or "").strip(), MAX_TITLE_LENGTH)
+        item["Title"] = title or item.get("Title", "Untitled draft")
+    if "notes" in payload:
+        item["Notes"] = truncate(str(payload.get("notes") or "").strip(), MAX_COMMENT_LENGTH)
     if "linkedFeedbackIds" in payload and isinstance(payload.get("linkedFeedbackIds"), list):
         item["LinkedFeedbackIds"] = payload.get("linkedFeedbackIds")
     item["UpdatedAt"] = utc_now_iso()
@@ -1064,7 +1071,7 @@ def ai_suggest_prompt(event: dict[str, Any], version_id: str):
             }
         ]
 
-    system_prompt = """You are an expert prompt engineer editing the system prompt for ABE, an internal RAG chatbot that helps users find answers grounded in a knowledge base.
+    system_prompt = """You are an expert prompt engineer editing the system prompt for __ASSISTANT_NAME__, an internal RAG chatbot that helps users find answers grounded in a knowledge base.
 
 Your job: apply TARGETED, MINIMAL edits to the current prompt based on user feedback. Do NOT rewrite from scratch. Preserve the original structure, tone, section ordering, and wording as much as possible. Only change lines directly related to the feedback issues.
 
@@ -1085,7 +1092,7 @@ RULES:
 5. If the current prompt already addresses the feedback adequately, set "declined" to true, return the original prompt unchanged in "prompt", and explain in "reasoning" why no edit is needed.
 6. Keep your edits surgical — add a sentence, adjust wording, reorder a clause. Avoid rewriting whole sections.
 7. "changes_made" must be an array of strings (can be empty if declined).
-""".strip()
+""".strip().replace("__ASSISTANT_NAME__", ASSISTANT_NAME)
 
     user_prompt = json.dumps(
         {
@@ -1120,7 +1127,10 @@ RULES:
         changes_desc = "AI draft suggestion failed; cloned the selected prompt as a draft."
         declined = True
 
+    # Carry the caller's requestContext so create_prompt attributes the draft
+    # (CreatedBy and the audit log) to the real admin rather than "Admin".
     draft_event = {
+        "requestContext": event.get("requestContext", {}),
         "body": {
             "title": f"AI draft from {version_id}" if not declined else f"Clone of {version_id} (AI declined)",
             "notes": changes_desc,
