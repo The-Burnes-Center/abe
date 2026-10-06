@@ -7,6 +7,9 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from zoneinfo import ZoneInfo
 
+from common_utils import require_admin
+from common_utils.brand import brand_timezone_name
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -51,18 +54,9 @@ _AWS_DOW_TO_PY = {
 }
 _PY_TO_AWS_DOW = {v: k for k, v in _AWS_DOW_TO_PY.items()}
 
-TARGET_SCHEDULE_TZ = "America/New_York"
-
-
-def _check_admin(event):
-    try:
-        claims = event["requestContext"]["authorizer"]["jwt"]["claims"]
-        roles = json.loads(claims["custom:role"])
-        if "Admin" not in roles:
-            return False
-    except Exception:
-        return False
-    return True
+# Schedules are stored in the deployment's brand timezone so admins pick a
+# local wall-clock time and EventBridge handles DST.
+TARGET_SCHEDULE_TZ = brand_timezone_name()
 
 
 def _ok(body):
@@ -88,11 +82,11 @@ def _build_cron(day_of_week: str, hour: int, minute: int) -> str:
     return f"cron({minute} {hour} ? * {day_of_week} *)"
 
 
-def _human_local_eastern(cron_parts: dict) -> str:
+def _human_local(cron_parts: dict) -> str:
     h = cron_parts["hour"]
     m = cron_parts["minute"]
     day = DAY_LABELS.get(cron_parts["dayOfWeek"], cron_parts["dayOfWeek"])
-    return f"Every {day} at {h:02d}:{m:02d} Eastern Time"
+    return f"Every {day} at {h:02d}:{m:02d} ({TARGET_SCHEDULE_TZ})"
 
 
 def _next_utc_cron_instant(aws_dow: str, hour: int, minute: int) -> datetime:
@@ -119,7 +113,7 @@ def _legacy_utc_body(cron_parts: dict) -> dict:
     human = (
         f"Every {DAY_LABELS[cron_parts['dayOfWeek']]} at "
         f"{cron_parts['hour']:02d}:{cron_parts['minute']:02d} UTC "
-        f"(next run in Eastern: {ny.strftime('%b %d, %Y %I:%M %p %Z')})"
+        f"(next run local: {ny.strftime('%b %d, %Y %I:%M %p %Z')})"
     )
     return {
         "dayOfWeek": aws_dow_ny,
@@ -156,9 +150,9 @@ def handle_get_schedule(event):
             body["dayOfWeek"] = cron_parts["dayOfWeek"]
             body["hour"] = cron_parts["hour"]
             body["minute"] = cron_parts["minute"]
-            body["humanReadable"] = _human_local_eastern(cron_parts)
+            body["humanReadable"] = _human_local(cron_parts)
         else:
-            # Legacy UTC — show next run in Eastern so the form matches history formatting
+            # Legacy UTC: show next run in local time so the form matches history formatting
             leg = _legacy_utc_body(cron_parts)
             body.update(leg)
 
@@ -167,25 +161,31 @@ def handle_get_schedule(event):
         return _ok({"enabled": False, "state": "NOT_FOUND"})
     except Exception as e:
         logger.error("Error getting schedule: %s", e, exc_info=True)
-        return _err(500, str(e))
+        return _err(500, "Unable to load the sync schedule. Please try again later.")
 
 
 def handle_put_schedule(event):
     try:
-        body_in = json.loads(event.get("body", "{}"))
+        body_in = json.loads(event.get("body") or "{}")
     except (json.JSONDecodeError, TypeError):
         return _err(400, "Invalid JSON body")
 
-    day = body_in.get("dayOfWeek", "SUN").upper()
-    if day not in DAYS_OF_WEEK:
-        return _err(400, f"Invalid dayOfWeek: {day}")
+    if not isinstance(body_in, dict):
+        return _err(400, "Invalid JSON body")
 
-    hour = int(body_in.get("hour", 1))
-    minute = int(body_in.get("minute", 0))
+    day = str(body_in.get("dayOfWeek", "SUN")).upper()
+    if day not in DAYS_OF_WEEK:
+        return _err(400, "Invalid dayOfWeek")
+
+    try:
+        hour = int(body_in.get("hour", 1))
+        minute = int(body_in.get("minute", 0))
+    except (TypeError, ValueError):
+        return _err(400, "hour and minute must be whole numbers")
     if not (0 <= hour <= 23) or not (0 <= minute <= 59):
         return _err(400, "Invalid hour/minute")
 
-    enabled = body_in.get("enabled", True)
+    enabled = body_in.get("enabled", True) is not False
     cron_expr = _build_cron(day, hour, minute)
 
     try:
@@ -201,7 +201,7 @@ def handle_put_schedule(event):
         )
     except Exception as e:
         logger.error("Error updating schedule: %s", e, exc_info=True)
-        return _err(500, str(e))
+        return _err(500, "Unable to update the sync schedule. Please try again later.")
 
     cron_parts = {"dayOfWeek": day, "hour": hour, "minute": minute}
     return _ok(
@@ -214,7 +214,7 @@ def handle_put_schedule(event):
             "minute": minute,
             "scheduleTimezone": TARGET_SCHEDULE_TZ,
             "legacyUtc": False,
-            "humanReadable": _human_local_eastern(cron_parts),
+            "humanReadable": _human_local(cron_parts),
         }
     )
 
@@ -256,8 +256,8 @@ def handle_get_destinations(event):
         staged_docs = sum(
             1 for o in resp.get("Contents", []) if not o["Key"].endswith("/")
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Could not count staged documents: %s", e)
 
     return _ok(
         {
@@ -294,7 +294,7 @@ def handle_get_history(event):
         return _ok({"runs": items})
     except Exception as e:
         logger.error("Error querying sync history: %s", e, exc_info=True)
-        return _err(500, str(e))
+        return _err(500, "Unable to load sync history. Please try again later.")
 
 
 def handle_sync_now(event):
@@ -306,7 +306,7 @@ def handle_sync_now(event):
         return _ok({"status": "STARTED"})
     except Exception as e:
         logger.error("Error invoking orchestrator: %s", e, exc_info=True)
-        return _err(500, str(e))
+        return _err(500, "Unable to start a sync right now. Please try again later.")
 
 
 def lambda_handler(event, context):
@@ -314,8 +314,9 @@ def lambda_handler(event, context):
     method = event.get("requestContext", {}).get("http", {}).get("method", "GET")
     logger.info("sync-schedule: %s %s", method, path)
 
-    if not _check_admin(event):
-        return _err(403, "Admin access required")
+    denied = require_admin(event)
+    if denied:
+        return denied
 
     if "sync-schedule" in path:
         if method == "PUT":
