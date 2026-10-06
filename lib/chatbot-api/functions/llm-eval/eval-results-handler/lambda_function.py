@@ -4,10 +4,10 @@ import logging
 from botocore.exceptions import ClientError
 import json
 from boto3.dynamodb.conditions import Key, Attr
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
-from common_utils import is_admin_request
+from common_utils import is_admin, safe_int
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -17,9 +17,19 @@ EVALUATION_RESULTS_TABLE = os.environ.get("EVALUATION_RESULTS_TABLE") or os.envi
 TEST_CASES_BUCKET = os.environ.get("TEST_CASES_BUCKET")
 EVAL_RESULTS_BUCKET = os.environ.get("EVAL_RESULTS_BUCKET") or TEST_CASES_BUCKET
 
-dynamodb = boto3.resource("dynamodb", region_name='us-east-1')
-sfn_client = boto3.client("stepfunctions", region_name='us-east-1')
-s3_client = boto3.client("s3", region_name="us-east-1")
+dynamodb = boto3.resource("dynamodb")
+sfn_client = boto3.client("stepfunctions")
+s3_client = boto3.client("s3")
+
+JSON_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Content-Type': 'application/json',
+}
+
+
+def _error(status, message):
+    """Friendly error body; details go to the log, never to the client."""
+    return {'statusCode': status, 'headers': dict(JSON_HEADERS), 'body': json.dumps({'error': message})}
 
 summaries_table = dynamodb.Table(EVALUATION_SUMMARIES_TABLE)
 results_table = dynamodb.Table(EVALUATION_RESULTS_TABLE)
@@ -41,7 +51,9 @@ def get_evaluation_summaries(continuation_token=None, limit=10):
             # First try with PartitionKey
             query_params = {
                 "KeyConditionExpression": Key("PartitionKey").eq("Evaluation"),
-                "ProjectionExpression": "#eid, #ts, #as, #ar, #ac, #tq, #en, #tk, #acp, #acr, #arr, #af, #ea, #st",
+                # average_relevance only exists on evaluations run before it was
+                # dropped as a duplicate of average_response_relevancy.
+                "ProjectionExpression": "#eid, #ts, #as, #ar, #ac, #tq, #fq, #en, #tk, #acp, #acr, #arr, #af, #ea, #st",
                 "ExpressionAttributeNames": {
                     "#eid": "EvaluationId",
                     "#ts": "Timestamp",
@@ -49,6 +61,7 @@ def get_evaluation_summaries(continuation_token=None, limit=10):
                     "#ar": "average_relevance",
                     "#ac": "average_correctness",
                     "#tq": "total_questions",
+                    "#fq": "failed_questions",
                     "#en": "evaluation_name",
                     "#tk": "test_cases_key",
                     "#acp": "average_context_precision",
@@ -99,26 +112,9 @@ def get_evaluation_summaries(continuation_token=None, limit=10):
             },
             'body': json.dumps(response_body)
         }
-    except ClientError as error:
-        # Build error response with correct headers
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json'
-            },
-            'body': json.dumps({"error": str(error), "table": EVALUATION_SUMMARIES_TABLE})
-        }
-    except Exception as e:
-        import traceback
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json'
-            },
-            'body': json.dumps({"error": str(e), "table": EVALUATION_SUMMARIES_TABLE})
-        }
+    except Exception:
+        logger.exception("Failed to load evaluation summaries")
+        return _error(500, "Unable to load evaluations. Please try again later.")
 
 # function to retrieve detailed results for a specific evaluation from DynamoDB
 def get_evaluation_results(evaluation_id, continuation_token=None, limit=10):
@@ -156,26 +152,9 @@ def get_evaluation_results(evaluation_id, continuation_token=None, limit=10):
             },
             'body': json.dumps(response_body)
         }
-    except ClientError as error:
-        # Build error response with correct headers
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json'
-            },
-            'body': json.dumps({"error": str(error), "table": EVALUATION_RESULTS_TABLE})
-        }
-    except Exception as e:
-        # For any other errors
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json'
-            },
-            'body': json.dumps({"error": str(e), "table": EVALUATION_RESULTS_TABLE})
-        }
+    except Exception:
+        logger.exception("Failed to load evaluation results for %s", evaluation_id)
+        return _error(500, "Unable to load evaluation results. Please try again later.")
 
 def get_eval_status(evaluation_id):
     headers = {
@@ -183,13 +162,7 @@ def get_eval_status(evaluation_id):
         'Content-Type': 'application/json',
     }
     try:
-        resp = summaries_table.query(
-            KeyConditionExpression=Key("PartitionKey").eq("Evaluation"),
-            FilterExpression="EvaluationId = :eid",
-            ExpressionAttributeValues={":eid": evaluation_id},
-            ScanIndexForward=False,
-        )
-        items = resp.get("Items", [])
+        items = _find_summary_rows(evaluation_id, first_only=True)
         if not items:
             return {"statusCode": 404, "headers": headers, "body": json.dumps({"error": "Evaluation not found"})}
 
@@ -209,7 +182,6 @@ def get_eval_status(evaluation_id):
 
         elapsed_seconds = 0
         if start_date:
-            from datetime import timezone
             elapsed_seconds = int((datetime.now(timezone.utc) - start_date).total_seconds())
 
         history = sfn_client.get_execution_history(executionArn=execution_arn, reverseOrder=False, maxResults=1000)
@@ -290,10 +262,32 @@ def get_eval_status(evaluation_id):
         }
         return {"statusCode": 200, "headers": headers, "body": json.dumps(result)}
 
-    except ClientError as e:
-        return {"statusCode": 500, "headers": headers, "body": json.dumps({"error": str(e)})}
-    except Exception as e:
-        return {"statusCode": 500, "headers": headers, "body": json.dumps({"error": str(e)})}
+    except Exception:
+        logger.exception("Failed to read evaluation status for %s", evaluation_id)
+        return _error(500, "Unable to load evaluation status. Please try again later.")
+
+
+def _find_summary_rows(evaluation_id, *, first_only=False):
+    """Summary rows for one evaluation. A FilterExpression is applied after each
+    page is read, so a page can come back empty while later pages still match:
+    keep following LastEvaluatedKey until the partition is exhausted."""
+    rows = []
+    exclusive = None
+    while True:
+        qargs = {
+            "KeyConditionExpression": Key("PartitionKey").eq("Evaluation"),
+            "FilterExpression": Attr("EvaluationId").eq(evaluation_id),
+            "ScanIndexForward": False,
+        }
+        if exclusive:
+            qargs["ExclusiveStartKey"] = exclusive
+        resp = summaries_table.query(**qargs)
+        rows.extend(resp.get("Items", []))
+        if first_only and rows:
+            return rows
+        exclusive = resp.get("LastEvaluatedKey")
+        if not exclusive:
+            return rows
 
 
 def _delete_objects_in_prefix(bucket: str, prefix: str) -> None:
@@ -350,20 +344,8 @@ def delete_evaluation(evaluation_id: str):
 
     eid = str(evaluation_id).strip()
     summary_rows = []
-    exclusive = None
     try:
-        while True:
-            qargs = {
-                "KeyConditionExpression": Key("PartitionKey").eq("Evaluation"),
-                "FilterExpression": Attr("EvaluationId").eq(eid),
-            }
-            if exclusive:
-                qargs["ExclusiveStartKey"] = exclusive
-            resp = summaries_table.query(**qargs)
-            summary_rows.extend(resp.get("Items", []))
-            exclusive = resp.get("LastEvaluatedKey")
-            if not exclusive:
-                break
+        summary_rows = _find_summary_rows(eid)
 
         execution_arns = []
         for row in summary_rows:
@@ -426,20 +408,9 @@ def delete_evaluation(evaluation_id: str):
                 }
             ),
         }
-    except ClientError as e:
-        logger.exception("delete_evaluation ClientError")
-        return {
-            "statusCode": 500,
-            "headers": headers,
-            "body": json.dumps({"error": str(e)}),
-        }
-    except Exception as e:
-        logger.exception("delete_evaluation")
-        return {
-            "statusCode": 500,
-            "headers": headers,
-            "body": json.dumps({"error": str(e)}),
-        }
+    except Exception:
+        logger.exception("Failed to delete evaluation %s", eid)
+        return _error(500, "Unable to delete the evaluation. Please try again later.")
 
 
 def lambda_handler(event, context):
@@ -457,7 +428,7 @@ def lambda_handler(event, context):
             'body': json.dumps({'message': 'CORS preflight request successful'})
         }
 
-    if not is_admin_request(event):
+    if not is_admin(event):
         return {
             'statusCode': 403,
             'headers': headers,
@@ -469,7 +440,7 @@ def lambda_handler(event, context):
         operation = data.get('operation')
         evaluation_id = data.get('evaluation_id')
         continuation_token = data.get('continuation_token')
-        limit = data.get('limit', 10)
+        limit = safe_int(data.get('limit'), 10, minimum=1, maximum=100)
 
         if operation == 'get_evaluation_summaries':
             result = get_evaluation_summaries(continuation_token, limit)
@@ -521,17 +492,12 @@ def lambda_handler(event, context):
             return {
                 'statusCode': 400,
                 'headers': headers,
-                'body': json.dumps(f'Operation not found/allowed! Operation Sent: {operation}')
+                'body': json.dumps({'error': 'Unknown operation'})
             }
-    except Exception as e:
-        import traceback
+    except Exception:
+        logger.exception("Eval results handler failed")
         return {
             'statusCode': 500,
             'headers': headers,
-            'body': json.dumps({
-                'message': 'Internal server error', 
-                'error': str(e),
-                'summaries_table': EVALUATION_SUMMARIES_TABLE,
-                'results_table': EVALUATION_RESULTS_TABLE
-            })
+            'body': json.dumps({'error': 'An unexpected error occurred. Please try again.'})
         }

@@ -47,7 +47,7 @@ PLACEHOLDER_SUMMARIES = [
     "No relevant document content was found in the knowledge base for the "
     "file 'guide_ENE53.pdf'. The document could not be retrieved or analyzed, "
     "as no text or data was available for processing.",
-    "The document '801cmr21.pdf' could not be retrieved or analyzed as no "
+    "The document 'policy21.pdf' could not be retrieved or analyzed as no "
     "relevant content was found in the knowledge base.",
 ]
 
@@ -65,6 +65,16 @@ class TestIsPlaceholderSummary:
 
     def test_real_summary_kept(self, lf):
         assert lf._is_placeholder_summary(REAL_SUMMARY) is False
+
+    def test_marked_summary_never_regenerated(self, lf):
+        # A genuine summary of a document *about* search failures used to trip
+        # the wording heuristic and get re-summarized on every backfill pass.
+        summary = "Explains what to do when a record is not found in the knowledge base search."
+        assert lf._is_placeholder_summary(summary) is True
+        assert lf._is_placeholder_summary(summary, {"summary_status": "generated"}) is False
+
+    def test_marker_does_not_hide_empty_summary(self, lf):
+        assert lf._is_placeholder_summary("", {"summary_status": "generated"}) is True
 
 
 def _mock_kb_listing(lf, objects: dict[str, dict]):

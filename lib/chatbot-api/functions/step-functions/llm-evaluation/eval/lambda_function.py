@@ -1,9 +1,9 @@
-from datetime import datetime
 import json
 import boto3
 import os
 import logging
 import time
+from botocore.config import Config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,136 +21,153 @@ TEST_CASES_BUCKET = os.environ['TEST_CASES_BUCKET']
 EVAL_RESULTS_BUCKET = os.environ.get('EVAL_RESULTS_BUCKET', TEST_CASES_BUCKET)
 
 s3_client = boto3.client('s3')
-lambda_client = boto3.client('lambda')
+
+METRIC_NAMES = (
+    'similarity',
+    'correctness',
+    'context_precision',
+    'context_recall',
+    'response_relevancy',
+    'faithfulness',
+)
+MAX_ERROR_LENGTH = 500
+
+# Text generate-response substitutes when retrieval finds nothing; it is not context.
+_NO_CONTEXT_PREFIX = "No knowledge available!"
+
+# Time budget inside this Lambda's own 15-minute cap. generate-response can
+# take minutes, so each call's read timeout is derived from the time left,
+# keeping room to score the answer and write the partial result. When too
+# little time remains, the rest of the chunk is recorded as failed instead of
+# being cut off by the Lambda timeout (which would lose the whole chunk).
+WRITE_RESERVE_MS = 30_000        # S3 write + margin
+SCORING_RESERVE_MS = 120_000     # RAGAS scoring of one answer
+MIN_GENERATION_MS = 30_000       # don't start a generation with less than this
+MAX_READ_TIMEOUT_SECONDS = 890   # below the 900s Lambda cap
+BETWEEN_QUESTIONS_SECONDS = 3
+OUT_OF_TIME_ERROR = "Not evaluated: the evaluation ran out of time for this chunk."
+
+
+def _remaining_ms(context):
+    if context is None or not hasattr(context, "get_remaining_time_in_millis"):
+        return 15 * 60 * 1000
+    return context.get_remaining_time_in_millis()
+
+
+def _generation_budget_seconds(context):
+    """Seconds generate-response may take for the next question, or 0 if there
+    isn't enough time left to generate and score an answer."""
+    budget_ms = _remaining_ms(context) - WRITE_RESERVE_MS - SCORING_RESERVE_MS
+    if budget_ms < MIN_GENERATION_MS:
+        return 0
+    return min(budget_ms // 1000, MAX_READ_TIMEOUT_SECONDS)
+
+
+def _lambda_client(read_timeout_seconds):
+    # Never retry: a retried invoke would start a second generation.
+    return boto3.client('lambda', config=Config(
+        read_timeout=read_timeout_seconds,
+        connect_timeout=10,
+        retries={'total_max_attempts': 1},
+    ))
+
+
+def _failed_result(idx, test_case, error):
+    failed = {
+        'question': str(test_case.get('question') or f"Question {idx+1}"),
+        'expectedResponse': str(test_case.get('expectedResponse') or ''),
+        'actualResponse': 'Error during evaluation',
+        'failed': True,
+        'error': str(error)[:MAX_ERROR_LENGTH],
+    }
+    failed.update({name: None for name in METRIC_NAMES})
+    return failed
 
 
 def lambda_handler(event, context):
-    try:
-        chunk_key = event["chunk_key"]
-        evaluation_id = event["evaluation_id"]
-        logging.info(f"Processing chunk: {chunk_key} for evaluation: {evaluation_id}")
-        test_cases = read_chunk_from_s3(s3_client, TEST_CASES_BUCKET, chunk_key)
+    """Evaluate one chunk of test cases and write its partial result to S3.
 
-        logging.info(f"Retrieved {len(test_cases)} test cases to evaluate")
+    A question that fails (generation or RAGAS error, or no time left) is
+    recorded with its error and excluded from the metric totals, so one bad
+    question doesn't drag every average toward zero. Infrastructure failures
+    (unreadable chunk, unwritable partial result) raise, so the Map state fails
+    and the pipeline's Catch marks the evaluation FAILED instead of silently
+    continuing with missing data.
+    """
+    chunk_key = event["chunk_key"]
+    evaluation_id = event["evaluation_id"]
+    logging.info(f"Processing chunk: {chunk_key} for evaluation: {evaluation_id}")
+    test_cases = read_chunk_from_s3(s3_client, TEST_CASES_BUCKET, chunk_key)
+    logging.info(f"Retrieved {len(test_cases)} test cases to evaluate")
 
-        for idx, test_case in enumerate(test_cases):
-            if 'question' not in test_case or 'expectedResponse' not in test_case:
-                logging.error(f"Invalid test case at index {idx}: missing required fields")
-                test_cases[idx] = {'question': f"Invalid test case {idx}", 'expectedResponse': ""}
+    detailed_results = []
+    totals = {name: 0.0 for name in METRIC_NAMES}
+    num_succeeded = 0
+    num_failed = 0
 
-        detailed_results = []
-        total_similarity = 0
-        total_relevance = 0
-        total_correctness = 0
-        total_context_precision = 0
-        total_context_recall = 0
-        total_response_relevancy = 0
-        total_faithfulness = 0
-
-        for idx, test_case in enumerate(test_cases):
-            try:
-                logging.info(f"Starting test case {idx+1}/{len(test_cases)}")
-
-                if idx > 0:
-                    time.sleep(3)
-
-                result = process_test_case(idx, test_case)
-                detailed_results.append(result)
-
-                total_similarity += result['similarity']
-                total_relevance += result['relevance']
-                total_correctness += result['correctness']
-                total_context_precision += result['context_precision']
-                total_context_recall += result['context_recall']
-                total_response_relevancy += result['response_relevancy']
-                total_faithfulness += result['faithfulness']
-
-                logging.info(f"Completed test case {idx+1}/{len(test_cases)} successfully")
-
-            except Exception as e:
-                logging.error(f"Error processing test case {idx+1}: {str(e)}")
-                detailed_results.append({
-                    'question': test_case.get('question', f"Question {idx+1}"),
-                    'expectedResponse': test_case.get('expectedResponse', ''),
-                    'actualResponse': 'Error during evaluation',
-                    'similarity': 0.0,
-                    'relevance': 0.0,
-                    'correctness': 0.0,
-                    'context_precision': 0.0,
-                    'context_recall': 0.0,
-                    'response_relevancy': 0.0,
-                    'faithfulness': 0.0,
-                    'error': str(e)
-                })
-
-        num_results = len(detailed_results)
-        if num_results == 0:
-            logging.warning(f"No test cases were successfully evaluated for chunk: {chunk_key}")
-            partial_results = {
-                "detailed_results": [],
-                "total_similarity": 0,
-                "total_relevance": 0,
-                "total_correctness": 0,
-                "num_test_cases": 0,
-                "total_context_precision": 0,
-                "total_context_recall": 0,
-                "total_response_relevancy": 0,
-                "total_faithfulness": 0
-            }
-        else:
-            partial_results = {
-                "detailed_results": detailed_results,
-                "total_similarity": total_similarity,
-                "total_relevance": total_relevance,
-                "total_correctness": total_correctness,
-                "num_test_cases": num_results,
-                "total_context_precision": total_context_precision,
-                "total_context_recall": total_context_recall,
-                "total_response_relevancy": total_response_relevancy,
-                "total_faithfulness": total_faithfulness
-            }
-
-        partial_result_key = f"evaluations/{evaluation_id}/partial_results/{os.path.basename(chunk_key)}"
+    for idx, test_case in enumerate(test_cases):
+        if idx > 0:
+            time.sleep(BETWEEN_QUESTIONS_SECONDS)
+        budget_seconds = _generation_budget_seconds(context)
+        if budget_seconds == 0:
+            remaining = test_cases[idx:]
+            logging.warning(f"Out of time: recording {len(remaining)} remaining test case(s) as failed")
+            for offset, skipped in enumerate(remaining):
+                detailed_results.append(_failed_result(idx + offset, skipped, OUT_OF_TIME_ERROR))
+            num_failed += len(remaining)
+            break
         try:
-            s3_client.put_object(
-                Bucket=TEST_CASES_BUCKET,
-                Key=partial_result_key,
-                Body=json.dumps(partial_results)
-            )
-            logging.info(f"Successfully wrote partial results to S3: {TEST_CASES_BUCKET}/{partial_result_key}")
+            if not test_case.get('question') or 'expectedResponse' not in test_case:
+                raise ValueError("Test case is missing 'question' or 'expectedResponse'")
+            logging.info(f"Starting test case {idx+1}/{len(test_cases)} (generation budget {budget_seconds}s)")
+            result = process_test_case(idx, test_case, context, budget_seconds)
+            for name in METRIC_NAMES:
+                totals[name] += result[name]
+            num_succeeded += 1
+            detailed_results.append(result)
+            logging.info(f"Completed test case {idx+1}/{len(test_cases)} successfully")
         except Exception as e:
-            logging.error(f"Error writing partial results to S3: {str(e)}")
+            logging.exception(f"Error processing test case {idx+1}")
+            num_failed += 1
+            detailed_results.append(_failed_result(idx, test_case, e))
 
-        return {
-            "partial_result_key": partial_result_key,
-            "evaluation_id": evaluation_id,
-            "num_test_cases": num_results
-        }
+    partial_results = {
+        "detailed_results": detailed_results,
+        "num_test_cases": num_succeeded,
+        "num_failed": num_failed,
+        **{f"total_{name}": totals[name] for name in METRIC_NAMES},
+    }
 
-    except Exception as e:
-        logging.error(f"Error in evaluation Lambda: {str(e)}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({
-                'error': str(e),
-                'evaluation_id': event.get("evaluation_id")
-            }),
-            'evaluation_id': event.get("evaluation_id")
-        }
+    partial_result_key = f"evaluations/{evaluation_id}/partial_results/{os.path.basename(chunk_key)}"
+    s3_client.put_object(
+        Bucket=TEST_CASES_BUCKET,
+        Key=partial_result_key,
+        Body=json.dumps(partial_results)
+    )
+    logging.info(f"Wrote partial results to S3: {partial_result_key}")
+
+    return {
+        "partial_result_key": partial_result_key,
+        "evaluation_id": evaluation_id,
+        "num_test_cases": num_succeeded,
+        "num_failed": num_failed,
+    }
 
 
-def process_test_case(idx, test_case):
+def process_test_case(idx, test_case, context=None, budget_seconds=MAX_READ_TIMEOUT_SECONDS):
     question = test_case['question']
     expected_response = test_case['expectedResponse']
 
     logging.info(f"Processing test case {idx+1}: {question[:50]}...")
 
-    actual_response = invoke_generate_response_lambda(lambda_client, question)
+    # One call: generate-response returns the answer together with the KB text
+    # its own tool calls retrieved, so faithfulness and the context metrics are
+    # scored against exactly what the answer was grounded on.
+    actual_response, answer_context = invoke_generate_response_lambda(
+        _lambda_client(budget_seconds), question
+    )
     if not actual_response:
-        logging.warning(f"Empty response received for question: {question[:50]}...")
-        actual_response = "No response generated."
-
-    retrieved_context = invoke_generate_response_lambda(lambda_client, question, get_context_only=True)
+        raise RuntimeError("generate-response returned no answer")
 
     logging.info(f"Evaluating response for test case {idx+1}")
 
@@ -159,69 +176,65 @@ def process_test_case(idx, test_case):
 
     for retry in range(max_retries):
         try:
-            result = evaluate_with_ragas(question, expected_response, actual_response, retrieved_context)
+            result = evaluate_with_ragas(question, expected_response, actual_response, answer_context)
             break
         except Exception as e:
             retry_delay = 5 * (2 ** retry)
-            if retry < max_retries - 1:
+            out_of_time = _remaining_ms(context) - retry_delay * 1000 < WRITE_RESERVE_MS + SCORING_RESERVE_MS // 2
+            if retry < max_retries - 1 and not out_of_time:
                 logging.warning(f"Retry {retry+1}/{max_retries} for RAGAS evaluation (waiting {retry_delay}s): {str(e)}")
                 time.sleep(retry_delay)
             else:
                 raise
 
-    logging.info(f"RAGAS evaluation complete with scores: similarity={result['scores']['similarity']:.2f}, "
-                 f"relevance={result['scores']['relevance']:.2f}, correctness={result['scores']['correctness']:.2f}")
+    logging.info(f"RAGAS evaluation complete with scores: {result['scores']}")
 
     return {
         'question': question,
         'expectedResponse': expected_response,
         'actualResponse': actual_response,
-        'similarity': result['scores']['similarity'],
-        'relevance': result['scores']['relevance'],
-        'correctness': result['scores']['correctness'],
-        'context_precision': result['scores']['context_precision'],
-        'context_recall': result['scores']['context_recall'],
-        'response_relevancy': result['scores']['response_relevancy'],
-        'faithfulness': result['scores']['faithfulness'],
-        'retrieved_context': retrieved_context
+        **{name: result['scores'][name] for name in METRIC_NAMES},
+        'retrieved_context': answer_context,
     }
 
 
-def invoke_generate_response_lambda(lambda_client, question, get_context_only=False):
-    try:
-        logging.info(f"Invoking generate-response Lambda for question: {question[:50]}...")
-
-        payload = {'userMessage': question, 'chatHistory': []}
-        if get_context_only:
-            payload['get_context_only'] = True
-
-        response = lambda_client.invoke(
-            FunctionName=GENERATE_RESPONSE_LAMBDA_NAME,
-            InvocationType='RequestResponse',
-            Payload=json.dumps(payload),
-        )
-
-        logging.info("Response received from Lambda")
-        payload_bytes = response['Payload'].read().decode('utf-8')
-        result = json.loads(payload_bytes)
-
-        if result.get('statusCode', 200) != 200:
-            logging.error(f"Error response from Lambda: {result}")
-            return ""
-
-        body = json.loads(result.get('body', '{}'))
-
-        if get_context_only:
-            context = body.get('context', '')
-            logging.info(f"Received context of length: {len(context)} characters")
-            return context
-        else:
-            response_text = body.get('modelResponse', '')
-            logging.info(f"Received response of length: {len(response_text)} characters")
-            return response_text
-    except Exception as e:
-        logging.error(f"Error invoking generateResponseLambda: {str(e)}")
+def _usable_context(value):
+    text = value if isinstance(value, str) else ""
+    text = text.strip()
+    if not text or text.startswith(_NO_CONTEXT_PREFIX):
         return ""
+    return text
+
+
+def invoke_generate_response_lambda(lambda_client, question):
+    """Return (answer, context): the model's answer and the KB text it was generated from.
+
+    Raises on invoke errors, timeouts and non-200 responses so the failure
+    reason is recorded on the question.
+    """
+    logging.info(f"Invoking generate-response Lambda for question: {question[:50]}...")
+    payload = {'userMessage': question, 'chatHistory': []}
+    response = lambda_client.invoke(
+        FunctionName=GENERATE_RESPONSE_LAMBDA_NAME,
+        InvocationType='RequestResponse',
+        Payload=json.dumps(payload),
+    )
+    result = json.loads(response['Payload'].read().decode('utf-8'))
+    if response.get('FunctionError') or result.get('statusCode', 200) != 200:
+        logging.error(f"Error response from generate-response: {str(result)[:1000]}")
+        raise RuntimeError("generate-response returned an error")
+
+    body = json.loads(result.get('body', '{}'))
+    response_text = body.get('modelResponse', '') or ''
+    answer_context = _usable_context(body.get('context'))
+    if not answer_context:
+        # Older generate-response builds only returned the context inside sources.
+        sources = body.get('sources') or {}
+        answer_context = _usable_context(sources.get('content') if isinstance(sources, dict) else "")
+    logging.info(
+        f"Received response of length {len(response_text)} with {len(answer_context)} chars of context"
+    )
+    return response_text, answer_context
 
 
 def evaluate_with_ragas(question, expected_response, actual_response, retrieved_context):
@@ -240,6 +253,7 @@ def evaluate_with_ragas(question, expected_response, actual_response, retrieved_
 
     semantic_similarity = SemanticSimilarity()
     metrics = [answer_correctness, semantic_similarity, answer_relevancy, context_precision, context_recall, faithfulness]
+    region = os.environ.get("AWS_REGION")
 
     if not actual_response:
         actual_response = "No response"
@@ -262,12 +276,12 @@ def evaluate_with_ragas(question, expected_response, actual_response, retrieved_
     dataset = EvaluationDataset(samples=[sample])
 
     evaluator_llm = LangchainLLMWrapper(ChatBedrockConverse(
-        region_name="us-east-1",
+        region_name=region,
         model=BEDROCK_MODEL_ID,
         temperature=0.0,
     ))
     evaluator_embeddings = LangchainEmbeddingsWrapper(BedrockEmbeddings(
-        region_name="us-east-1",
+        region_name=region,
         model_id='amazon.titan-embed-text-v2:0',
     ))
 
@@ -302,7 +316,6 @@ def evaluate_with_ragas(question, expected_response, actual_response, retrieved_
         "status": "success",
         "scores": {
             "similarity": safe_score('semantic_similarity'),
-            "relevance": safe_score('answer_relevancy'),
             "correctness": safe_score('answer_correctness'),
             "context_precision": safe_score('context_precision'),
             "context_recall": safe_score('context_recall'),

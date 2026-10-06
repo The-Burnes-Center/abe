@@ -5,14 +5,113 @@ from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
 
-from common_utils import get_claims, get_logger, json_response, parse_json_body, truncate_text
+from common_utils import (
+    DecimalJSONEncoder,
+    get_claims,
+    get_logger,
+    json_response,
+    parse_json_body,
+    truncate_text,
+)
 
 
 DDB_TABLE_NAME = os.environ["DDB_TABLE_NAME"]
 
-dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(DDB_TABLE_NAME)
 logger = get_logger(__name__)
+
+# Operations that write chat turns or the context summary the model reads back.
+# Only the chat Lambda (direct Lambda invoke) may call them; through the HTTP
+# API a client could otherwise forge assistant answers in its own history or
+# inject instructions into the summary. The UI only lists, reads and deletes.
+INVOKE_ONLY_OPERATIONS = frozenset({
+    "add_session",
+    "update_session",
+    "append_chat_entry",
+    "update_context_summary",
+})
+
+# DynamoDB's hard item limit is 400 KB. Stay well under it so a long session
+# keeps saving: oversized entries are slimmed, and when the item itself would
+# overflow, the oldest turns are dropped.
+MAX_ITEM_BYTES = 350_000
+MAX_ENTRY_BYTES = 200_000
+
+
+def _json_size(value) -> int:
+    return len(json.dumps(value, cls=DecimalJSONEncoder, default=str).encode("utf-8"))
+
+
+def _fit_entry(entry):
+    """Return the entry unchanged if it fits, else a slimmed copy, else None."""
+    if _json_size(entry) <= MAX_ENTRY_BYTES:
+        return entry
+    if isinstance(entry, dict) and "metadata" in entry:
+        slim = {**entry, "metadata": {"truncated": True}}
+        logger.warning("Chat entry exceeded %d bytes; dropped its metadata", MAX_ENTRY_BYTES)
+        if _json_size(slim) <= MAX_ENTRY_BYTES:
+            return slim
+    logger.warning("Chat entry exceeded %d bytes even without metadata; rejecting", MAX_ENTRY_BYTES)
+    return None
+
+
+def _is_item_too_large(error: ClientError) -> bool:
+    err = error.response.get("Error", {})
+    return err.get("Code") == "ValidationException" and "size" in str(err.get("Message", "")).lower()
+
+
+def _trim_history_and_append(session_id, user_id, new_chat_entry, title_text):
+    """Rewrite the session with the oldest turns dropped so the new entry fits.
+
+    The rewrite is conditioned on the message_count that was read, so a turn
+    appended concurrently isn't silently overwritten; on conflict it re-reads
+    and tries once more."""
+    for attempt in (1, 2):
+        try:
+            return _trim_once(session_id, user_id, new_chat_entry, title_text)
+        except ClientError as error:
+            if attempt == 2 or error.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+            logger.warning("Session changed while trimming; retrying (session=%s)", session_id)
+
+
+def _trim_once(session_id, user_id, new_chat_entry, title_text):
+    existing = table.get_item(Key={"user_id": user_id, "session_id": session_id}).get("Item") or {}
+    history = list(existing.get("chat_history") or []) + [new_chat_entry]
+    previous_count = existing.get("message_count", len(existing.get("chat_history") or []))
+    item = {
+        **existing,
+        "user_id": user_id,
+        "session_id": session_id,
+        "title": existing.get("title") or title_text,
+        "time_stamp": utc_now_iso(),
+        "chat_history": history,
+        "message_count": int(previous_count) + 1,
+    }
+    dropped = 0
+    while len(item["chat_history"]) > 1 and _json_size(item) > MAX_ITEM_BYTES:
+        item["chat_history"] = item["chat_history"][1:]
+        dropped += 1
+    if dropped:
+        logger.warning(
+            "Session item near the DynamoDB size limit; dropped %d oldest chat turns (session=%s)",
+            dropped, session_id,
+        )
+    else:
+        logger.warning("Session item hit the DynamoDB size limit but fits after rewrite (session=%s)", session_id)
+
+    if not existing:
+        condition = {"ConditionExpression": "attribute_not_exists(session_id)"}
+    elif "message_count" in existing:
+        condition = {
+            "ConditionExpression": "message_count = :expected",
+            "ExpressionAttributeValues": {":expected": existing["message_count"]},
+        }
+    else:
+        condition = {"ConditionExpression": "attribute_not_exists(message_count)"}
+    table.put_item(Item=item, **condition)
+    return not bool(existing)
 
 
 def utc_now_iso() -> str:
@@ -30,7 +129,53 @@ def get_session(session_id, user_id):
         return json_response(500, "An unexpected error occurred")
 
 
+# message_count lets the metrics Lambda count turns without reading every
+# chat_history body. Sessions written before the counter existed are seeded
+# from their stored history the first time they are appended to.
+_COUNT_READY = "(attribute_exists(message_count) OR attribute_not_exists(chat_history))"
+
+
+def _append_entry(session_id, user_id, new_chat_entry, *, title_text=None, must_exist=False, return_values="NONE"):
+    key = {"user_id": user_id, "session_id": session_id}
+    set_parts = [
+        "chat_history = list_append(if_not_exists(chat_history, :empty), :new_entry)",
+        "time_stamp = :ts",
+        "message_count = if_not_exists(message_count, :seed) + :one",
+    ]
+    values = {":empty": [], ":new_entry": [new_chat_entry], ":ts": utc_now_iso(), ":seed": 0, ":one": 1}
+    kwargs = {}
+    if title_text is not None:
+        set_parts.append("#title = if_not_exists(#title, :title)")
+        values[":title"] = title_text
+        kwargs["ExpressionAttributeNames"] = {"#title": "title"}
+    exists = "attribute_exists(user_id) AND attribute_exists(session_id)"
+
+    def _update(condition):
+        return table.update_item(
+            Key=key,
+            UpdateExpression="SET " + ", ".join(set_parts),
+            ExpressionAttributeValues=values,
+            ConditionExpression=condition,
+            ReturnValues=return_values,
+            **kwargs,
+        )
+
+    try:
+        return _update(f"{exists} AND {_COUNT_READY}" if must_exist else _COUNT_READY)
+    except ClientError as error:
+        if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+        existing = table.get_item(Key=key, ProjectionExpression="chat_history, message_count").get("Item")
+        if not existing or "message_count" in existing:
+            raise
+        values[":seed"] = len(existing.get("chat_history") or [])
+        return _update(exists if must_exist else "attribute_exists(chat_history)")
+
+
 def add_session(session_id, user_id, title, new_chat_entry):
+    new_chat_entry = _fit_entry(new_chat_entry)
+    if new_chat_entry is None:
+        return json_response(413, "This message is too large to save.")
     title_text = truncate_text(title or f"Chat on {utc_now_iso()}", 80).strip() or f"Chat on {utc_now_iso()}"
     try:
         table.put_item(
@@ -38,6 +183,7 @@ def add_session(session_id, user_id, title, new_chat_entry):
                 "user_id": user_id,
                 "session_id": session_id,
                 "chat_history": [new_chat_entry],
+                "message_count": 1,
                 "title": title_text,
                 "time_stamp": utc_now_iso(),
             },
@@ -50,49 +196,37 @@ def add_session(session_id, user_id, title, new_chat_entry):
             return json_response(409, f"Session already exists: {session_id}")
         if error.response["Error"]["Code"] == "ResourceNotFoundException":
             return json_response(404, f"No record found with session id: {session_id}")
+        if _is_item_too_large(error):
+            logger.warning("New session item exceeded the DynamoDB size limit (session=%s)", session_id)
+            return json_response(413, "This message is too large to save.")
         return json_response(500, "Failed to create the session due to a database error.")
 
 
 def update_session(session_id, user_id, new_chat_entry):
+    new_chat_entry = _fit_entry(new_chat_entry)
+    if new_chat_entry is None:
+        return json_response(413, "This message is too large to save.")
     try:
-        response = table.update_item(
-            Key={"user_id": user_id, "session_id": session_id},
-            UpdateExpression="SET chat_history = list_append(if_not_exists(chat_history, :empty), :new_entry), time_stamp = :ts",
-            ExpressionAttributeValues={
-                ":new_entry": [new_chat_entry],
-                ":empty": [],
-                ":ts": utc_now_iso(),
-            },
-            ConditionExpression="attribute_exists(user_id) AND attribute_exists(session_id)",
-            ReturnValues="UPDATED_NEW",
-        )
+        response = _append_entry(session_id, user_id, new_chat_entry, must_exist=True, return_values="UPDATED_NEW")
         return json_response(200, response.get("Attributes", {}))
     except ClientError as error:
         logger.exception("DynamoDB error while updating session")
         error_code = error.response["Error"]["Code"]
         if error_code in ("ResourceNotFoundException", "ConditionalCheckFailedException"):
             return json_response(404, f"No record found with session id: {session_id}")
+        if _is_item_too_large(error):
+            logger.warning("Session item exceeded the DynamoDB size limit on update (session=%s)", session_id)
+            return json_response(413, "This conversation is too long to save. Please start a new chat.")
         return json_response(500, "Failed to update the session due to a database error.")
 
 
 def append_chat_entry(session_id, user_id, new_chat_entry, title):
     title_text = truncate_text(title or f"Chat on {utc_now_iso()}", 80).strip() or f"Chat on {utc_now_iso()}"
+    new_chat_entry = _fit_entry(new_chat_entry)
+    if new_chat_entry is None:
+        return json_response(413, "This message is too large to save.")
     try:
-        response = table.update_item(
-            Key={"user_id": user_id, "session_id": session_id},
-            UpdateExpression=(
-                "SET chat_history = list_append(if_not_exists(chat_history, :empty), :new_entry), "
-                "time_stamp = :ts, #title = if_not_exists(#title, :title)"
-            ),
-            ExpressionAttributeNames={"#title": "title"},
-            ExpressionAttributeValues={
-                ":empty": [],
-                ":new_entry": [new_chat_entry],
-                ":title": title_text,
-                ":ts": utc_now_iso(),
-            },
-            ReturnValues="ALL_OLD",
-        )
+        response = _append_entry(session_id, user_id, new_chat_entry, title_text=title_text, return_values="ALL_OLD")
         return json_response(
             200,
             {
@@ -100,7 +234,14 @@ def append_chat_entry(session_id, user_id, new_chat_entry, title):
                 "title": title_text,
             },
         )
-    except ClientError:
+    except ClientError as error:
+        if _is_item_too_large(error):
+            try:
+                created = _trim_history_and_append(session_id, user_id, new_chat_entry, title_text)
+                return json_response(200, {"created": created, "title": title_text, "trimmed": True})
+            except ClientError:
+                logger.exception("DynamoDB error while trimming an oversized session")
+                return json_response(500, "Failed to save the session due to a database error.")
         logger.exception("DynamoDB error while appending session entry")
         return json_response(500, "Failed to save the session due to a database error.")
 
@@ -148,9 +289,9 @@ def list_sessions_by_user_id(user_id, limit=50):
         if error_code == "ValidationException":
             return json_response(400, "Invalid input parameters")
         return json_response(500, "Internal server error")
-    except Exception as error:
+    except Exception:
         logger.exception("Unexpected error while listing sessions")
-        return json_response(500, f"An unexpected error occurred: {str(error)}")
+        return json_response(500, "An unexpected error occurred")
 
     sorted_items = sorted(items, key=lambda item: item["time_stamp"], reverse=True)
     sessions = [
@@ -193,12 +334,20 @@ def update_context_summary(session_id, user_id, context_summary):
 
 
 
+def _is_api_gateway_request(event) -> bool:
+    """API Gateway always attaches requestContext; a direct Lambda invoke from
+    the chat handler sends only a body. Clients cannot forge this distinction
+    because API Gateway builds the event."""
+    return bool((event or {}).get("requestContext"))
+
+
 def _resolve_user_id(event, body_user_id):
     """Derive the user identifier from the API Gateway JWT authorizer when
-    present. When invoked directly via Lambda Invoke (no authorizer context) —
-    e.g. from the WebSocket chat handler — fall back to the supplied body
+    present. When invoked directly via Lambda Invoke (no requestContext),
+    e.g. from the WebSocket chat handler, fall back to the supplied body
     value, which the chat handler has already derived from the WS authorizer
-    principal.
+    principal. An API Gateway request without JWT claims never falls back to
+    the body, so a client can't pick whose sessions it reads.
 
     We key off `cognito:username` because that matches the identifier the
     frontend has been sending all along (Amplify's `.username`), which is what
@@ -210,6 +359,8 @@ def _resolve_user_id(event, body_user_id):
         jwt_user = claims.get("cognito:username") or claims.get("username") or claims.get("sub")
         if jwt_user:
             return jwt_user
+    if _is_api_gateway_request(event):
+        return None
     return body_user_id
 
 
@@ -220,6 +371,10 @@ def lambda_handler(event, context):
         return json_response(400, "Invalid JSON request body")
 
     operation = data.get("operation")
+    if operation in INVOKE_ONLY_OPERATIONS and _is_api_gateway_request(event):
+        logger.warning("Rejected HTTP call to invoke-only session operation %s", operation)
+        return json_response(403, "This operation is not available.")
+
     user_id = _resolve_user_id(event, data.get("user_id"))
     if not user_id:
         return json_response(401, "Unauthorized")
@@ -245,4 +400,4 @@ def lambda_handler(event, context):
         return delete_session(session_id, user_id)
     if operation == "delete_user_sessions":
         return delete_user_sessions(user_id)
-    return json_response(400, f"Operation not found/allowed! Operation Sent: {operation}")
+    return json_response(400, f"Operation not found/allowed! Operation Sent: {truncate_text(operation, 64)}")

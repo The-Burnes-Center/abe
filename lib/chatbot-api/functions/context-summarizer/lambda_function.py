@@ -1,16 +1,17 @@
 """
 Context Summarizer Lambda -- compresses long chat histories into structured summaries.
 
-Called when a conversation exceeds the context window budget. Uses a fast LLM
-(Claude Haiku by default) to distill the conversation into a structured JSON
+Called when a conversation exceeds the context window budget. Uses the fast
+model (FAST_MODEL_ID) to distill the conversation into a structured JSON
 summary covering key facts, questions answered, data retrieved, and the user's
 active topic.
 
 Summarization strategy (two-tier fallback):
   1. **Structured** (primary): asks the LLM to return JSON conforming to the
      ``ConversationSummary`` Pydantic schema. The response is parsed and
-     validated. If Pydantic validation fails (e.g., the LLM returns malformed
-     JSON or missing fields), falls through to the unstructured path.
+     validated. If the response contains no JSON object (``ValueError`` from
+     ``extract_json_object``) or fails Pydantic validation, falls through to
+     the unstructured path.
   2. **Unstructured** (fallback): asks the LLM for a plain-text summary with
      no schema constraints. This always produces usable output even if the
      structured parse failed, at the cost of losing typed fields.
@@ -25,17 +26,18 @@ import boto3
 from pydantic import BaseModel, Field, ValidationError
 
 from common_utils import extract_json_object, get_logger
+from common_utils.models import fast_model_id
 
-MODEL_ID = os.environ.get("FAST_MODEL_ID", "us.anthropic.claude-3-5-haiku-20241022-v1:0")
+MODEL_ID = fast_model_id()
 
-bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+bedrock = boto3.client("bedrock-runtime")
 logger = get_logger(__name__)
 
 
 class ConversationSummary(BaseModel):
     key_facts: list[str] = Field(description="Important facts established in the conversation")
     questions_answered: list[str] = Field(description="Questions the user asked and key points from answers")
-    data_retrieved: list[str] = Field(description="Specific data or results from tool calls such as vendors, contracts, or counts")
+    data_retrieved: list[str] = Field(description="Specific data or results from tool calls such as names, records, or counts")
     active_topic: str = Field(description="What the user was most recently focused on")
 
 
@@ -53,8 +55,8 @@ SYSTEM_PROMPT = (
 def summarize(conversation_text: str) -> dict:
     """Invoke the LLM to produce a structured ConversationSummary.
 
-    Raises ``ValidationError`` if the LLM response cannot be parsed into the
-    expected schema (caller handles the fallback).
+    Raises ``ValueError`` (no JSON object found) or ``ValidationError`` (JSON
+    doesn't match the schema); the caller handles the fallback.
     """
     body = json.dumps(
         {
@@ -125,8 +127,10 @@ def lambda_handler(event, context):
                 "summary_text": summary_text,
             }),
         }
-    except ValidationError as err:
-        logger.warning("Pydantic validation failed, falling back to raw summary: %s", err)
+    except (ValidationError, ValueError) as err:
+        # ValidationError subclasses ValueError, but name both: extract_json_object
+        # raises a plain ValueError when the model returns no JSON at all.
+        logger.warning("Structured summary unusable, falling back to raw summary: %s", err)
         try:
             fallback = _fallback_summarize(event.get("conversation_text", ""))
             return {
@@ -136,12 +140,12 @@ def lambda_handler(event, context):
                     "summary_text": fallback,
                 }),
             }
-        except Exception as fallback_err:
+        except Exception:
             logger.exception("Fallback summarization also failed")
-            return {"statusCode": 500, "body": json.dumps({"error": str(fallback_err)})}
-    except Exception as err:
+            return {"statusCode": 500, "body": json.dumps({"error": "Summarization failed"})}
+    except Exception:
         logger.exception("Context summarization error")
-        return {"statusCode": 500, "body": json.dumps({"error": str(err)})}
+        return {"statusCode": 500, "body": json.dumps({"error": "Summarization failed"})}
 
 
 def _fallback_summarize(conversation_text: str) -> str:

@@ -942,3 +942,76 @@ class TestDateColumnsEndToEnd:
         item = reg.get_item(Key={"pk": "TOOLS", "sk": INDEX_ID})["Item"]
         assert "date_columns" in item
         assert item["date_columns"] == []
+
+
+# ---------------------------------------------------------------------------
+# Hardening: URL-encoded keys, size cap, COMPLETE only after rows land
+# ---------------------------------------------------------------------------
+
+class TestHardening:
+    def test_url_encoded_key_is_decoded(self, lf):
+        mod, dynamodb, s3, *_ = lf
+        _upload(s3, _simple_xlsx(2), key="indexes/my index/latest.xlsx")
+        resp = mod.lambda_handler(_make_s3_event(key="indexes/my+index/latest.xlsx"), {})
+        body = json.loads(resp["body"])
+        assert body["status"] == "ok"
+        assert body["index_id"] == "my index"
+
+    def test_oversized_file_rejected_with_error_meta(self, lf, monkeypatch):
+        mod, dynamodb, s3, *_ = lf
+        monkeypatch.setattr(mod, "MAX_FILE_BYTES", 100)
+        _upload(s3, _simple_xlsx(5))
+        resp = mod.lambda_handler(_make_s3_event(), {})
+        assert json.loads(resp["body"])["status"] == "error"
+        meta = dynamodb.Table(TABLE).get_item(Key={"pk": INDEX_ID, "sk": "META"})["Item"]
+        assert meta["status"] == "ERROR"
+        assert "limit" in meta["error"]
+
+    def test_meta_not_complete_when_row_write_fails(self, lf):
+        mod, dynamodb, s3, *_ = lf
+        _upload(s3, _simple_xlsx(3))
+        real_table = dynamodb.Table(TABLE)
+
+        class FailingWriter:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def put_item(self, Item):
+                raise RuntimeError("throttled")
+
+            def delete_item(self, Key):
+                pass
+
+        class TableProxy:
+            def __getattr__(self, name):
+                return getattr(real_table, name)
+
+            def batch_writer(self):
+                return FailingWriter()
+
+        with patch.object(mod.DDB, "Table", return_value=TableProxy()):
+            mod.lambda_handler(_make_s3_event(), {})
+        meta = real_table.get_item(Key={"pk": INDEX_ID, "sk": "META"})["Item"]
+        assert meta["status"] == "ERROR"
+
+    def test_meta_columns_written_with_complete(self, lf):
+        mod, dynamodb, s3, *_ = lf
+        _upload(s3, _simple_xlsx(2))
+        mod.lambda_handler(_make_s3_event(), {})
+        meta = dynamodb.Table(TABLE).get_item(Key={"pk": INDEX_ID, "sk": "META"})["Item"]
+        assert meta["status"] == "COMPLETE"
+        assert meta["columns"] and "date_columns" in meta
+
+    def test_clear_index_removes_many_rows(self, lf):
+        mod, dynamodb, s3, *_ = lf
+        table = dynamodb.Table(TABLE)
+        table.put_item(Item={"pk": INDEX_ID, "sk": "META", "status": "COMPLETE"})
+        with table.batch_writer() as w:
+            for i in range(60):
+                w.put_item(Item={"pk": INDEX_ID, "sk": str(i)})
+        mod._clear_index(table, INDEX_ID)
+        items = table.query(KeyConditionExpression=boto3.dynamodb.conditions.Key("pk").eq(INDEX_ID))["Items"]
+        assert [i["sk"] for i in items] == ["META"]

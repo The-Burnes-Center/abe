@@ -5,14 +5,15 @@ from datetime import datetime, timezone
 import boto3
 
 from common_utils import extract_json_object, get_logger, truncate_text
+from common_utils.models import fast_model_id
 
 
 ANALYTICS_TABLE = os.environ["ANALYTICS_TABLE_NAME"]
-MODEL_ID = os.environ.get("FAST_MODEL_ID", "us.anthropic.claude-3-5-haiku-20241022-v1:0")
+MODEL_ID = fast_model_id()
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(ANALYTICS_TABLE)
-bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+bedrock = boto3.client("bedrock-runtime")
 logger = get_logger(__name__)
 
 # Topic taxonomy for analytics. Override per deployment with the FAQ_CATEGORIES
@@ -79,8 +80,7 @@ def lambda_handler(event, context):
         user_message = (event.get("userMessage") or "").strip()
         user_id = event.get("userId", "")
         session_id = event.get("sessionId", "")
-        display_name = event.get("displayName", "")
-        agency = event.get("agency", "") or "Unknown"
+        display_name = truncate_text(event.get("displayName", ""), 200)
         timestamp = event.get("timestamp", datetime.now(timezone.utc).isoformat())
 
         if len(user_message) < 3:
@@ -104,12 +104,11 @@ def lambda_handler(event, context):
                 "user_id": user_id,
                 "session_id": session_id,
                 "display_name": display_name,
-                "agency": agency,
                 "date_key": timestamp[:10],
                 "confidence": str(confidence),
             }
         )
         return {"statusCode": 200, "body": f"Classified as {topic} ({confidence})"}
-    except Exception as error:
+    except Exception:
         logger.exception("FAQ classification error")
-        return {"statusCode": 500, "body": str(error)}
+        return {"statusCode": 500, "body": "Classification failed"}

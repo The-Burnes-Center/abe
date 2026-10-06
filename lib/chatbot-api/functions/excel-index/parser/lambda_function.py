@@ -14,7 +14,9 @@ Processing pipeline:
      c. Write a PROCESSING status to the META item.
      d. Clear stale rows from any previous version of this index.
      e. Batch-write all new rows to DynamoDB.
-     f. Update the META item with COMPLETE status, row count, and column list.
+     f. Only then mark the META item COMPLETE with row count and column list,
+        so a failure mid-write leaves ERROR (not a COMPLETE index with
+        missing rows) and the query tool never reads a half-written index.
      g. Register the index in the tool registry so the chat agent can discover
         and query it. The registry call triggers AI-generated descriptions of
         the index contents based on column names and sample rows.
@@ -31,6 +33,7 @@ import io
 import json
 import os
 import re
+import urllib.parse
 from datetime import datetime, timezone
 
 import boto3
@@ -45,6 +48,9 @@ BUCKET = os.environ["BUCKET"]
 TABLE_NAME = os.environ["TABLE_NAME"]
 SK_META = "META"
 BATCH_SIZE = 25
+# Workbooks are parsed in memory; cap the download so one huge upload can't
+# exhaust the Lambda's memory. Override with MAX_INDEX_FILE_MB.
+MAX_FILE_BYTES = int(float(os.environ.get("MAX_INDEX_FILE_MB", "25")) * 1024 * 1024)
 
 _INDEX_ID_RE = re.compile(r"^indexes/([^/]+)/")
 
@@ -68,31 +74,42 @@ def _clear_index(table, index_id: str) -> None:
     ``_put_meta`` once parsing completes or fails.
     """
     keys_to_delete = []
-    paginator = boto3.client("dynamodb").get_paginator("query")
-    for page in paginator.paginate(
-        TableName=TABLE_NAME,
-        KeyConditionExpression="pk = :pk",
-        ExpressionAttributeValues={":pk": {"S": index_id}},
-        ProjectionExpression="pk, sk",
-    ):
+    query_kwargs = {
+        "KeyConditionExpression": "pk = :pk",
+        "ExpressionAttributeValues": {":pk": index_id},
+        "ProjectionExpression": "pk, sk",
+    }
+    while True:
+        page = table.query(**query_kwargs)
         for item in page.get("Items", []):
-            if item.get("sk", {}).get("S") == SK_META:
+            if item.get("sk") == SK_META:
                 continue
             keys_to_delete.append({"pk": item["pk"], "sk": item["sk"]})
-    for i in range(0, len(keys_to_delete), BATCH_SIZE):
-        chunk = keys_to_delete[i : i + BATCH_SIZE]
-        request_items = {TABLE_NAME: [{"DeleteRequest": {"Key": k}} for k in chunk]}
-        boto3.client("dynamodb").batch_write_item(RequestItems=request_items)
+        last_key = page.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        query_kwargs["ExclusiveStartKey"] = last_key
+    # batch_writer resends UnprocessedItems until DynamoDB accepts them; the
+    # raw batch_write_item call used before silently dropped throttled deletes,
+    # leaving stale rows mixed into the new version of the index.
+    with table.batch_writer() as writer:
+        for k in keys_to_delete:
+            writer.delete_item(Key=k)
 
 
 def _put_meta(table, index_id: str, row_count: int, last_updated: str,
-              error: str | None = None, status: str | None = None) -> None:
+              error: str | None = None, status: str | None = None,
+              columns: list[str] | None = None, date_columns: list[str] | None = None) -> None:
     """Write or overwrite the META item for an index with current status info."""
     item: dict = {"pk": index_id, "sk": SK_META, "row_count": row_count, "last_updated": last_updated}
     if status is not None:
         item["status"] = status
     if error is not None:
         item["error"] = error
+    if columns is not None:
+        item["columns"] = columns
+    if date_columns is not None:
+        item["date_columns"] = date_columns
     table.put_item(Item=item)
 
 
@@ -118,7 +135,8 @@ def lambda_handler(event, context):
     for record in event.get("Records", []):
         event_name = record.get("eventName", "")
         bucket = record["s3"]["bucket"]["name"]
-        key = record["s3"]["object"]["key"]
+        # S3 event keys are URL-encoded (spaces arrive as "+", "%20", ...).
+        key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
         if not key.lower().endswith(".xlsx"):
             continue
 
@@ -138,6 +156,15 @@ def lambda_handler(event, context):
 
         try:
             obj = S3.get_object(Bucket=bucket, Key=key)
+            size = int(obj.get("ContentLength") or 0)
+            if size > MAX_FILE_BYTES:
+                obj["Body"].close()
+                err = (
+                    f"Index '{index_id}' file is {size / 1_048_576:.1f} MB; the limit is "
+                    f"{MAX_FILE_BYTES / 1_048_576:.0f} MB."
+                )
+                _put_meta(table, index_id, 0, datetime.now(timezone.utc).isoformat(), error=err, status="ERROR")
+                return {"statusCode": 200, "body": json.dumps({"status": "error", "message": err})}
             body = obj["Body"].read()
             wb = load_workbook(io.BytesIO(body), read_only=True, data_only=True)
             ws = wb.active
@@ -167,24 +194,16 @@ def lambda_handler(event, context):
 
             date_cols = infer_date_columns(col_names, rows_out)
 
+            with table.batch_writer() as writer:
+                for i, row in enumerate(rows_out):
+                    item = {"pk": index_id, "sk": str(i)}
+                    for k, v in row.items():
+                        item[k] = _serialize_value(v)
+                    writer.put_item(Item=item)
+
             now = datetime.now(timezone.utc).isoformat()
-            _put_meta(table, index_id, len(rows_out), now, error=None, status="COMPLETE")
-
-            table.update_item(
-                Key={"pk": index_id, "sk": SK_META},
-                UpdateExpression="SET #col = :c, #dc = :d",
-                ExpressionAttributeNames={"#col": "columns", "#dc": "date_columns"},
-                ExpressionAttributeValues={":c": col_names, ":d": date_cols},
-            )
-
-            for offset in range(0, len(rows_out), BATCH_SIZE):
-                chunk = rows_out[offset : offset + BATCH_SIZE]
-                with table.batch_writer() as writer:
-                    for j, row in enumerate(chunk):
-                        item = {"pk": index_id, "sk": str(offset + j)}
-                        for k, v in row.items():
-                            item[k] = _serialize_value(v)
-                        writer.put_item(Item=item)
+            _put_meta(table, index_id, len(rows_out), now, error=None, status="COMPLETE",
+                      columns=col_names, date_columns=date_cols)
 
             write_to_registry(index_id, display_name, col_names, len(rows_out), sample_rows=rows_out[:5], date_columns=date_cols)
             print(f"Parsed index '{index_id}': {len(rows_out)} rows, {len(col_names)} columns.")

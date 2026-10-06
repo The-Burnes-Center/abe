@@ -1,0 +1,12 @@
+# Top-level dependencies for the RAGAS eval image. requirements.txt is the
+# fully pinned lock generated from this file:
+#   uv pip compile requirements.in --python-version 3.12 \
+#     --python-platform x86_64-manylinux_2_28 --no-header --no-annotate -o requirements.txt
+ragas==0.2.14
+langchain-aws>=0.2,<0.3
+langchain-community>=0.3,<0.4
+langchain>=0.3,<0.4
+datasets>=3.0
+pandas>=2.2
+boto3>=1.35
+nltk>=3.9
