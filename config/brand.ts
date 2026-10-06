@@ -12,17 +12,18 @@
  * variables (same pattern as PRIMARY_MODEL_ID), letting one build target
  * multiple brands without code edits.
  *
- * Default brand: neutral "ABE". Palette: Red #C8102E (primary), Navy #0C3354,
- * Light Blue #297496, Black, White. Type: Libre Franklin. Replace the names,
- * colors and logo files below to rebrand a fork.
+ * Default brand: ABE by AI for Impact. Palette from ai4impact.ai: primary
+ * #376BD1, navy #1F2D45, accent #6A9CFF, cream #F8F6F1, white. Type: Public
+ * Sans (Google Fonts). Every text/background pair below is WCAG AA. Replace
+ * the names, colors and logo files to rebrand a fork.
  */
 
-/** Raw brand palette — the named swatches from the brand guide. */
+/** Raw brand palette: the named swatches from the brand guide. */
 export interface BrandPalette {
-  red: string;
+  primary: string;
   navy: string;
-  lightBlue: string;
-  black: string;
+  accent: string;
+  cream: string;
   white: string;
 }
 
@@ -89,10 +90,10 @@ export interface BrandConfig {
 const env = (key: string, fallback: string): string => process.env[key] ?? fallback;
 
 const palette: BrandPalette = {
-  red: "#C8102E",
-  navy: "#0C3354",
-  lightBlue: "#297496",
-  black: "#000000",
+  primary: "#376BD1",
+  navy: "#1F2D45",
+  accent: "#6A9CFF",
+  cream: "#F8F6F1",
   white: "#FFFFFF",
 };
 
@@ -100,7 +101,7 @@ export const brand: BrandConfig = {
   slug: env("BRAND_SLUG", "abe"),
   assistantName: env("ASSISTANT_NAME", "ABE"),
   shortName: env("SHORT_NAME", "ABE"),
-  organizationName: env("ORGANIZATION_NAME", "Your Organization"),
+  organizationName: env("ORGANIZATION_NAME", "AI for Impact"),
   parentOrg: env("PARENT_ORG", ""),
   tagline: env("BRAND_TAGLINE", "Ask anything about your knowledge base."),
   welcomeMessage: env("WELCOME_MESSAGE", "What can I help you with?"),
@@ -115,36 +116,36 @@ export const brand: BrandConfig = {
   ],
   palette,
   colorsLight: {
-    primary: palette.red,
-    primaryDark: "#A00C24",
-    primaryLight: "#FCE8EB",
+    primary: palette.primary, // white text 5.0:1
+    primaryDark: "#2B56AD",
+    primaryLight: "#F0F4FD", // primary text on it 4.55:1
     primaryContrast: palette.white,
-    secondary: palette.lightBlue,
-    secondaryLight: "#E6F0F4",
-    headerBg: palette.navy,
+    secondary: palette.navy,
+    secondaryLight: "#EEF3FF",
+    headerBg: palette.navy, // white text 13.8:1
     headerText: palette.white,
     chatHumanBg: palette.navy,
     chatHumanText: palette.white,
-    info: palette.lightBlue,
-    infoLight: "#E6F0F4",
+    info: "#2F62C9", // 5.7:1 on white
+    infoLight: "#EEF3FF",
   },
   colorsDark: {
-    primary: "#EF5A6F",
-    primaryDark: "#C8102E",
-    primaryLight: "#3A1620",
-    primaryContrast: "#1A0E12",
-    secondary: "#4FA3C7",
-    secondaryLight: "#10242E",
-    headerBg: "#07223B",
-    headerText: "#E8EDF2",
-    chatHumanBg: "#15406B",
-    chatHumanText: "#E8EDF2",
-    info: "#4FA3C7",
-    infoLight: "#0D1F3A",
+    primary: palette.accent, // dark text 7.0:1 (white fails)
+    primaryDark: "#4F86F0",
+    primaryLight: "#1A2A4A",
+    primaryContrast: "#0B1220",
+    secondary: "#9DBEFF",
+    secondaryLight: "#16233B",
+    headerBg: "#141D2E", // cream text 15.6:1
+    headerText: palette.cream,
+    chatHumanBg: "#2A3D5E", // cream text 10.1:1
+    chatHumanText: palette.cream,
+    info: palette.accent,
+    infoLight: "#13213A",
   },
-  fontFamily: '"Libre Franklin", "Helvetica Neue", Arial, sans-serif',
+  fontFamily: '"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif',
   fontUrl:
-    "https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@300;400;500;600;700&display=swap",
+    "https://fonts.googleapis.com/css2?family=Public+Sans:wght@300..700&display=swap",
   assets: {
     logo: "/images/logo.svg",
     logoDark: "/images/logo-white.svg",

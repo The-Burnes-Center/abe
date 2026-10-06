@@ -3,7 +3,7 @@ export const brand = {
   "slug": "abe",
   "assistantName": "ABE",
   "shortName": "ABE",
-  "organizationName": "Your Organization",
+  "organizationName": "AI for Impact",
   "parentOrg": "",
   "tagline": "Ask anything about your knowledge base.",
   "welcomeMessage": "What can I help you with?",
@@ -16,35 +16,35 @@ export const brand = {
   "supportContact": "your administrator",
   "timezone": "America/New_York",
   "colorsLight": {
-    "primary": "#C8102E",
-    "primaryDark": "#A00C24",
-    "primaryLight": "#FCE8EB",
+    "primary": "#376BD1",
+    "primaryDark": "#2B56AD",
+    "primaryLight": "#F0F4FD",
     "primaryContrast": "#FFFFFF",
-    "secondary": "#297496",
-    "secondaryLight": "#E6F0F4",
-    "headerBg": "#0C3354",
+    "secondary": "#1F2D45",
+    "secondaryLight": "#EEF3FF",
+    "headerBg": "#1F2D45",
     "headerText": "#FFFFFF",
-    "chatHumanBg": "#0C3354",
+    "chatHumanBg": "#1F2D45",
     "chatHumanText": "#FFFFFF",
-    "info": "#297496",
-    "infoLight": "#E6F0F4"
+    "info": "#2F62C9",
+    "infoLight": "#EEF3FF"
   },
   "colorsDark": {
-    "primary": "#EF5A6F",
-    "primaryDark": "#C8102E",
-    "primaryLight": "#3A1620",
-    "primaryContrast": "#1A0E12",
-    "secondary": "#4FA3C7",
-    "secondaryLight": "#10242E",
-    "headerBg": "#07223B",
-    "headerText": "#E8EDF2",
-    "chatHumanBg": "#15406B",
-    "chatHumanText": "#E8EDF2",
-    "info": "#4FA3C7",
-    "infoLight": "#0D1F3A"
+    "primary": "#6A9CFF",
+    "primaryDark": "#4F86F0",
+    "primaryLight": "#1A2A4A",
+    "primaryContrast": "#0B1220",
+    "secondary": "#9DBEFF",
+    "secondaryLight": "#16233B",
+    "headerBg": "#141D2E",
+    "headerText": "#F8F6F1",
+    "chatHumanBg": "#2A3D5E",
+    "chatHumanText": "#F8F6F1",
+    "info": "#6A9CFF",
+    "infoLight": "#13213A"
   },
-  "fontFamily": "\"Libre Franklin\", \"Helvetica Neue\", Arial, sans-serif",
-  "fontUrl": "https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@300;400;500;600;700&display=swap",
+  "fontFamily": "\"Public Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
+  "fontUrl": "https://fonts.googleapis.com/css2?family=Public+Sans:wght@300..700&display=swap",
   "assets": {
     "logo": "/images/logo.svg",
     "logoDark": "/images/logo-white.svg",
@@ -53,7 +53,7 @@ export const brand = {
     "demoVideo": "/demos/demo.mp4"
   },
   "themeColorLight": "#FFFFFF",
-  "themeColorDark": "#0C3354"
+  "themeColorDark": "#1F2D45"
 } as const;
 
 export type Brand = typeof brand;
