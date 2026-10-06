@@ -81,10 +81,13 @@ def test_eval_excludes_failed_questions_from_totals(eval_lf, s3, monkeypatch):
         {"question": "bad", "expectedResponse": "y"},
     ])
 
-    def fake_invoke(_client, question, get_context_only=False):
-        if question == "bad" and not get_context_only:
+    calls = []
+
+    def fake_invoke(_client, question):
+        calls.append(question)
+        if question == "bad":
             return "", ""
-        return ("formatted ctx", "formatted ctx") if get_context_only else ("answer", "answer ctx")
+        return "answer", "answer ctx"
 
     seen_contexts = []
 
@@ -104,8 +107,37 @@ def test_eval_excludes_failed_questions_from_totals(eval_lf, s3, monkeypatch):
     assert "total_relevance" not in partial
     failed = [r for r in partial["detailed_results"] if r.get("failed")]
     assert len(failed) == 1 and failed[0]["correctness"] is None
-    # Faithfulness/context metrics are scored against the answer's own context.
+    # Faithfulness/context metrics are scored against the answer's own context,
+    # from a single generate-response call per question.
     assert seen_contexts == ["answer ctx"]
+    assert calls == ["good", "bad"]
+    good = [r for r in partial["detailed_results"] if not r.get("failed")][0]
+    assert good["retrieved_context"] == "answer ctx"
+
+
+def _invoke_payload(body, status=200):
+    payload = MagicMock()
+    payload.read.return_value = json.dumps({"statusCode": status, "body": json.dumps(body)}).encode()
+    return {"Payload": payload}
+
+
+def test_invoke_reads_context_field(eval_lf):
+    client = MagicMock()
+    client.invoke.return_value = _invoke_payload({"modelResponse": "A", "context": "chunk text"})
+    assert eval_lf.invoke_generate_response_lambda(client, "q") == ("A", "chunk text")
+    assert "get_context_only" not in client.invoke.call_args.kwargs["Payload"]
+
+
+def test_invoke_falls_back_to_sources_content(eval_lf):
+    client = MagicMock()
+    client.invoke.return_value = _invoke_payload({"modelResponse": "A", "sources": {"content": "old ctx"}})
+    assert eval_lf.invoke_generate_response_lambda(client, "q") == ("A", "old ctx")
+
+
+def test_lambda_client_waits_for_long_generations(eval_lf):
+    config = eval_lf.lambda_client.meta.config
+    assert config.read_timeout >= 900
+    assert config.retries["total_max_attempts"] == 1
 
 
 def test_eval_raises_when_chunk_unreadable(eval_lf):

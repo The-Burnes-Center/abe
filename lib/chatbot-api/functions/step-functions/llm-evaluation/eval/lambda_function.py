@@ -3,6 +3,7 @@ import boto3
 import os
 import logging
 import time
+from botocore.config import Config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,8 +20,17 @@ BEDROCK_MODEL_ID = os.environ['BEDROCK_MODEL_ID']
 TEST_CASES_BUCKET = os.environ['TEST_CASES_BUCKET']
 EVAL_RESULTS_BUCKET = os.environ.get('EVAL_RESULTS_BUCKET', TEST_CASES_BUCKET)
 
+# generate-response runs the full agentic loop and can take up to ~15 minutes.
+# boto3's default 60s read timeout (plus automatic retries) would abandon and
+# re-invoke it mid-answer, so wait longer than its own timeout and never retry.
+GENERATE_RESPONSE_READ_TIMEOUT_SECONDS = 910
+
 s3_client = boto3.client('s3')
-lambda_client = boto3.client('lambda')
+lambda_client = boto3.client('lambda', config=Config(
+    read_timeout=GENERATE_RESPONSE_READ_TIMEOUT_SECONDS,
+    connect_timeout=10,
+    retries={'total_max_attempts': 1},
+))
 
 
 METRIC_NAMES = (
@@ -112,17 +122,12 @@ def process_test_case(idx, test_case):
 
     logging.info(f"Processing test case {idx+1}: {question[:50]}...")
 
+    # One call: generate-response returns the answer together with the KB text
+    # its own tool calls retrieved, so faithfulness and the context metrics are
+    # scored against exactly what the answer was grounded on.
     actual_response, answer_context = invoke_generate_response_lambda(lambda_client, question)
     if not actual_response:
         raise RuntimeError("generate-response returned no answer")
-
-    # Formatted retrieval for the admin UI's "retrieved context" panel.
-    retrieved_context, _ = invoke_generate_response_lambda(lambda_client, question, get_context_only=True)
-
-    # Score faithfulness and the context metrics against the chunks the answer
-    # was actually generated from (the model's own tool queries). Fall back to a
-    # direct retrieval on the question only when the answer used no KB context.
-    ragas_context = answer_context or retrieved_context
 
     logging.info(f"Evaluating response for test case {idx+1}")
 
@@ -131,7 +136,7 @@ def process_test_case(idx, test_case):
 
     for retry in range(max_retries):
         try:
-            result = evaluate_with_ragas(question, expected_response, actual_response, ragas_context)
+            result = evaluate_with_ragas(question, expected_response, actual_response, answer_context)
             break
         except Exception as e:
             retry_delay = 5 * (2 ** retry)
@@ -148,7 +153,7 @@ def process_test_case(idx, test_case):
         'expectedResponse': expected_response,
         'actualResponse': actual_response,
         **{name: result['scores'][name] for name in METRIC_NAMES},
-        'retrieved_context': retrieved_context or ragas_context,
+        'retrieved_context': answer_context,
     }
 
 
@@ -160,15 +165,12 @@ def _usable_context(value):
     return text
 
 
-def invoke_generate_response_lambda(lambda_client, question, get_context_only=False):
-    """Return (text, context). text is the answer, or the formatted retrieval when
-    get_context_only; context is the KB text the answer was generated from."""
+def invoke_generate_response_lambda(lambda_client, question):
+    """Return (answer, context): the model's answer and the KB text it was generated from."""
     try:
         logging.info(f"Invoking generate-response Lambda for question: {question[:50]}...")
 
         payload = {'userMessage': question, 'chatHistory': []}
-        if get_context_only:
-            payload['get_context_only'] = True
 
         response = lambda_client.invoke(
             FunctionName=GENERATE_RESPONSE_LAMBDA_NAME,
@@ -186,15 +188,15 @@ def invoke_generate_response_lambda(lambda_client, question, get_context_only=Fa
 
         body = json.loads(result.get('body', '{}'))
 
-        if get_context_only:
-            context = _usable_context(body.get('context', ''))
-            logging.info(f"Received context of length: {len(context)} characters")
-            return context, context
-
         response_text = body.get('modelResponse', '') or ''
-        sources = body.get('sources') or {}
-        answer_context = _usable_context(sources.get('content') if isinstance(sources, dict) else "")
-        logging.info(f"Received response of length: {len(response_text)} characters")
+        answer_context = _usable_context(body.get('context'))
+        if not answer_context:
+            # Older generate-response builds only returned the context inside sources.
+            sources = body.get('sources') or {}
+            answer_context = _usable_context(sources.get('content') if isinstance(sources, dict) else "")
+        logging.info(
+            f"Received response of length {len(response_text)} with {len(answer_context)} chars of context"
+        )
         return response_text, answer_context
     except Exception as e:
         logging.error(f"Error invoking generateResponseLambda: {str(e)}")

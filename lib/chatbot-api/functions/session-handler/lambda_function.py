@@ -169,6 +169,9 @@ def add_session(session_id, user_id, title, new_chat_entry):
             return json_response(409, f"Session already exists: {session_id}")
         if error.response["Error"]["Code"] == "ResourceNotFoundException":
             return json_response(404, f"No record found with session id: {session_id}")
+        if _is_item_too_large(error):
+            logger.warning("New session item exceeded the DynamoDB size limit (session=%s)", session_id)
+            return json_response(413, "This message is too large to save.")
         return json_response(500, "Failed to create the session due to a database error.")
 
 
@@ -185,6 +188,7 @@ def update_session(session_id, user_id, new_chat_entry):
         if error_code in ("ResourceNotFoundException", "ConditionalCheckFailedException"):
             return json_response(404, f"No record found with session id: {session_id}")
         if _is_item_too_large(error):
+            logger.warning("Session item exceeded the DynamoDB size limit on update (session=%s)", session_id)
             return json_response(413, "This conversation is too long to save. Please start a new chat.")
         return json_response(500, "Failed to update the session due to a database error.")
 
