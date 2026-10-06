@@ -35,6 +35,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from pydantic import ValidationError
 
+from common_utils import get_logger
 from common_utils.dates import parse_date_like
 from models import QueryIndexRequest, StatusResponse, PreviewResponse
 
@@ -86,8 +87,13 @@ def lambda_handler(event, context):
                 offset=req.offset,
             )
         return _response(200, out)
-    except Exception as e:
-        return _response(500, {"error": str(e)})
+    except ValueError as e:
+        # Argument problems (e.g. group_by_value_max without group_by) are
+        # safe and useful for the model to see so it can correct the call.
+        return _response(400, {"error": str(e)})
+    except Exception:
+        get_logger(__name__).exception("Excel index query failed for %s", pk)
+        return _response(500, {"error": "The index query failed. Please try again."})
 
 
 def _get_payload(event: dict) -> dict:

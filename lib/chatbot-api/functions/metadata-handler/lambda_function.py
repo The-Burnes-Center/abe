@@ -84,10 +84,10 @@ def retrieve_kb_docs(bucket, file_name, knowledge_base_id):
     """Fetch all KB chunks for a specific file, paginating through results.
 
     Using ``retrievalQuery`` alone (semantic search on the bare filename) is
-    unreliable: for files with short, generic names (e.g. ``ENE53.pdf``,
-    ``GRO39.pdf``, ``HLS06.pdf``) Bedrock returns the most semantically
-    relevant chunks across the *entire* knowledge base, often dominated by
-    long policy docs like ``Conducting Best Value Procurements``. The
+    unreliable: for files with short, generic names (e.g. ``AB12.pdf``,
+    ``CD34.pdf``) Bedrock returns the most semantically relevant chunks
+    across the *entire* knowledge base, often dominated by a few long policy
+    documents. The
     subsequent ``if file_name in uri`` post-filter then drops everything,
     leaving the document with no summary.
 
@@ -124,7 +124,7 @@ def retrieve_kb_docs(bucket, file_name, knowledge_base_id):
                 uri = result['location']['s3Location']['uri']
                 # Defensive: stringContains is a substring match; require the
                 # URI to actually end with this filename so a query for
-                # "FAC114" doesn't accidentally pick up "FAC1141" etc.
+                # "AB12" doesn't accidentally pick up "AB123" etc.
                 if uri.split('/')[-1] != file_name:
                     continue
                 all_chunks.append(result['content']['text'])

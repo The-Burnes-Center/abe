@@ -63,8 +63,8 @@ def lambda_handler(event, context):
             _metadata_cache_ts = now
         filtered_metadata = filter_metadata(_metadata_cache, category=filter_key)
         if filename_contains:
-            # Case-insensitive substring match on filenames (e.g. a contract
-            # identifier like "FAC115" selects that contract family). Applies
+            # Case-insensitive substring match on filenames (e.g. an
+            # identifier like "AB12" selects that document family). Applies
             # to both the compact and full forms, composes with the category
             # filter above, and runs after the metadata.txt self-entry pop.
             # No match -> empty dict (a valid response the model interprets).
@@ -78,7 +78,8 @@ def lambda_handler(event, context):
             'body': json.dumps({'metadata': payload})
         }
     except Exception as e:
+        print(f"Metadata retrieval failed: {type(e).__name__}: {e}")
         return {
             'statusCode': 500,
-            'body': json.dumps({'error': str(e)})
+            'body': json.dumps({'error': 'Document metadata is unavailable right now.'})
         }
