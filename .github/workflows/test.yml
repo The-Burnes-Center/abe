@@ -44,7 +44,7 @@ jobs:
       - name: Install Python test dependencies
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install pytest pytest-cov moto boto3 pydantic openpyxl python-jose requests cryptography
+          python3 -m pip install pytest pytest-cov "moto[cognitoidp]" boto3 pydantic openpyxl "PyJWT[crypto]" cryptography opensearch-py
           if [ -f requirements-dev.txt ]; then python3 -m pip install -r requirements-dev.txt; fi
 
       - name: Typecheck CDK app
@@ -62,12 +62,11 @@ jobs:
           if [ "${{ inputs.coverage }}" = "true" ]; then
             COV_ARGS="--cov=lib --cov-report=term-missing --cov-report=xml:coverage-python.xml"
           fi
-          # Discover every test_*.py under lib/; importlib mode lets test files in
-          # different Lambda folders share a basename.
-          python3 -m pytest lib \
-            --import-mode=importlib \
-            --ignore=lib/user-interface \
-            $COV_ARGS
+          # Every committed test_*.py under lib/, in one process, so new test
+          # files are picked up automatically (node_modules is never tracked).
+          mapfile -t TEST_FILES < <(git ls-files 'lib/*test_*.py' | grep -E '/test_[^/]+\.py$')
+          echo "Running ${#TEST_FILES[@]} Python test files"
+          python3 -m pytest "${TEST_FILES[@]}" $COV_ARGS
 
       - name: Frontend lint
         working-directory: lib/user-interface/app

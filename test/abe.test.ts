@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib';
 import { Annotations, Template, Match } from 'aws-cdk-lib/assertions';
 import { Aspects } from 'aws-cdk-lib';
@@ -37,6 +39,20 @@ function synth(opts: SynthOptions = {}): Synthesized {
 
 function resourcesOfType(template: Template, type: string): Record<string, any> {
   return template.findResources(type);
+}
+
+/** The chat Lambda is the only function with a WebSocket endpoint in its env. */
+function chatFunction(t: Template): any {
+  return Object.values(resourcesOfType(t, 'AWS::Lambda::Function'))
+    .find((f) => f.Properties.Environment?.Variables?.WEBSOCKET_API_ENDPOINT);
+}
+
+/** The eval generator: same prompt inputs as chat, but no WebSocket endpoint. */
+function generatorFunction(t: Template): any {
+  return Object.values(resourcesOfType(t, 'AWS::Lambda::Function'))
+    .find((f) => f.Properties.Environment?.Variables?.PROMPT_FAMILY
+      && f.Properties.Environment?.Variables?.METADATA_RETRIEVAL_FUNCTION
+      && !f.Properties.Environment?.Variables?.WEBSOCKET_API_ENDPOINT);
 }
 
 function nagErrors(stack: cdk.Stack) {
@@ -186,6 +202,10 @@ describe('Cognito', () => {
     expect(client.PreventUserExistenceErrors).toBe('ENABLED');
     expect(client.SupportedIdentityProviders).toEqual(['COGNITO']);
     expect(client.WriteAttributes).toEqual(['email', 'family_name', 'given_name', 'name']);
+    // Short-lived tokens so a disabled/demoted user loses access within 15 minutes.
+    expect(client.AccessTokenValidity).toBe(15);
+    expect(client.IdTokenValidity).toBe(15);
+    expect(client.EnableTokenRevocation).toBe(true);
   });
 
   test('UserPoolId is a top-level stack output', () => {
@@ -242,12 +262,26 @@ describe('APIs', () => {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
-            Action: Match.arrayWith(['cognito-idp:AdminCreateUser', 'cognito-idp:AdminAddUserToGroup']),
+            Action: Match.arrayWith(['cognito-idp:AdminCreateUser', 'cognito-idp:AdminAddUserToGroup', 'cognito-idp:AdminUserGlobalSignOut']),
             Resource: { 'Fn::GetAtt': [Match.stringLikeRegexp('AppUserPool'), 'Arn'] },
           }),
         ]),
       },
     });
+  });
+
+  test('CORS allows only the site origin unless devCorsOrigins is set', () => {
+    const httpCors = (t: Template) => Object.values(resourcesOfType(t, 'AWS::ApiGatewayV2::Api'))
+      .find((r) => r.Properties.ProtocolType === 'HTTP')!.Properties.CorsConfiguration.AllowOrigins;
+    expect(httpCors(template)).toHaveLength(1);
+    expect(JSON.stringify(template.toJSON())).not.toContain('localhost');
+
+    const { template: dev } = synth({ context: { devCorsOrigins: 'http://localhost:3000' } });
+    expect(httpCors(dev)).toContain('http://localhost:3000');
+    dev.hasResourceProperties('AWS::S3::Bucket', {
+      CorsConfiguration: { CorsRules: [Match.objectLike({ AllowedOrigins: Match.arrayWith(['http://localhost:3000']) })] },
+    });
+    expect(() => synth({ context: { devCorsOrigins: 'https://evil.example.com' } })).toThrow(/devCorsOrigins/);
   });
 
   test('API Gateway account role can be turned off for a second stack', () => {
@@ -284,9 +318,8 @@ describe('enableEval', () => {
   });
 
   test('eval response generator mirrors the chat prompt inputs', () => {
-    const fns = Object.values(resourcesOfType(template, 'AWS::Lambda::Function'));
-    const chat = fns.find((f) => f.Properties.Timeout === 900 && f.Properties.Environment?.Variables?.PROMPT_FAMILY);
-    const gen = fns.find((f) => f.Properties.Environment?.Variables?.METADATA_RETRIEVAL_FUNCTION && f.Properties.Timeout === 60);
+    const chat = chatFunction(template);
+    const gen = generatorFunction(template);
     expect(chat).toBeDefined();
     expect(gen).toBeDefined();
     const chatEnv = chat!.Properties.Environment.Variables;
@@ -298,6 +331,26 @@ describe('enableEval', () => {
     expect(genEnv.METADATA_RETRIEVAL_FUNCTION).toEqual({
       'Fn::GetAtt': [expect.stringMatching(/MetadataRetrievalFunction/), 'Arn'],
     });
+  });
+
+  test('eval response generator gets the chat tool dependencies', () => {
+    const fns = Object.values(resourcesOfType(template, 'AWS::Lambda::Function'));
+    const gen = generatorFunction(template);
+    const env = gen.Properties.Environment.Variables;
+    for (const key of ['KNOWLEDGE_BUCKET', 'EXCEL_INDEX_QUERY_FUNCTION', 'INDEX_REGISTRY_TABLE',
+      'GUARDRAIL_ID', 'GUARDRAIL_VERSION', 'ORGANIZATION_NAME', 'SUPPORT_CONTACT', 'DOMAIN_CONTEXT', 'BRAND_TIMEZONE']) {
+      expect(Object.keys(env)).toContain(key);
+    }
+    // Same ceiling as a chat turn: a full agent loop.
+    expect(gen.Properties.Timeout).toBe(900);
+  });
+
+  test('save step passes failed_questions and no longer average_relevance', () => {
+    const definition = JSON.stringify(
+      Object.values(resourcesOfType(template, 'AWS::StepFunctions::StateMachine'))[0].Properties.DefinitionString,
+    );
+    expect(definition).toContain('failed_questions.$');
+    expect(definition).not.toContain('average_relevance.$');
   });
 });
 
@@ -405,6 +458,26 @@ describe('Lambda functions', () => {
     t.hasResourceProperties('AWS::Lambda::Function', { ReservedConcurrentExecutions: 5 });
   });
 
+  test('staged Lambda assets contain no symlinks (shared code is copied in)', () => {
+    // Node Lambdas share modules by symlink (shared-node/auth.mjs, the eval
+    // generator's chat -> websocket-chat). A symlink left in the package
+    // would point outside it once deployed.
+    const outdir = (defaults.stack.node.root as cdk.App).synth().directory;
+    const symlinks: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isSymbolicLink()) symlinks.push(path.relative(outdir, full));
+        else if (entry.isDirectory()) walk(full);
+      }
+    };
+    const assetDirs = fs.readdirSync(outdir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith('asset.'));
+    expect(assetDirs.length).toBeGreaterThan(10);
+    for (const dir of assetDirs) walk(path.join(outdir, dir.name));
+    expect(symlinks).toEqual([]);
+  });
+
   test('Lambdas that format times get BRAND_TIMEZONE', () => {
     const withTz = Object.values(resourcesOfType(template, 'AWS::Lambda::Function'))
       .filter((f) => f.Properties.Environment?.Variables?.BRAND_TIMEZONE);
@@ -465,6 +538,15 @@ describe('storage', () => {
   test('feedback DLQ has an alarm', () => {
     template.hasResourceProperties('AWS::CloudWatch::Alarm', {
       MetricName: 'ApproximateNumberOfMessagesVisible',
+    });
+  });
+
+  test('chat session-save failures have an alarm on the namespace the chat Lambda uses', () => {
+    const chat = chatFunction(template);
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'SessionSaveFailures',
+      Namespace: chat.Properties.Environment.Variables.METRICS_NAMESPACE,
+      Threshold: 1,
     });
   });
 });
