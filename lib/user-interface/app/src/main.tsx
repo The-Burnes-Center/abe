@@ -8,7 +8,7 @@ const root = ReactDOM.createRoot(
 );
 
 const theme = StorageHelper.getTheme();
-StorageHelper.applyTheme(theme);
+StorageHelper.applyTheme(theme, false);
 
 if (import.meta.env.DEV) {
   // @axe-core/react streams accessibility violations to the browser console
