@@ -7,7 +7,7 @@ from boto3.dynamodb.conditions import Key, Attr
 from datetime import datetime
 from decimal import Decimal
 
-from common_utils import is_admin_request
+from common_utils import is_admin
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -457,7 +457,7 @@ def lambda_handler(event, context):
             'body': json.dumps({'message': 'CORS preflight request successful'})
         }
 
-    if not is_admin_request(event):
+    if not is_admin(event):
         return {
             'statusCode': 403,
             'headers': headers,

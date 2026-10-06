@@ -3,6 +3,8 @@ import boto3
 import os
 import logging
 
+from common_utils import require_admin
+
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -156,7 +158,7 @@ def get_last_sync():
             'headers': {'Access-Control-Allow-Origin': '*'},
             'body': json.dumps({
                 'status': 'ERROR',
-                'message': f'Error retrieving last sync: {str(e)}',
+                'message': 'Unable to retrieve the last sync status. Please try again later.',
                 'startedAt': None,
                 'completedAt': None
             })
@@ -179,27 +181,11 @@ def lambda_handler(event, context):
     resource_path = event.get('rawPath', '')
     logger.info(f"Received request for path: {resource_path}")
     
-    # Check admin access    
-    try:
-        claims = event["requestContext"]["authorizer"]["jwt"]["claims"]
-        roles = json.loads(claims['custom:role'])
-        if isinstance(roles, list) and 'Admin' in roles:
-            logger.info("Admin access granted")
-        else:
-            logger.warning("Access denied: User does not have Admin role")
-            return {
-                'statusCode': 403,
-                'headers': {'Access-Control-Allow-Origin': '*'},
-                'body': json.dumps('User is not authorized to perform this action')
-            }
-    except Exception as e:
-        logger.error(f"Error checking admin access: {str(e)}", exc_info=True)
-        return {
-                'statusCode': 500,
-                'headers': {'Access-Control-Allow-Origin': '*'},
-                'body': json.dumps('Unable to check user role, please ensure you have Cognito configured correctly with a custom:role attribute.')
-            }    
-        
+    denied = require_admin(event)
+    if denied:
+        logger.warning("Access denied: caller is not in the Admin group")
+        return denied
+
     # Check if the request is for syncing Knowledge Base
     if "sync-kb" in resource_path:
         logger.info("Processing sync-kb request")
@@ -223,7 +209,7 @@ def lambda_handler(event, context):
                 return {
                     'statusCode': 500,
                     'headers': {'Access-Control-Allow-Origin': '*'},
-                    'body': json.dumps(f'Error starting sync: {str(e)}')
+                    'body': json.dumps('Unable to start a sync right now. Please try again later.')
                 }
         
             return {

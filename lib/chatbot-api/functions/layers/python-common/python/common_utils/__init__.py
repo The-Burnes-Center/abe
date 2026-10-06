@@ -1,4 +1,10 @@
-from .auth import get_audit_actor_label, get_claims, get_roles, is_admin_request
+from .auth import (
+    get_audit_actor_label,
+    get_claims,
+    get_groups,
+    is_admin,
+    require_admin,
+)
 from .logging import get_logger, set_correlation_id
 from .responses import DecimalJSONEncoder, json_response, parse_json_body
 from .text import strip_kb_citation_markers
@@ -9,12 +15,13 @@ __all__ = [
     "extract_json_object",
     "get_audit_actor_label",
     "get_claims",
+    "get_groups",
     "get_logger",
     "set_correlation_id",
-    "get_roles",
-    "is_admin_request",
+    "is_admin",
     "json_response",
     "parse_json_body",
+    "require_admin",
     "safe_int",
     "strip_kb_citation_markers",
     "truncate_text",

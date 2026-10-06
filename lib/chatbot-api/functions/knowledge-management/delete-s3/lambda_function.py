@@ -4,6 +4,8 @@ import os
 import re
 import logging
 
+from common_utils import require_admin
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -52,22 +54,10 @@ def delete_kb_chunks(key: str):
 
 
 def lambda_handler(event, context):
-    try:
-        claims = event["requestContext"]["authorizer"]["jwt"]["claims"]
-        roles = json.loads(claims['custom:role'])
-        if not (isinstance(roles, list) and 'Admin' in roles):
-            return {
-                'statusCode': 403,
-                'headers': {'Access-Control-Allow-Origin': '*'},
-                'body': json.dumps('User is not authorized to perform this action')
-            }
-    except Exception as e:
-        logger.error(f"Error checking user role: {e}")
-        return {
-            'statusCode': 500,
-            'headers': {'Access-Control-Allow-Origin': '*'},
-            'body': json.dumps('Unable to check user role, please ensure you have Cognito configured correctly with a custom:role attribute.')
-        }
+    denied = require_admin(event)
+    if denied:
+        logger.warning("Access denied: caller is not in the Admin group")
+        return denied
 
     try:
         payload = json.loads(event['body'])
