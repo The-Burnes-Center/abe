@@ -6,6 +6,12 @@ import * as cr from 'aws-cdk-lib/custom-resources';
 
 import { Construct } from "constructs";
 import { aws_opensearchserverless as opensearchserverless } from 'aws-cdk-lib';
+import { boundedName, shortHash } from '../../shared/names';
+
+// OpenSearch Serverless names: 3-32 chars, lowercase letters, digits and hyphens.
+const AOSS_NAME_MAX = 32;
+// Longest policy suffix is "-oss-network-policy" (19 chars), leaving 13 for the prefix.
+const POLICY_PREFIX_MAX = 10;
 
 export interface OpenSearchStackProps {}
 
@@ -20,12 +26,19 @@ export class OpenSearchStack extends Construct {
     super(scope, id);
 
     const stack = cdk.Stack.of(this);
-    const prefix = stack.stackName.toLowerCase().slice(0, 10);
+    // Physical names are unique per account+region, so they derive from the
+    // stack name. Short stack names (e.g. the default "ABEStack") keep their
+    // original names; longer ones are truncated with a hash so two stacks in
+    // one account never collide and every name stays within AOSS limits.
+    const baseName = stack.stackName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const prefix = baseName.length <= POLICY_PREFIX_MAX
+      ? baseName
+      : `${baseName.slice(0, 6)}-${shortHash(baseName)}`;
 
     // Resources use `scope` (not `this`) to preserve existing CloudFormation
     // logical IDs. Switching to `this` would change IDs and recreate resources.
 
-    this.collectionName = `${stack.stackName.toLowerCase()}-oss-collection`;
+    this.collectionName = boundedName(baseName, '-oss-collection', AOSS_NAME_MAX);
     const openSearchCollection = new opensearchserverless.CfnCollection(scope, 'OpenSearchCollection', {
       name: this.collectionName,
       description: `OpenSearch Serverless Collection for ${stack.stackName}`,
@@ -126,7 +139,7 @@ export class OpenSearchStack extends Construct {
     indexFunctionRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['aoss:APIAccessAll'],
-      resources: [`arn:aws:aoss:${stack.region}:${stack.account}:collection/${openSearchCollection.attrId}`],
+      resources: [openSearchCollection.attrArn],
     }));
 
     const lambdaProvider = new cr.Provider(scope, "CreateIndexFunctionCustomProvider", {

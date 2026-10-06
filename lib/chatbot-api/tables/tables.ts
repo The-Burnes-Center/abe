@@ -1,7 +1,8 @@
 /**
  * DynamoDB tables and SQS queues for the chatbot backend.
  *
- * 13 tables grouped by domain:
+ * 13 tables grouped by domain (the three Evaluation tables and the SQS
+ * queues exist only when the eval pipeline is enabled, `enableEval`):
  *
  *   Chat
  *     - ChatHistoryTable        — Conversation sessions keyed by user + session
@@ -19,7 +20,7 @@
  *     - TestLibraryTable        — Reusable Q&A test cases (manual + auto-generated)
  *
  *   Analytics
- *     - AnalyticsTable          — Per-question topic/agency classification for dashboards
+ *     - AnalyticsTable          — Per-question topic classification for dashboards
  *
  *   Excel Index (structured contract/vendor data)
  *     - ExcelIndexDataTable     — Parsed spreadsheet rows (generic pk/sk schema)
@@ -47,17 +48,17 @@ export class TableStack extends Construct {
   public readonly responseTraceTable: Table;
   public readonly promptRegistryTable: Table;
   public readonly monitoringCasesTable: Table;
-  public readonly evalResultsTable: Table;
-  public readonly evalSummaryTable: Table;
+  public readonly evalResultsTable?: Table;
+  public readonly evalSummaryTable?: Table;
   public readonly analyticsTable: Table;
   public readonly excelIndexDataTable: Table;
   public readonly indexRegistryTable: Table;
-  public readonly testLibraryTable: Table;
+  public readonly testLibraryTable?: Table;
   public readonly syncHistoryTable: Table;
-  public readonly feedbackToTestLibraryQueue: sqs.Queue;
-  public readonly feedbackToTestLibraryDLQ: sqs.Queue;
+  public readonly feedbackToTestLibraryQueue?: sqs.Queue;
+  public readonly feedbackToTestLibraryDLQ?: sqs.Queue;
 
-  constructor(scope: Construct, id: string) {
+  constructor(scope: Construct, id: string, enableEval: boolean) {
     super(scope, id);
 
     // Resources use `scope` (not `this`) to preserve existing CloudFormation
@@ -212,39 +213,10 @@ export class TableStack extends Construct {
 
     this.monitoringCasesTable = monitoringCasesTable;
 
-    // ─── Evaluation Domain ─────────────────────────────────────────────
-
-    // One row per evaluation run with aggregate RAGAS scores.
-    const evalSummariesTable = new Table(scope, 'EvaluationSummariesTable', {
-      partitionKey: { name: 'PartitionKey', type: AttributeType.STRING },
-      sortKey: { name: 'Timestamp', type: AttributeType.STRING },
-      billingMode: BillingMode.PAY_PER_REQUEST,
-      pointInTimeRecovery: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-    this.evalSummaryTable = evalSummariesTable;
-
-    // Per-question results within an evaluation run (faithfulness, relevancy, etc.).
-    const evalResultsTable = new Table(scope, 'EvaluationResultsTable', {
-      partitionKey: { name: 'EvaluationId', type: AttributeType.STRING },
-      sortKey: { name: 'QuestionId', type: AttributeType.STRING },
-      billingMode: BillingMode.PAY_PER_REQUEST,
-      pointInTimeRecovery: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-
-    evalResultsTable.addGlobalSecondaryIndex({
-      indexName: 'QuestionIndex',
-      partitionKey: { name: 'EvaluationId', type: AttributeType.STRING },
-      sortKey: { name: 'QuestionId', type: AttributeType.STRING },
-      projectionType: ProjectionType.ALL,
-    });
-    this.evalResultsTable = evalResultsTable;
-
     // ─── Analytics Domain ──────────────────────────────────────────────
 
-    // FAQ classification results: each user question is categorized by topic
-    // and agency. DateIndex and AgencyIndex power the admin analytics dashboard.
+    // FAQ classification results: each user question is categorized by topic.
+    // DateIndex powers the admin analytics dashboard.
     const analyticsTable = new Table(scope, 'AnalyticsTable', {
       partitionKey: { name: 'topic', type: AttributeType.STRING },
       sortKey: { name: 'timestamp', type: AttributeType.STRING },
@@ -257,13 +229,6 @@ export class TableStack extends Construct {
       indexName: 'DateIndex',
       partitionKey: { name: 'date_key', type: AttributeType.STRING },
       sortKey: { name: 'topic', type: AttributeType.STRING },
-      projectionType: ProjectionType.ALL,
-    });
-
-    analyticsTable.addGlobalSecondaryIndex({
-      indexName: 'AgencyIndex',
-      partitionKey: { name: 'agency', type: AttributeType.STRING },
-      sortKey: { name: 'timestamp', type: AttributeType.STRING },
       projectionType: ProjectionType.ALL,
     });
 
@@ -293,26 +258,6 @@ export class TableStack extends Construct {
     });
     this.indexRegistryTable = indexRegistryTable;
 
-    // Reusable Q&A test cases for the evaluation pipeline. Cases can be
-    // manually authored or auto-generated from positive user feedback.
-    // NormalizedQuestionIndex uses KEYS_ONLY projection for dedup lookups.
-    const testLibraryTable = new Table(scope, 'TestLibraryTable', {
-      partitionKey: { name: 'PartitionKey', type: AttributeType.STRING },
-      sortKey: { name: 'QuestionId', type: AttributeType.STRING },
-      billingMode: BillingMode.PAY_PER_REQUEST,
-      pointInTimeRecovery: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-
-    testLibraryTable.addGlobalSecondaryIndex({
-      indexName: 'NormalizedQuestionIndex',
-      partitionKey: { name: 'questionNormalized', type: AttributeType.STRING },
-      sortKey: { name: 'QuestionId', type: AttributeType.STRING },
-      projectionType: ProjectionType.KEYS_ONLY,
-    });
-
-    this.testLibraryTable = testLibraryTable;
-
     // ─── Sync Domain ───────────────────────────────────────────────────
 
     // Audit log for automated data-sync runs. TTL (expiresAt) auto-deletes
@@ -327,34 +272,85 @@ export class TableStack extends Construct {
     });
     this.syncHistoryTable = syncHistoryTable;
 
-    // ─── SQS: Feedback-to-Test-Library Pipeline ────────────────────────
-    //
-    // When a user gives positive feedback (thumbs-up), the feedback handler
-    // enqueues a message. The process Lambda picks it up, rewrites the Q&A
-    // pair via LLM, and inserts it into TestLibraryTable.
-    //
-    // DLQ retains failed messages for 14 days for manual inspection.
-    // Main queue allows 3 receive attempts before dead-lettering.
-    // Visibility timeout (120s) exceeds the process Lambda's 90s timeout
-    // to prevent duplicate processing.
+    // ─── Evaluation Domain (optional) ──────────────────────────────────
 
-    const feedbackToTestLibraryDLQ = new sqs.Queue(scope, 'FeedbackToTestLibraryDLQ', {
-      retentionPeriod: cdk.Duration.days(14),
-      enforceSSL: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-    this.feedbackToTestLibraryDLQ = feedbackToTestLibraryDLQ;
+    if (enableEval) {
+      // One row per evaluation run with aggregate RAGAS scores.
+      const evalSummariesTable = new Table(scope, 'EvaluationSummariesTable', {
+        partitionKey: { name: 'PartitionKey', type: AttributeType.STRING },
+        sortKey: { name: 'Timestamp', type: AttributeType.STRING },
+        billingMode: BillingMode.PAY_PER_REQUEST,
+        pointInTimeRecovery: true,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+      });
+      this.evalSummaryTable = evalSummariesTable;
 
-    const feedbackToTestLibraryQueue = new sqs.Queue(scope, 'FeedbackToTestLibraryQueue', {
-      visibilityTimeout: cdk.Duration.seconds(120),
-      retentionPeriod: cdk.Duration.days(4),
-      enforceSSL: true,
-      deadLetterQueue: {
-        queue: feedbackToTestLibraryDLQ,
-        maxReceiveCount: 3,
-      },
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-    this.feedbackToTestLibraryQueue = feedbackToTestLibraryQueue;
+      // Per-question results within an evaluation run (faithfulness, relevancy, etc.).
+      const evalResultsTable = new Table(scope, 'EvaluationResultsTable', {
+        partitionKey: { name: 'EvaluationId', type: AttributeType.STRING },
+        sortKey: { name: 'QuestionId', type: AttributeType.STRING },
+        billingMode: BillingMode.PAY_PER_REQUEST,
+        pointInTimeRecovery: true,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+      });
+
+      evalResultsTable.addGlobalSecondaryIndex({
+        indexName: 'QuestionIndex',
+        partitionKey: { name: 'EvaluationId', type: AttributeType.STRING },
+        sortKey: { name: 'QuestionId', type: AttributeType.STRING },
+        projectionType: ProjectionType.ALL,
+      });
+      this.evalResultsTable = evalResultsTable;
+
+      // Reusable Q&A test cases for the evaluation pipeline. Cases can be
+      // manually authored or auto-generated from positive user feedback.
+      // NormalizedQuestionIndex uses KEYS_ONLY projection for dedup lookups.
+      const testLibraryTable = new Table(scope, 'TestLibraryTable', {
+        partitionKey: { name: 'PartitionKey', type: AttributeType.STRING },
+        sortKey: { name: 'QuestionId', type: AttributeType.STRING },
+        billingMode: BillingMode.PAY_PER_REQUEST,
+        pointInTimeRecovery: true,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+      });
+
+      testLibraryTable.addGlobalSecondaryIndex({
+        indexName: 'NormalizedQuestionIndex',
+        partitionKey: { name: 'questionNormalized', type: AttributeType.STRING },
+        sortKey: { name: 'QuestionId', type: AttributeType.STRING },
+        projectionType: ProjectionType.KEYS_ONLY,
+      });
+
+      this.testLibraryTable = testLibraryTable;
+
+      // ─── SQS: Feedback-to-Test-Library Pipeline ────────────────────────
+      //
+      // When an admin promotes positive feedback to a test candidate, the
+      // feedback handler enqueues a message. The process Lambda picks it up, rewrites the Q&A
+      // pair via LLM, and inserts it into TestLibraryTable.
+      //
+      // DLQ retains failed messages for 14 days for manual inspection.
+      // Main queue allows 3 receive attempts before dead-lettering.
+      // Visibility timeout (120s) exceeds the process Lambda's 90s timeout
+      // to prevent duplicate processing.
+
+      const feedbackToTestLibraryDLQ = new sqs.Queue(scope, 'FeedbackToTestLibraryDLQ', {
+        retentionPeriod: cdk.Duration.days(14),
+        enforceSSL: true,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+      });
+      this.feedbackToTestLibraryDLQ = feedbackToTestLibraryDLQ;
+
+      const feedbackToTestLibraryQueue = new sqs.Queue(scope, 'FeedbackToTestLibraryQueue', {
+        visibilityTimeout: cdk.Duration.seconds(120),
+        retentionPeriod: cdk.Duration.days(4),
+        enforceSSL: true,
+        deadLetterQueue: {
+          queue: feedbackToTestLibraryDLQ,
+          maxReceiveCount: 3,
+        },
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+      });
+      this.feedbackToTestLibraryQueue = feedbackToTestLibraryQueue;
+    }
   }
 }

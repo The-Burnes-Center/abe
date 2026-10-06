@@ -6,10 +6,11 @@
  * Alarms (all fire to the SNS topic):
  *   Lambda       — errors >= 3 and throttles >= 1 per function (5-min windows)
  *   Chat Lambda  — avg duration > 60s (dedicated, since it has the longest timeout)
+ *   PreSignUp    — errors/rejections >= 5 (failed trigger or a burst of refused sign-ups)
  *   DynamoDB     — read/write throttles >= 5 per table
  *   HTTP API     — 5xx >= 10, 4xx >= 50
- *   WebSocket    — zero connections for 15 min (possible outage)
- *   Step Fns     — any eval pipeline failure
+ *   Step Fns     — any eval pipeline failure (eval enabled only)
+ *   SQS DLQ      — any message in the feedback-to-test-library DLQ (eval enabled only)
  *
  * Dashboard layout (5 rows, each 24 units wide):
  *   Row 1: Lambda invocations + errors (key functions)
@@ -25,16 +26,20 @@ import * as sns from "aws-cdk-lib/aws-sns";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as stepfunctions from "aws-cdk-lib/aws-stepfunctions";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import { aws_apigatewayv2 as apigwv2 } from "aws-cdk-lib";
 import { Construct } from "constructs";
+import { NagSuppressions } from "cdk-nag";
 
 export interface MonitoringProps {
   readonly lambdaFunctions: lambda.Function[];
   readonly chatFunction: lambda.Function;
+  readonly preSignUpFunction: lambda.Function;
   readonly tables: dynamodb.Table[];
   readonly restApi: apigwv2.HttpApi;
   readonly webSocketApi: apigwv2.WebSocketApi;
-  readonly evalStateMachine: stepfunctions.StateMachine;
+  readonly evalStateMachine?: stepfunctions.StateMachine;
+  readonly deadLetterQueue?: sqs.Queue;
   readonly alarmEmail?: string;
 }
 
@@ -50,7 +55,12 @@ export class MonitoringConstruct extends Construct {
     // ─── SNS Alert Topic ───
     this.alarmTopic = new sns.Topic(this, "AlarmTopic", {
       displayName: `${stackName} Monitoring Alerts`,
+      enforceSSL: true,
     });
+    NagSuppressions.addResourceSuppressions(this.alarmTopic, [{
+      id: "AwsSolutions-SNS2",
+      reason: "Carries alarm notifications only (no application data). CloudWatch alarms cannot publish to a topic encrypted with the AWS-managed SNS key, so SSE would need a customer-managed KMS key.",
+    }]);
 
     if (props.alarmEmail) {
       new sns.Subscription(this, "AlarmEmailSub", {
@@ -108,6 +118,19 @@ export class MonitoringConstruct extends Construct {
       alarmDescription: "Chat Lambda avg duration >60s — potential upstream latency issue",
     });
     chatDurationAlarm.addAlarmAction(alarmAction);
+
+    // A rejected sign-up surfaces as a PreSignUp invocation error, so this
+    // covers both a broken trigger (which would block admin invites too) and
+    // a burst of sign-up attempts from non-allowlisted domains.
+    const preSignUpErrorAlarm = new cloudwatch.Alarm(this, "PreSignUpErrors", {
+      metric: props.preSignUpFunction.metricErrors({ period: cdk.Duration.minutes(5) }),
+      threshold: 5,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: "PreSignUp trigger: ≥5 errors or rejected sign-ups in 5 min",
+    });
+    preSignUpErrorAlarm.addAlarmAction(alarmAction);
 
     // ─── DynamoDB Alarms ───
     // Threshold rationale: >= 5 throttles in 2 consecutive 5-min periods.
@@ -181,41 +204,42 @@ export class MonitoringConstruct extends Construct {
     });
     http4xxAlarm.addAlarmAction(alarmAction);
 
-    // WebSocket zero-connection alarm: if no client connects for 3 consecutive
-    // 5-min periods (15 min total), something is likely broken — DNS, the
-    // authorizer, or the API itself. Uses LESS_THAN_OR_EQUAL to 0.
     const wsApiId = props.webSocketApi.apiId;
-
-    const wsConnectErrorAlarm = new cloudwatch.Alarm(this, "WsApiConnectErrors", {
-      metric: new cloudwatch.Metric({
-        namespace: "AWS/ApiGateway",
-        metricName: "ConnectCount",
-        dimensionsMap: { ApiId: wsApiId },
-        period: cdk.Duration.minutes(5),
-        statistic: "Sum",
-      }),
-      threshold: 0,
-      evaluationPeriods: 3,
-      comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      alarmDescription: "WebSocket API: zero connections for 15 min — possible outage",
-    });
-    wsConnectErrorAlarm.addAlarmAction(alarmAction);
 
     // ─── Step Functions Alarms ───
     // Any single failure is worth investigating — eval runs are infrequent
     // (admin-triggered) and expensive, so threshold is 1 with 1 eval period.
-    const sfnFailedAlarm = new cloudwatch.Alarm(this, "EvalSfnFailed", {
-      metric: props.evalStateMachine.metricFailed({
-        period: cdk.Duration.minutes(5),
-      }),
-      threshold: 1,
-      evaluationPeriods: 1,
-      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      alarmDescription: "Eval pipeline state machine execution failed",
-    });
-    sfnFailedAlarm.addAlarmAction(alarmAction);
+    const sfnFailedAlarm = props.evalStateMachine
+      ? new cloudwatch.Alarm(this, "EvalSfnFailed", {
+          metric: props.evalStateMachine.metricFailed({
+            period: cdk.Duration.minutes(5),
+          }),
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+          treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+          alarmDescription: "Eval pipeline state machine execution failed",
+        })
+      : undefined;
+    sfnFailedAlarm?.addAlarmAction(alarmAction);
+
+    // ─── SQS Dead-Letter Queue ───
+    // Messages land here only after 3 failed processing attempts, so any
+    // visible message means a promoted feedback item never reached the test library.
+    if (props.deadLetterQueue) {
+      const dlqAlarm = new cloudwatch.Alarm(this, "FeedbackDlqMessages", {
+        metric: props.deadLetterQueue.metricApproximateNumberOfMessagesVisible({
+          period: cdk.Duration.minutes(5),
+          statistic: "Maximum",
+        }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription: "Feedback-to-test-library DLQ has messages (processing failed 3 times)",
+      });
+      dlqAlarm.addAlarmAction(alarmAction);
+    }
 
     // ─── CloudWatch Dashboard ───
     this.dashboard = new cloudwatch.Dashboard(this, "Dashboard", {
@@ -359,31 +383,36 @@ export class MonitoringConstruct extends Construct {
       }),
     );
 
-    // Row 5: Step Functions
-    this.dashboard.addWidgets(
-      new cloudwatch.GraphWidget({
-        title: "Eval Pipeline Executions",
-        width: 12,
-        left: [
-          props.evalStateMachine.metricStarted({ period: cdk.Duration.hours(1) }),
-          props.evalStateMachine.metricSucceeded({ period: cdk.Duration.hours(1) }),
-          props.evalStateMachine.metricFailed({ period: cdk.Duration.hours(1) }),
-        ],
-      }),
-      new cloudwatch.SingleValueWidget({
-        title: "Active Alarms",
-        width: 12,
-        metrics: [
-          http5xxAlarm.metric,
-          chatDurationAlarm.metric,
-          sfnFailedAlarm.metric,
-        ],
-      }),
-    );
+    // Row 5: Step Functions (when enabled) + active alarm summary
+    const alarmSummary = new cloudwatch.SingleValueWidget({
+      title: "Active Alarms",
+      width: 12,
+      metrics: [
+        http5xxAlarm.metric,
+        chatDurationAlarm.metric,
+        ...(sfnFailedAlarm ? [sfnFailedAlarm.metric] : []),
+      ],
+    });
+    if (props.evalStateMachine) {
+      this.dashboard.addWidgets(
+        new cloudwatch.GraphWidget({
+          title: "Eval Pipeline Executions",
+          width: 12,
+          left: [
+            props.evalStateMachine.metricStarted({ period: cdk.Duration.hours(1) }),
+            props.evalStateMachine.metricSucceeded({ period: cdk.Duration.hours(1) }),
+            props.evalStateMachine.metricFailed({ period: cdk.Duration.hours(1) }),
+          ],
+        }),
+        alarmSummary,
+      );
+    } else {
+      this.dashboard.addWidgets(alarmSummary);
+    }
 
     // ─── Outputs ───
     new cdk.CfnOutput(this, "DashboardURL", {
-      value: `https://${cdk.Aws.REGION}.console.aws.amazon.com/cloudwatch/home#dashboards:name=${stackName}-Operations`,
+      value: `https://${cdk.Aws.REGION}.console.aws.amazon.com/cloudwatch/home?region=${cdk.Aws.REGION}#dashboards:name=${stackName}-Operations`,
       description: "CloudWatch Dashboard URL",
     });
 

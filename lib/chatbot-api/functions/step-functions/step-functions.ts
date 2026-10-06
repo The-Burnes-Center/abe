@@ -1,7 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as path from 'path';
-import * as process from 'process';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -12,12 +11,9 @@ import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 import { StateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import * as stepfunctions from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
-
-const LAMBDA_DEFAULTS: Partial<lambda.FunctionProps> = {
-    architecture: lambda.Architecture.ARM_64,
-    tracing: lambda.Tracing.ACTIVE,
-    logRetention: logs.RetentionDays.ONE_MONTH,
-};
+import { BRAND_PROMPT_ENV, PROMPT_FAMILY } from '../../../constants';
+import { anthropicInvokeResources, ModelIds } from '../../../shared/bedrock';
+import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, pythonCode } from '../../../shared/lambda-defaults';
 
 interface StepFunctionsStackProps {
     readonly knowledgeBase : bedrock.CfnKnowledgeBase;
@@ -26,7 +22,9 @@ interface StepFunctionsStackProps {
     readonly evalTestCasesBucket : s3.Bucket;
     readonly evalResultsBucket : s3.Bucket;
     readonly promptRegistryTable : Table;
-    readonly wsEndpoint?: string;
+    /** Same function the chat Lambda calls for the fetch_metadata tool. */
+    readonly metadataRetrievalFunction : lambda.IFunction;
+    readonly models : ModelIds;
 }
 
 export class StepFunctionsStack extends Construct {
@@ -44,8 +42,8 @@ export class StepFunctionsStack extends Construct {
 
         const splitEvalTestCasesFunction = new lambda.Function(this, 'SplitEvalTestCasesFunction', {
             ...LAMBDA_DEFAULTS,
-            runtime: lambda.Runtime.PYTHON_3_12,
-            code: lambda.Code.fromAsset(path.join(__dirname, 'llm-evaluation/split-test-cases')),
+            runtime: PYTHON_RUNTIME,
+            code: pythonCode(path.join(__dirname, 'llm-evaluation/split-test-cases')),
             handler: 'lambda_function.lambda_handler',
             environment: {
                 "TEST_CASES_BUCKET": props.evalTestCasesBucket.bucketName,
@@ -68,8 +66,8 @@ export class StepFunctionsStack extends Construct {
 
         const llmEvalResultsHandlerFunction = new lambda.Function(this, 'LlmEvalResultsHandlerFunction', {
             ...LAMBDA_DEFAULTS,
-            runtime: lambda.Runtime.PYTHON_3_12,
-            code: lambda.Code.fromAsset(path.join(__dirname, 'llm-evaluation/results-to-ddb')),
+            runtime: PYTHON_RUNTIME,
+            code: pythonCode(path.join(__dirname, 'llm-evaluation/results-to-ddb')),
             handler: 'lambda_function.lambda_handler',
             environment: {
                 "EVAL_SUMMARIES_TABLE": props.evalSummariesTable.tableName,
@@ -113,16 +111,20 @@ export class StepFunctionsStack extends Construct {
 
         const generateResponseFunction = new lambda.Function(this, 'GenerateResponseFunction', {
             ...LAMBDA_DEFAULTS,
-            runtime: lambda.Runtime.NODEJS_20_X,
+            runtime: NODE_RUNTIME,
             code: lambda.Code.fromAsset(path.join(__dirname, 'llm-evaluation/generate-response')),
             handler: 'index.handler',
             memorySize: 512,
+            // Mirrors the chat Lambda's prompt inputs so evals score the
+            // production prompt: same prompt family (read-only), same model,
+            // same brand values.
             environment: {
                 'KB_ID': props.knowledgeBase.attrKnowledgeBaseId,
-                'METADATA_RETRIEVAL_FUNCTION': process.env.METADATA_RETRIEVAL_FUNCTION || '',
-                'PRIMARY_MODEL_ID': process.env.PRIMARY_MODEL_ID || 'us.anthropic.claude-sonnet-4-20250514-v1:0',
+                'METADATA_RETRIEVAL_FUNCTION': props.metadataRetrievalFunction.functionArn,
+                'PRIMARY_MODEL_ID': props.models.primary,
                 'PROMPT_REGISTRY_TABLE': props.promptRegistryTable.tableName,
-                'PROMPT_FAMILY': 'ASSISTANT_CHAT',
+                'PROMPT_FAMILY': PROMPT_FAMILY,
+                ...BRAND_PROMPT_ENV,
             },
             timeout: cdk.Duration.seconds(60),
         });
@@ -132,10 +134,7 @@ export class StepFunctionsStack extends Construct {
               'bedrock:InvokeModelWithResponseStream',
               'bedrock:InvokeModel',
             ],
-            resources: [
-              `arn:aws:bedrock:*::foundation-model/anthropic.*`,
-              `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:inference-profile/*`,
-            ]
+            resources: anthropicInvokeResources(),
         }));
         generateResponseFunction.addToRolePolicy(new iam.PolicyStatement({
             effect: iam.Effect.ALLOW,
@@ -146,17 +145,17 @@ export class StepFunctionsStack extends Construct {
         }));
         generateResponseFunction.addToRolePolicy(new iam.PolicyStatement({
             effect: iam.Effect.ALLOW,
+            // Read-only: evals must never seed or change the live prompt.
             actions: [
               'dynamodb:GetItem',
-              'dynamodb:PutItem',
               'dynamodb:Query',
-              'dynamodb:UpdateItem',
             ],
             resources: [
               props.promptRegistryTable.tableArn,
               props.promptRegistryTable.tableArn + "/index/*",
             ]
         }));
+        props.metadataRetrievalFunction.grantInvoke(generateResponseFunction);
         this.generateResponseFunction = generateResponseFunction;
 
         const llmEvalFunction = new lambda.DockerImageFunction(this, 'LlmEvaluationFunction', {
@@ -167,9 +166,9 @@ export class StepFunctionsStack extends Construct {
             environment: {
                 "TEST_CASES_BUCKET": props.evalTestCasesBucket.bucketName,
                 "EVAL_RESULTS_BUCKET": props.evalResultsBucket.bucketName,
-                "CHATBOT_API_URL": props.wsEndpoint || '',
                 "GENERATE_RESPONSE_LAMBDA_NAME": generateResponseFunction.functionName,
-                "BEDROCK_MODEL_ID": process.env.PRIMARY_MODEL_ID || "us.anthropic.claude-sonnet-4-20250514-v1:0",
+                // Judge model for RAGAS: the same default as chat.
+                "BEDROCK_MODEL_ID": props.models.primary,
             },
             timeout: cdk.Duration.minutes(15),
             memorySize: 10240
@@ -194,9 +193,8 @@ export class StepFunctionsStack extends Construct {
               'bedrock:InvokeModel'
             ],
             resources: [
-              `arn:aws:bedrock:*::foundation-model/anthropic.*`,
-              `arn:aws:bedrock:*::foundation-model/amazon.titan-embed-*`,
-              `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:inference-profile/*`,
+              ...anthropicInvokeResources(),
+              `arn:${cdk.Aws.PARTITION}:bedrock:*::foundation-model/amazon.titan-embed-*`,
             ]
         }));
         llmEvalFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -218,8 +216,8 @@ export class StepFunctionsStack extends Construct {
 
         const aggregateEvalResultsFunction = new lambda.Function(this, 'AggregateEvalResultsFunction', {
             ...LAMBDA_DEFAULTS,
-            runtime: lambda.Runtime.PYTHON_3_12,
-            code: lambda.Code.fromAsset(path.join(__dirname, 'llm-evaluation/aggregate-eval-results')),
+            runtime: PYTHON_RUNTIME,
+            code: pythonCode(path.join(__dirname, 'llm-evaluation/aggregate-eval-results')),
             handler: 'lambda_function.lambda_handler',
             environment: {
                 "TEST_CASES_BUCKET": props.evalTestCasesBucket.bucketName,
@@ -246,8 +244,8 @@ export class StepFunctionsStack extends Construct {
 
         const llmEvalCleanupFunction = new lambda.Function(this, 'LlmEvalCleanupFunction', {
             ...LAMBDA_DEFAULTS,
-            runtime: lambda.Runtime.PYTHON_3_12,
-            code: lambda.Code.fromAsset(path.join(__dirname, 'llm-evaluation/cleanup')),
+            runtime: PYTHON_RUNTIME,
+            code: pythonCode(path.join(__dirname, 'llm-evaluation/cleanup')),
             handler: 'lambda_function.lambda_handler',
             environment: {
                 "TEST_CASES_BUCKET": props.evalTestCasesBucket.bucketName,
@@ -426,7 +424,7 @@ export class StepFunctionsStack extends Construct {
 
         const startLlmEvalStateMachineFunction = new lambda.Function(this, 'StartLlmEvalStateMachineFunction', {
             ...LAMBDA_DEFAULTS,
-            runtime: lambda.Runtime.NODEJS_20_X,
+            runtime: NODE_RUNTIME,
             code: lambda.Code.fromAsset(path.join(__dirname, 'llm-evaluation/start-llm-eval')),
             handler: 'index.handler',
             environment: {
