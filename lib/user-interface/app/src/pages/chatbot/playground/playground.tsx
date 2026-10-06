@@ -8,7 +8,9 @@ export default function Playground() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
-      <Chat sessionId={sessionId} />
+      {/* Keyed by session: switching conversations remounts Chat, which aborts
+          the previous stream and starts from clean state. */}
+      <Chat key={sessionId} sessionId={sessionId} />
     </div>
   );
 }

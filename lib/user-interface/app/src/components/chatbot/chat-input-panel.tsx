@@ -1,5 +1,5 @@
 import Button from "@mui/material/Button";
-import { CHATBOT_NAME } from "../../common/constants";
+import { brand } from "../../common/brand";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
@@ -24,7 +24,7 @@ import {
   transcribeDictationSupported,
 } from "../../hooks/useTranscribeDictation";
 import { AppContext } from "../../common/app-context";
-import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
+import { getCurrentUser } from "aws-amplify/auth";
 import TextareaAutosize from "react-textarea-autosize";
 import styles from "../../styles/chat.module.scss";
 
@@ -36,7 +36,7 @@ import {
 
 import { SessionRefreshContext } from "../../common/session-refresh-context";
 import { useNotifications } from "../notif-manager";
-import { useWebSocketChat, StreamingStatus } from "../../hooks/useWebSocketChat";
+import type { SendChatMessage, StreamingStatus } from "../../hooks/useWebSocketChat";
 import { Utils } from "../../common/utils";
 
 export interface ChatInputPanelProps {
@@ -47,6 +47,9 @@ export interface ChatInputPanelProps {
   setMessageHistory: (history: ChatBotHistoryItem[]) => void;
   streamingStatus: StreamingStatus;
   setStreamingStatus: Dispatch<SetStateAction<StreamingStatus>>;
+  /** Shared `send` from the single useWebSocketChat instance owned by Chat. */
+  send: SendChatMessage;
+  /** Shared `abort` from the same hook instance, so Stop closes the real socket. */
   onStop?: () => void;
   queuedPrompt?: string | null;
   onQueuedPromptHandled?: () => void;
@@ -65,12 +68,12 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
   // Text already in the box when dictation started, so live speech is appended
   // to it rather than overwriting it.
   const dictationBaseRef = useRef("");
-  const { send } = useWebSocketChat();
+  const { send } = props;
 
   // Live dictation via Amazon Transcribe streaming. The backend mints a
   // short-lived presigned WebSocket URL (no AWS creds in the browser); audio
-  // streams browser→Transcribe directly. Works on the OSD network, unlike the
-  // old browser Web Speech API which routed audio through Google.
+  // streams browser→Transcribe directly, unlike the browser Web Speech API,
+  // which routes audio through Google and is blocked on many networks.
   const dictationSupported = transcribeDictationSupported();
   const getPresignedUrl = useCallback(async () => {
     const auth = await Utils.authenticate();
@@ -111,16 +114,9 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
     if (props.running) return;
 
     let username: string | undefined;
-    let displayName = "";
-    let agency = "";
     try {
       const user = await getCurrentUser();
       username = user.username;
-      const session = await fetchAuthSession();
-      const rawName = (session.tokens?.idToken?.payload?.name as string) ?? "";
-      const identity = Utils.parseUserIdentity(rawName);
-      displayName = identity.displayName;
-      agency = identity.agency;
     } catch {
       // Session is gone/expired — bounce the user to re-authenticate rather than
       // stranding them with a notification they can't act on.
@@ -131,10 +127,11 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
 
     const messageToSend = (overrideMessage ?? state.value).trim();
     if (messageToSend.length === 0) {
-      addNotification("error", "Please do not submit blank text!");
+      addNotification("error", "Type a message before sending.");
       return;
     }
-    if (!overrideMessage) {
+    const typedByUser = overrideMessage === undefined;
+    if (typedByUser) {
       setState({ value: "" });
     }
     // Stop any in-progress dictation so it doesn't bleed into the next message.
@@ -165,8 +162,6 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
     send({
       userMessage: messageToSend,
       userId: username,
-      displayName,
-      agency,
       sessionId: props.session.id,
       messageHistory: messageHistoryRef.current.slice(0, -2),
 
@@ -214,9 +209,14 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
         props.setStreamingStatus({ text: "", active: false });
         messageHistoryRef.current = messageHistoryRef.current.slice(0, -1);
         props.setMessageHistory(messageHistoryRef.current);
+        // Give the typed text back so the user can retry without retyping
+        // (unless they already started writing something new).
+        if (typedByUser) {
+          setState((s) => (s.value.trim() ? s : { value: messageToSend }));
+        }
         addNotification(
           "error",
-          message || "Sorry, something went wrong. Please try again."
+          `${message || "Sorry, something went wrong."} Your message is back in the box so you can try again.`
         );
         props.setRunning(false);
       },
@@ -224,12 +224,14 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
   };
   handleSendRef.current = handleSendMessage;
 
+  const { queuedPrompt, running, onQueuedPromptHandled } = props;
+  const sessionLoading = props.session.loading;
   useEffect(() => {
-    if (props.queuedPrompt && !props.running && !props.session.loading) {
-      handleSendRef.current?.(props.queuedPrompt);
-      props.onQueuedPromptHandled?.();
+    if (queuedPrompt && !running && !sessionLoading) {
+      handleSendRef.current?.(queuedPrompt);
+      onQueuedPromptHandled?.();
     }
-  }, [props.queuedPrompt, props.running, props.session.loading]);
+  }, [queuedPrompt, running, sessionLoading, onQueuedPromptHandled]);
 
   const isSendDisabled =
     props.running ||
@@ -253,7 +255,7 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
       >
         <div className={styles.input_textarea_container}>
           <label htmlFor="chat-input" className="sr-only">
-            Message {CHATBOT_NAME}
+            Message {brand.shortName}
           </label>
           <TextareaAutosize
             id="chat-input"
@@ -273,8 +275,8 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
               }
             }}
             value={state.value}
-            placeholder={`Ask ${CHATBOT_NAME} a question...`}
-            aria-label={`Message ${CHATBOT_NAME}`}
+            placeholder={`Ask ${brand.shortName} a question...`}
+            aria-label={`Message ${brand.shortName}`}
             aria-multiline="true"
           />
           <Stack direction="row" spacing={0.5} alignItems="center" sx={{ ml: 1 }}>

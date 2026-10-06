@@ -14,9 +14,6 @@ import type { StreamingStatus } from "./useWebSocketChat";
 vi.mock("../common/utils", () => ({
   Utils: {
     authenticate: vi.fn().mockResolvedValue("mock-token"),
-    parseUserIdentity: vi
-      .fn()
-      .mockReturnValue({ displayName: "Test User", agency: "TestAgency" }),
     delay: vi.fn().mockResolvedValue(undefined),
   },
 }));
@@ -35,7 +32,7 @@ class MockWebSocket {
   static lastInstance: MockWebSocket | null = null;
   url: string;
   readyState = 0;
-  private listeners: Record<string, Function[]> = {};
+  private listeners: Record<string, ((e: Event) => void)[]> = {};
   sent: string[] = [];
 
   constructor(url: string) {
@@ -43,7 +40,7 @@ class MockWebSocket {
     MockWebSocket.lastInstance = this;
   }
 
-  addEventListener(event: string, handler: Function) {
+  addEventListener(event: string, handler: (e: Event) => void) {
     this.listeners[event] = [...(this.listeners[event] ?? []), handler];
   }
 
@@ -88,17 +85,10 @@ const mockAppConfig: AppConfig = {
     region: "us-east-1",
     userPoolId: "us-east-1_test",
     userPoolWebClientId: "test-client-id",
-    oauth: {
-      domain: "test.auth.com",
-      scope: ["openid"],
-      redirectSignIn: "http://localhost:3000",
-      redirectSignOut: "http://localhost:3000",
-      responseType: "code",
-    },
   },
   httpEndpoint: "https://test.example.com/",
   wsEndpoint: "wss://test.example.com",
-  federatedSignInProvider: "",
+  selfSignUpEnabled: false,
 };
 
 const wrapper = ({ children }: { children: React.ReactNode }) =>
@@ -111,7 +101,7 @@ interface SendOpts {
   messageHistory: ChatBotHistoryItem[];
   onStreamChunk: (accumulated: string) => void;
   onStatusChange: (status: StreamingStatus) => void;
-  onSources: (sources: Record<string, any>) => void;
+  onSources: (sources: Record<string, unknown>) => void;
   onComplete: (firstMessage: boolean) => void;
   onError: (msg: string) => void;
 }
@@ -175,6 +165,9 @@ describe("useWebSocketChat", () => {
     expect(payload.data.userMessage).toBe("Hello ABE");
     expect(payload.data.user_id).toBe("user-123");
     expect(payload.data.session_id).toBe("session-456");
+    // Identity is derived server-side from token claims; never sent by the client.
+    expect(payload.data).not.toHaveProperty("agency");
+    expect(payload.data).not.toHaveProperty("display_name");
   });
 
   it("calls onError when a message starts with the error prefix", async () => {
@@ -457,5 +450,72 @@ describe("useWebSocketChat", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(MockWebSocket.lastInstance).toBe(ws); // no new socket = no reconnect/resend
     vi.useRealTimers();
+  });
+
+  it("abort() during the reconnect back-off cancels the pending retry", async () => {
+    const onError = vi.fn();
+    const onStatusChange = vi.fn();
+    const { result } = renderHook(() => useWebSocketChat(), { wrapper });
+
+    vi.useFakeTimers();
+    await act(async () => {
+      await result.current.send(makeOpts({ onError, onStatusChange }));
+    });
+    const ws = MockWebSocket.lastInstance!;
+    act(() => {
+      ws.simulateOpen();
+      ws.simulateClose(1006); // network drop schedules a reconnect
+    });
+    act(() => result.current.abort());
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(MockWebSocket.lastInstance).toBe(ws); // no retry socket opened
+    expect(onError).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("unmounting the owner closes the socket and silences callbacks", async () => {
+    const onStreamChunk = vi.fn();
+    const onError = vi.fn();
+    const { result, unmount } = renderHook(() => useWebSocketChat(), { wrapper });
+
+    await act(async () => {
+      await result.current.send(makeOpts({ onStreamChunk, onError }));
+    });
+    const ws = MockWebSocket.lastInstance!;
+    act(() => ws.simulateOpen());
+
+    unmount();
+
+    expect(ws.readyState).toBe(3);
+    ws.simulateMessage("late text from the old session");
+    expect(onStreamChunk).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("a new send supersedes the previous request so its frames are ignored", async () => {
+    const first = makeOpts({ onStreamChunk: vi.fn(), onComplete: vi.fn() });
+    const second = makeOpts({ onStreamChunk: vi.fn() });
+    const { result } = renderHook(() => useWebSocketChat(), { wrapper });
+
+    await act(async () => {
+      await result.current.send(first);
+    });
+    const firstWs = MockWebSocket.lastInstance!;
+    act(() => firstWs.simulateOpen());
+
+    await act(async () => {
+      await result.current.send(second);
+    });
+    const secondWs = MockWebSocket.lastInstance!;
+
+    expect(secondWs).not.toBe(firstWs);
+    expect(firstWs.readyState).toBe(3);
+    firstWs.simulateMessage("stale");
+    expect(first.onStreamChunk).not.toHaveBeenCalled();
+    expect(first.onComplete).not.toHaveBeenCalled();
   });
 });

@@ -11,10 +11,10 @@ export default function NotificationBar() {
 
   return (
     <Stack spacing={1} sx={{ mb: 2 }} aria-label="Notifications">
-      {notifications.map((notif: any) => (
+      {notifications.map((notif) => (
         <Alert
           key={notif.id}
-          severity={notif.type === "error" ? "error" : notif.type === "success" ? "success" : "info"}
+          severity={notif.type}
           role={notif.type === "error" ? "alert" : "status"}
           aria-live={notif.type === "error" ? "assertive" : "polite"}
           action={

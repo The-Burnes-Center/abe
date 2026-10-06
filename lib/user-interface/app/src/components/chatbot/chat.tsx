@@ -27,14 +27,16 @@ import { useWebSocketChat, StreamingStatus } from "../../hooks/useWebSocketChat"
 
 export default function Chat(props: { sessionId?: string }) {
   const appContext = useContext(AppContext);
-  const [running, setRunning] = useState<boolean>(true);
+  const [running, setRunning] = useState<boolean>(false);
   const [session, setSession] = useState<{ id: string; loading: boolean }>({
     id: props.sessionId ?? uuidv4(),
     loading: typeof props.sessionId !== "undefined",
   });
 
   const { addNotification } = useNotifications();
-  const { abort } = useWebSocketChat();
+  // The one socket owner for this chat: send and abort share the same
+  // connection, and unmounting (session switch, navigation) aborts it.
+  const { send, abort } = useWebSocketChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
@@ -52,48 +54,51 @@ export default function Chat(props: { sessionId?: string }) {
     active: false,
   });
   const [queuedPrompt, setQueuedPrompt] = useState<string | null>(null);
+  const clearQueuedPrompt = useCallback(() => setQueuedPrompt(null), []);
 
   useEffect(() => {
     if (!appContext) return;
     setMessageHistory([]);
+    if (!props.sessionId) {
+      setSession({ id: uuidv4(), loading: false });
+      setRunning(false);
+      return;
+    }
 
+    // Ignore a slow response for a session the user already navigated away from.
+    let cancelled = false;
+    const sessionId = props.sessionId;
+    setSession({ id: sessionId, loading: true });
+    const apiClient = new ApiClient(appContext);
     (async () => {
-      if (!props.sessionId) {
-        setSession({ id: uuidv4(), loading: false });
-        return;
-      }
-
-      setSession({ id: props.sessionId, loading: true });
-      const apiClient = new ApiClient(appContext);
       try {
-        let username: string | undefined;
-        await getCurrentUser().then(
-          (value) => (username = value.username)
-        );
-        if (!username) return;
-        const hist = await apiClient.sessions.getSession(
-          props.sessionId,
-          username
-        );
-
-        if (hist) {
-          const restored = hist
+        const { username } = await getCurrentUser();
+        const hist = await apiClient.sessions.getSession(sessionId, username);
+        if (cancelled || !hist) return;
+        setMessageHistory(
+          hist
             .filter((x) => x !== null)
             .map((x) => ({
               type: x!.type as ChatBotMessageType,
               metadata: x!.metadata!,
               content: x!.content,
-            }));
-          setMessageHistory(restored);
+            }))
+        );
+      } catch (error) {
+        if (!cancelled) {
+          addNotification("error", `Could not load this conversation: ${Utils.getErrorMessage(error)}`);
         }
-        setSession({ id: props.sessionId, loading: false });
-        setRunning(false);
-      } catch (error: any) {
-        addNotification("error", error.message);
-        addNotification("info", "Please refresh the page");
+      } finally {
+        if (!cancelled) {
+          setSession({ id: sessionId, loading: false });
+          setRunning(false);
+        }
       }
     })();
-  }, [appContext, props.sessionId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [appContext, props.sessionId, addNotification]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -101,11 +106,13 @@ export default function Chat(props: { sessionId?: string }) {
     const el = scrollContainerRef.current;
     if (!el) return;
 
+    // Only follow the stream when the reader is already at the bottom, so
+    // scrolling up to re-read is never yanked back down mid-answer.
     const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
-    if (isNearBottom || running) {
+    if (isNearBottom) {
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     }
-  }, [messageHistory, running]);
+  }, [messageHistory]);
 
   // Announce when the assistant finishes responding (accessibility)
   useEffect(() => {
@@ -185,7 +192,7 @@ export default function Chat(props: { sessionId?: string }) {
 
   const handleOpenSource = useCallback(async (s3Key: string) => {
     if (!appContext) return;
-    const api = appContext.httpEndpoint.slice(0, -1);
+    const api = appContext.httpEndpoint.replace(/\/$/, "");
     try {
       const auth = await Utils.authenticate();
       const res = await fetch(`${api}/source-presign`, {
@@ -403,9 +410,10 @@ export default function Chat(props: { sessionId?: string }) {
           setMessageHistory={(history) => setMessageHistory(history)}
           streamingStatus={streamingStatus}
           setStreamingStatus={setStreamingStatus}
+          send={send}
           onStop={abort}
           queuedPrompt={queuedPrompt}
-          onQueuedPromptHandled={() => setQueuedPrompt(null)}
+          onQueuedPromptHandled={clearQueuedPrompt}
         />
       </section>
     </div>
