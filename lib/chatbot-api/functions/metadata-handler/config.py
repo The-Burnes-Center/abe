@@ -3,7 +3,7 @@
 CATEGORIES = {
     'user guide': 'A document providing clear, step-by-step instructions on how to use a product, service, or process. It outlines the key terms, processes, and requirements users need to follow.',
     'handbook': 'A comprehensive reference document covering various aspects of the subject area.',
-    'spreadsheet': 'A spreadsheet or tabular-data file (e.g. Excel or CSV) -- rows of records with their attributes. These are not document RAG content: structured files like this go through ABE\'s dedicated structured-data (Excel/CSV) ingestion pipeline so they can be queried as structured rows, separate from the knowledge-base documents.',
+    'spreadsheet': 'A spreadsheet or tabular-data file (e.g. Excel or CSV) -- rows of records with their attributes. These are not document RAG content: structured files like this go through the assistant\'s dedicated structured-data (Excel/CSV) ingestion pipeline so they can be queried as structured rows, separate from the knowledge-base documents.',
     'external reference': 'Supplementary documents or sheets that contain only a list with links for accessing other documents.',
     'memos': 'Official communications that outline updates, amendments, or directives regarding policies or procedures. These documents ensure compliance with the latest changes.',
     'unknown': 'Documents that do not clearly fit into any of the above categories.'
@@ -11,7 +11,7 @@ CATEGORIES = {
 
 # Define custom tags to provide additional metadata for documents.
 CUSTOM_TAGS = {
-    'complexity': ['low', 'medium', 'high'],# Levels indicating document complexity for new buyers.
+    'complexity': ['low', 'medium', 'high'],# Levels indicating document complexity for a newcomer.
     'author':[] , # Placeholder for author names; values will be extracted from content if available.,
     'creation_date':[]
 }
@@ -19,7 +19,7 @@ CUSTOM_TAGS = {
 # Descriptions for each tag to guide their use and selection.
 TAG_DESCRIPTIONS = {
     'category': 'The type of document. Avoid adding inferred text like "(inferred from content)".',
-    'complexity': 'Indicates how complex the document is to understand for a new buyer.',
+    'complexity': 'Indicates how complex the document is to understand for someone new to the subject.',
     'author': 'The name of the person or organization who wrote or published the document. Use "unknown" if the information cannot be verified with high confidence. Avoid adding inferred text like "(inferred from content)".',
     'creation_date': 'The document\'s own date -- the publication, release, or amendment date stated in the document content, formatted as "YYYY-MM-DD". This is NOT today\'s date and NOT the date of this analysis. Use "unknown" if the document does not state a date that can be verified with high confidence. Avoid mentioning it is an inferred detail.',
 }
@@ -54,7 +54,7 @@ Example JSON Response:
     "summary": "<Your Summary>",
     "tags": {{
         "category": "user guide",
-        "author": "Operational Services Division",
+        "author": "Human Resources Department",
         "complexity": "medium",
         "creation_date": "2023-11-20"
     }}

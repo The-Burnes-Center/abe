@@ -3,10 +3,11 @@ import json
 import urllib.parse
 import os
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from botocore.exceptions import ClientError
 from config import get_full_prompt, get_all_tags, CATEGORIES, CUSTOM_TAGS
 from common_utils import extract_json_object, get_logger
+from common_utils.models import fast_model_id
 
 
 # S3 object metadata (the head-metadata map written via copy_object with
@@ -58,9 +59,19 @@ def to_ascii(value):
 
 
 s3 = boto3.client('s3')
-bedrock = boto3.client('bedrock-agent-runtime', region_name = 'us-east-1') #For using retrieve function
-bedrock_invoke =boto3.client('bedrock-runtime', region_name = 'us-east-1') #For using invoke function
+# Region comes from the Lambda environment. A hardcoded us-east-1 here made
+# every retrieve call miss a knowledge base deployed in any other region, so
+# no summary was ever generated there.
+bedrock = boto3.client('bedrock-agent-runtime') #For using retrieve function
+bedrock_invoke = boto3.client('bedrock-runtime') #For using invoke function
 kb_id = os.environ['KB_ID']
+
+METADATA_FILE = "metadata.txt"
+# Written alongside every summary this handler generates. The orchestrator's
+# backfill treats a summary carrying this marker as real, instead of guessing
+# from its wording whether it is pre-ingestion filler.
+SUMMARY_STATUS_KEY = "summary_status"
+SUMMARY_STATUS_GENERATED = "generated"
 logger = get_logger(__name__)
 
 # Upper bound on document text sent to the summarization model (~40K tokens),
@@ -142,7 +153,7 @@ def retrieve_kb_docs(bucket, file_name, knowledge_base_id):
 def summarize_and_categorize(key,content):
     try:
         response = bedrock_invoke.invoke_model(
-            modelId=os.environ.get('FAST_MODEL_ID', 'us.anthropic.claude-3-5-haiku-20241022-v1:0'),
+            modelId=fast_model_id(),
             contentType='application/json',
             accept='application/json',
             body=json.dumps({
@@ -242,12 +253,31 @@ def get_metadata(bucket,key):
     existing_metadata = response.get('Metadata', {})
     return existing_metadata
 
+def _read_inventory(bucket):
+    """Return the current metadata.txt contents, or {} if missing/unreadable."""
+    try:
+        body = s3.get_object(Bucket=bucket, Key=METADATA_FILE)['Body'].read()
+        current = json.loads(body)
+        return current if isinstance(current, dict) else {}
+    except Exception:
+        return {}
+
+
 #Getting metadata information of all files in a single document
-def get_complete_metadata(bucket):
+def get_complete_metadata(bucket, changed_key=None, changed_metadata=None):
+    """Rebuild metadata.txt from the bucket listing.
+
+    Entries already in metadata.txt are reused, so a single upload or delete
+    costs one listing plus HEADs only for the changed file and files the
+    inventory doesn't know yet (previously every event HEADed every object,
+    O(N^2) across a bulk upload). The orchestrator's hourly reconcile pass
+    re-HEADs everything and repairs any drift from concurrent writers.
+    """
     all_metadata = {}
+    cached = _read_inventory(bucket)
     # The inventory file this function writes. It must never list itself: a
     # "metadata.txt": {} self-entry is useless noise for the model.
-    metadata_file = "metadata.txt"
+    metadata_file = METADATA_FILE
     try:
         paginator = s3.get_paginator('list_objects_v2')
         current_files = set()
@@ -258,6 +288,12 @@ def get_complete_metadata(bucket):
                     if key == metadata_file:
                         continue
                     current_files.add(key)
+                    if key == changed_key and changed_metadata is not None:
+                        all_metadata[key] = changed_metadata
+                        continue
+                    if key != changed_key and isinstance(cached.get(key), dict):
+                        all_metadata[key] = cached[key]
+                        continue
                     try:
                         all_metadata[key] = get_metadata(bucket,key)
                     except Exception as e:
@@ -395,7 +431,8 @@ def lambda_handler(event, context):
                 # When this summary was generated -- deliberately separate
                 # from tag_creation_date, which is the document's own date
                 # (blank when unverifiable, never filled with today's date).
-                'tag_metadata_generated_at': datetime.utcnow().strftime('%Y-%m-%d'),
+                'tag_metadata_generated_at': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+                SUMMARY_STATUS_KEY: SUMMARY_STATUS_GENERATED,
             }
 
             # Merge new metadata with any existing metadata
@@ -421,7 +458,7 @@ def lambda_handler(event, context):
                     'body': json.dumps(f"Error updating metadata for {key}: {e}")
                 }
 
-            all_metadata = get_complete_metadata(bucket)
+            all_metadata = get_complete_metadata(bucket, changed_key=key, changed_metadata=updated_metadata)
             if all_metadata is not None:
                 print(f"All Metadata : {all_metadata}")
                 return {

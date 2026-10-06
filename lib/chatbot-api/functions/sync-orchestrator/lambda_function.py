@@ -108,10 +108,22 @@ def _start_kb_ingestion():
     logger.info("KB ingestion started: %s", resp["ingestionJob"]["ingestionJobId"])
 
 
-def _is_placeholder_summary(summary: str) -> bool:
+# Marker the metadata-handler writes next to every summary it generates.
+SUMMARY_STATUS_KEY = "summary_status"
+SUMMARY_STATUS_GENERATED = "generated"
+
+
+def _is_placeholder_summary(summary: str, metadata: dict | None = None) -> bool:
     """True when a head-metadata ``summary`` is missing or is a failure artifact.
 
-    Two kinds of artifacts count as missing so the backfill regenerates them:
+    A summary carrying the explicit ``summary_status=generated`` marker is
+    always real: the handler only writes it after a successful summarization
+    of actual KB chunks. The wording heuristics below apply only to legacy
+    summaries written before the marker existed, so a real summary that
+    happens to mention "knowledge base" and "not found" is regenerated at most
+    once (and then carries the marker).
+
+    For legacy summaries, two kinds of artifacts count as missing:
 
     - Explicit error markers the metadata-handler used to persist, e.g.
       "Error generating summary" / "Error parsing nested JSON in 'text'".
@@ -125,6 +137,8 @@ def _is_placeholder_summary(summary: str) -> bool:
     s = (summary or "").strip().lower()
     if not s:
         return True
+    if (metadata or {}).get(SUMMARY_STATUS_KEY) == SUMMARY_STATUS_GENERATED:
+        return False
     if s.startswith("error "):
         return True
     if "knowledge base" in s and any(
@@ -226,7 +240,7 @@ def _backfill_missing_metadata(
                 # Skip only when there's a real summary; empty values, error
                 # markers, and pre-ingestion LLM filler all count as missing
                 # so they get regenerated on the next pass.
-                if not _is_placeholder_summary(meta.get("summary") or ""):
+                if not _is_placeholder_summary(meta.get("summary") or "", meta):
                     continue
                 payload = {
                     "Records": [
@@ -362,5 +376,5 @@ def lambda_handler(event, context):
         _record_history("FAILED", kb_docs_moved, index_files_moved, duration_ms, str(e))
         return {
             "statusCode": 500,
-            "body": json.dumps({"status": "FAILED", "error": str(e)}),
+            "body": json.dumps({"status": "FAILED", "error": "Sync failed. See the sync history for details."}),
         }

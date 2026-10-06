@@ -28,7 +28,7 @@ for d in (HANDLER_DIR, os.path.abspath(LAYER_DIR)):
 @pytest.fixture(autouse=True)
 def env_vars(monkeypatch):
     monkeypatch.setenv("KB_ID", "test-kb-id")
-    monkeypatch.setenv("FAST_MODEL_ID", "us.anthropic.claude-3-5-haiku-20241022-v1:0")
+    monkeypatch.setenv("FAST_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
 
 
@@ -78,7 +78,7 @@ class TestSummarizeAndCategorize:
             tags={
                 "category": "user guide",
                 "complexity": "medium",
-                "author": "OSD",
+                "author": "Example Org",
                 "creation_date": "2023-11-20",
             },
         )
@@ -94,7 +94,7 @@ class TestSummarizeAndCategorize:
         resp = _bedrock_response(
             summary="Some doc.",
             tags={"category": "not-a-real-category", "complexity": "low",
-                  "author": "OSD", "creation_date": "2023-01-01"},
+                  "author": "Example Org", "creation_date": "2023-01-01"},
         )
         with patch.object(lf, "bedrock_invoke") as mock_bedrock:
             mock_bedrock.invoke_model.return_value = resp
@@ -106,7 +106,7 @@ class TestSummarizeAndCategorize:
         resp = _bedrock_response(
             summary="Some doc.",
             tags={"category": "memos", "complexity": "extreme",
-                  "author": "OSD", "creation_date": "2023-01-01"},
+                  "author": "Example Org", "creation_date": "2023-01-01"},
         )
         with patch.object(lf, "bedrock_invoke") as mock_bedrock:
             mock_bedrock.invoke_model.return_value = resp
@@ -131,7 +131,7 @@ class TestSummarizeAndCategorize:
         resp = _bedrock_response(
             summary="Some doc.",
             tags={"category": "memos", "complexity": "low",
-                  "author": "OSD", "creation_date": "June 2023"},
+                  "author": "Example Org", "creation_date": "June 2023"},
         )
         with patch.object(lf, "bedrock_invoke") as mock_bedrock:
             mock_bedrock.invoke_model.return_value = resp
@@ -144,7 +144,7 @@ class TestSummarizeAndCategorize:
         resp = _bedrock_response(
             summary="Some doc.",
             tags={"category": "memos", "complexity": "low",
-                  "author": "OSD", "creation_date": ""},
+                  "author": "Example Org", "creation_date": ""},
         )
         with patch.object(lf, "bedrock_invoke") as mock_bedrock:
             mock_bedrock.invoke_model.return_value = resp
@@ -162,7 +162,7 @@ class TestSummarizeAndCategorize:
         resp = _bedrock_response(
             summary="Some doc.",
             tags={"category": "memos", "complexity": "low",
-                  "author": "OSD", "creation_date": "Unknown"},
+                  "author": "Example Org", "creation_date": "Unknown"},
         )
         with patch.object(lf, "bedrock_invoke") as mock_bedrock:
             mock_bedrock.invoke_model.return_value = resp
@@ -201,7 +201,7 @@ class TestSummarizeAndCategorize:
         resp = _bedrock_response(
             summary="Some doc.",
             tags={"category": "memos", "complexity": "low",
-                  "author": "OSD", "creation_date": "2023-01-01",
+                  "author": "Example Org", "creation_date": "2023-01-01",
                   "invented_tag": "some_value"},
         )
         with patch.object(lf, "bedrock_invoke") as mock_bedrock:
@@ -329,7 +329,7 @@ class TestLambdaHandlerMetadataGeneratedAt:
         resp = _bedrock_response(
             summary="A user guide for contract FAC115.",
             tags={"category": "user guide", "complexity": "low",
-                  "author": "OSD", "creation_date": "unknown"},
+                  "author": "Example Org", "creation_date": "unknown"},
         )
         with patch.object(lf, "bedrock") as mock_bedrock, \
              patch.object(lf, "bedrock_invoke") as mock_invoke, \
@@ -359,3 +359,31 @@ class TestLambdaHandlerMetadataGeneratedAt:
         datetime.strptime(written["tag_metadata_generated_at"], "%Y-%m-%d")
         # The unverifiable creation date is blank, not today's date
         assert written["tag_creation_date"] == ""
+        # Explicit marker the orchestrator uses to recognize real summaries
+        assert written["summary_status"] == "generated"
+
+
+class TestInventoryCache:
+    def test_reuses_cached_entries_and_heads_only_changed_or_new(self):
+        lf = _fresh_module()
+        with patch.object(lf, "s3") as mock_s3:
+            paginator = MagicMock()
+            paginator.paginate.return_value = [
+                {"Contents": [{"Key": "a.pdf"}, {"Key": "b.pdf"}, {"Key": "new.pdf"}, {"Key": "metadata.txt"}]}
+            ]
+            mock_s3.get_paginator.return_value = paginator
+            cached = {"a.pdf": {"summary": "cached a"}, "b.pdf": {"summary": "old b"}, "gone.pdf": {"summary": "x"}}
+            body = MagicMock()
+            body.read.return_value = json.dumps(cached).encode()
+            mock_s3.get_object.return_value = {"Body": body}
+            mock_s3.head_object.side_effect = lambda Bucket, Key: {"Metadata": {"summary": f"fresh {Key}"}}
+
+            result = lf.get_complete_metadata("bkt", changed_key="b.pdf", changed_metadata={"summary": "new b"})
+
+        assert result == {
+            "a.pdf": {"summary": "cached a"},
+            "b.pdf": {"summary": "new b"},
+            "new.pdf": {"summary": "fresh new.pdf"},
+        }
+        headed = [call.kwargs["Key"] for call in mock_s3.head_object.call_args_list]
+        assert headed == ["new.pdf"]
