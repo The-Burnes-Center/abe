@@ -1,308 +1,176 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { cognitoDomainName } from '../constants'
-import { UserPool, UserPoolIdentityProviderOidc,UserPoolClient, UserPoolClientIdentityProvider, ProviderAttribute } from 'aws-cdk-lib/aws-cognito';
-import * as cognito from "aws-cdk-lib/aws-cognito";
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as fs from 'fs';
 import * as path from 'path';
-import { MANAGED_LOGIN_BRANDING_SETTINGS } from './managed-login-branding';
+import { NagSuppressions } from 'cdk-nag';
 import { brand } from '../../config/brand';
-
-// The Cognito Managed Login screen (used only by SSO deployments; native
-// deployments render the in-app login page instead) shows the brand logo so
-// users see the brand of the agency that owns the tool at sign-in.
-const LOGIN_LOGO_PATH = path.join(
-  __dirname,
-  '../user-interface/app/public',
-  brand.assets.logo,
-);
-// Cognito wants the asset type spelled out and only accepts these formats.
-const LOGIN_LOGO_EXTENSION = ((): string => {
-  const byExt: Record<string, string> = {
-    '.png': 'PNG',
-    '.svg': 'SVG',
-    '.jpg': 'JPEG',
-    '.jpeg': 'JPEG',
-    '.webp': 'WEBP',
-    '.ico': 'ICO',
-  };
-  return byExt[path.extname(LOGIN_LOGO_PATH).toLowerCase()] ?? 'PNG';
-})();
-
-/**
- * Cognito validates branding SVGs against a strict allowlist and rejects the
- * cruft design tools export (deploy fails with e.g. `element
- * [svg#version|xmlns:xlink|xml:space] is not allowed`). Reduce the SVG to
- * what Cognito accepts: no XML declaration or comments, fills inlined from
- * simple `<style>` class rules, and a root element carrying only
- * xmlns + viewBox. Cognito also requires LOGO assets to have a width:height
- * ratio between 1:1 and 4:1; wide wordmarks are padded with centered
- * transparent space (via the viewBox) rather than distorted.
- */
-function sanitizeSvgForCognito(svg: string): string {
-  let out = svg
-    .replace(/<\?xml[\s\S]*?\?>/g, '')
-    .replace(/<!--[\s\S]*?-->/g, '');
-
-  // Inline `.name { fill: ...; }` rules from <style> blocks, then drop them.
-  const fills = new Map<string, string>();
-  const styleBlock = out.match(/<style[^>]*>([\s\S]*?)<\/style>/);
-  if (styleBlock) {
-    for (const rule of styleBlock[1].matchAll(/\.([\w-]+)\s*\{\s*fill:\s*([^;}]+);?\s*\}/g)) {
-      fills.set(rule[1], rule[2].trim());
-    }
-    out = out.replace(styleBlock[0], '');
-  }
-  out = out.replace(/class="([\w-]+)"/g, (match, name: string) => {
-    const fill = fills.get(name);
-    return fill ? `fill="${fill}"` : match;
-  });
-
-  let viewBox = out.match(/viewBox="([^"]+)"/)?.[1];
-  if (viewBox) {
-    const [minX, minY, w, h] = viewBox.split(/[\s,]+/).map(Number);
-    if ([minX, minY, w, h].every(Number.isFinite) && w > 0 && h > 0) {
-      const fmt = (n: number) => Number(n.toFixed(3)).toString();
-      const MAX_RATIO = 3.9; // stay safely inside Cognito's 4:1 limit
-      if (w / h > MAX_RATIO) {
-        const newH = w / MAX_RATIO;
-        viewBox = `${fmt(minX)} ${fmt(minY - (newH - h) / 2)} ${fmt(w)} ${fmt(newH)}`;
-      } else if (h > w) {
-        // Taller than 1:1: pad the width symmetrically.
-        viewBox = `${fmt(minX - (h - w) / 2)} ${fmt(minY)} ${fmt(h)} ${fmt(h)}`;
-      }
-    }
-  }
-  return out
-    .replace(
-      /<svg[^>]*>/,
-      `<svg xmlns="http://www.w3.org/2000/svg"${viewBox ? ` viewBox="${viewBox}"` : ''}>`,
-    )
-    .trim();
-}
-
-const LOGIN_LOGO_BASE64 = (
-  LOGIN_LOGO_EXTENSION === 'SVG'
-    ? Buffer.from(sanitizeSvgForCognito(fs.readFileSync(LOGIN_LOGO_PATH, 'utf8')))
-    : fs.readFileSync(LOGIN_LOGO_PATH)
-).toString('base64');
+import { ADMIN_GROUP_NAME } from '../constants';
+import { LAMBDA_DEFAULTS, PYTHON_RUNTIME, pythonBundledCode, pythonCode } from '../shared/lambda-defaults';
 
 export interface AuthorizationStackProps {
   /**
-   * Sign-in / sign-out callback URLs for the app client. Lazy-resolved at synth to
-   * the site URL (custom domain when bound, else the CloudFront domain) so they
-   * always match the redirect URLs the frontend writes into aws-exports.json.
+   * Email domains allowed to self-register. Empty = invite-only: self sign-up
+   * is disabled and users are created by an admin (AdminCreateUser).
    */
-  readonly callbackUrls: string[];
-  /**
-   * Name of the (console-managed) OIDC identity provider to enable on the app
-   * client, e.g. "MassGov-Login". Supplied per-deployment via context/env — never
-   * hardcoded — so each environment enables its own SSO provider, or none (in which
-   * case only the built-in COGNITO provider is enabled). Must name a provider that
-   * already exists in the pool, or the deploy will fail.
-   */
-  readonly oidcProviderName?: string;
+  readonly allowedSignupDomains: string[];
+  /** Cognito feature plan. PLUS adds threat protection (extra per-MAU cost). */
+  readonly featurePlan: 'ESSENTIALS' | 'PLUS';
+  /** URL users sign in at, included in the invitation email. */
+  readonly siteUrl: string;
 }
 
+/**
+ * Native Cognito sign-in: email + password (SRP) with optional TOTP MFA.
+ * No hosted UI, no federation, no SMS. Admins are members of the `Admin` group.
+ */
 export class AuthorizationStack extends Construct {
-  public readonly lambdaAuthorizer : lambda.Function;
-  public readonly userPool : UserPool;
-  public readonly userPoolClient : UserPoolClient;
+  public readonly lambdaAuthorizer: lambda.Function;
+  public readonly preSignUpFunction: lambda.Function;
+  public readonly userPool: cognito.UserPool;
+  public readonly userPoolClient: cognito.UserPoolClient;
+  public readonly selfSignUpEnabled: boolean;
 
   constructor(scope: Construct, id: string, props: AuthorizationStackProps) {
     super(scope, id);
 
-    // Replace these values with your Azure client ID, client secret, and issuer URL
-    // const azureClientId = 'your-azure-client-id';
-    // const azureClientSecret = 'your-azure-client-secret';
-    // const azureIssuerUrl = 'https://your-azure-issuer.com';
+    this.selfSignUpEnabled = props.allowedSignupDomains.length > 0;
 
-    // Create the Cognito User Pool
-    const userPool = new UserPool(this, 'UserPool', {
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      selfSignUpEnabled: true,
-      mfa: cognito.Mfa.OPTIONAL,
-      featurePlan: cognito.FeaturePlan.PLUS,
-      advancedSecurityMode: cognito.AdvancedSecurityMode.ENFORCED,
-      autoVerify: { email: true, phone: true },
-      signInAliases: {
-        email: true,
+    // Always wired, even when self sign-up is off, so the SignUp API stays
+    // closed to non-allowlisted domains if someone flips the pool setting in
+    // the console. Admin-created users always pass.
+    const preSignUpFunction = new lambda.Function(this, 'PreSignUpFunction', {
+      ...LAMBDA_DEFAULTS,
+      runtime: PYTHON_RUNTIME,
+      code: pythonCode(path.join(__dirname, 'pre-signup')),
+      handler: 'lambda_function.lambda_handler',
+      environment: {
+        ALLOWED_SIGNUP_DOMAINS: props.allowedSignupDomains.join(','),
       },
+      timeout: cdk.Duration.seconds(5),
+    });
+    this.preSignUpFunction = preSignUpFunction;
+
+    const isPlus = props.featurePlan === 'PLUS';
+
+    // The logical ID is not the original 'UserPool': moving to the email-only,
+    // no-SMS, no-custom:role schema needs a fresh pool (Cognito cannot drop
+    // attributes in place), and a new ID makes CloudFormation create it cleanly.
+    const userPool = new cognito.UserPool(this, 'AppUserPool', {
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      deletionProtection: true,
+      selfSignUpEnabled: this.selfSignUpEnabled,
+      signInAliases: { email: true },
+      signInCaseSensitive: false,
+      autoVerify: { email: true },
+      standardAttributes: {
+        email: { required: true, mutable: true },
+      },
+      mfa: cognito.Mfa.OPTIONAL,
+      mfaSecondFactor: { sms: false, otp: true },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      featurePlan: isPlus ? cognito.FeaturePlan.PLUS : cognito.FeaturePlan.ESSENTIALS,
+      standardThreatProtectionMode: isPlus ? cognito.StandardThreatProtectionMode.FULL_FUNCTION : undefined,
       passwordPolicy: {
         minLength: 12,
         requireUppercase: true,
         requireLowercase: true,
         requireDigits: true,
         requireSymbols: true,
+        tempPasswordValidity: cdk.Duration.days(7),
       },
-      customAttributes: {
-        'role': new cognito.StringAttribute({ minLen: 0, maxLen: 30, mutable: true }),
+      userInvitation: {
+        emailSubject: `You have been invited to ${brand.assistantName}`,
+        emailBody: [
+          `You have been invited to ${brand.assistantName}.`,
+          '<br><br>Sign in at ' + props.siteUrl + ' with:',
+          '<br>Email: {username}',
+          '<br>Temporary password: {####}',
+          '<br><br>You will be asked to choose a new password. The temporary password expires in 7 days.',
+        ].join(''),
+      },
+      lambdaTriggers: {
+        preSignUp: preSignUpFunction,
       },
     });
     this.userPool = userPool;
 
-    // Create a provider attribute for mapping Azure claims
-    // const providerAttribute = new ProviderAttribute({
-    //   name: 'custom_attr',
-    //   type: 'String',
-    // });
-    userPool.addDomain('CognitoDomain', {
-      cognitoDomain: {
-        domainPrefix: cognitoDomainName,
-      },
-      managedLoginVersion: cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
+    new cognito.CfnUserPoolGroup(this, 'AdminGroup', {
+      userPoolId: userPool.userPoolId,
+      groupName: ADMIN_GROUP_NAME,
+      description: 'Administrators: access to the admin pages and admin APIs.',
     });
-    
-    
-    // Add the Azure OIDC identity provider to the User Pool
-    // const azureProvider = new UserPoolIdentityProviderOidc(this, 'AzureProvider', {
-    //   clientId: azureClientId,
-    //   clientSecret: azureClientSecret,
-    //   issuerUrl: azureIssuerUrl,
-    //   userPool: userPool,
-    //   attributeMapping: {
-    //     // email: ProviderAttribute.fromString('email'),
-    //     // fullname: ProviderAttribute.fromString('name'),
-    //     // custom: {
-    //     //   customKey: providerAttribute,
-    //     // },
-    //   },
-    //   // ... other optional properties
-    // });
 
-    // The app client's full OAuth/IdP configuration is declared here so it lives in
-    // source control and a deploy can no longer silently reset it (the L2 emits every
-    // field, so anything left unset reverts to a CDK/Cognito default on deploy).
-    //
-    // Security: the OAuth scopes intentionally EXCLUDE `aws.cognito.signin.user.admin`,
-    // so no hosted-UI token can call Cognito self-service APIs (UpdateUserAttributes)
-    // to self-assign `custom:role: ["Admin"]`.
-    //
-    // The auth flows and attribute permissions depend on the deployment mode:
-    //
-    //  - SSO deployments (oidcProviderName set): USER_SRP stays DISABLED because a
-    //    native-flow access token always carries the self-service scope, and the IdP
-    //    mapping (roles -> custom:role) requires the client to keep write access to
-    //    `custom:role`. Users sign in via the Cognito Managed Login page.
-    //
-    //  - Native deployments (no SSO provider): the app renders its own login page,
-    //    which needs USER_SRP enabled. To keep self-escalation impossible, the
-    //    client's write attributes explicitly EXCLUDE `custom:role`, so an
-    //    UpdateUserAttributes call with a user's own token is rejected. Admin roles
-    //    are assigned only by an operator (console / AdminUpdateUserAttributes,
-    //    which bypasses client write permissions).
-    const supportedIdentityProviders = [UserPoolClientIdentityProvider.COGNITO];
-    if (props.oidcProviderName) {
-      supportedIdentityProviders.push(
-        UserPoolClientIdentityProvider.custom(props.oidcProviderName),
-      );
-    }
-    const nativeSignIn = !props.oidcProviderName;
-
-    const userPoolClient = new UserPoolClient(this, 'UserPoolClient', {
+    // Public SPA client: no secret, SRP only (the password never leaves the
+    // browser), no OAuth/hosted UI. Refresh-token auth is added implicitly.
+    // Users can edit their own profile fields but nothing that confers access;
+    // admin rights come only from group membership, which a user's own token
+    // cannot change.
+    const userPoolClient = new cognito.UserPoolClient(this, 'UserPoolClient', {
       userPool,
-      authFlows: nativeSignIn
-        ? { userSrp: true, custom: true } // in-app login page (SRP; password never leaves the browser)
-        : { custom: true }, // -> ALLOW_CUSTOM_AUTH + ALLOW_REFRESH_TOKEN_AUTH (no password / SRP)
-      // Only meaningful for native sign-in: return generic errors so the login page
-      // can't be used to probe which emails have accounts.
-      preventUserExistenceErrors: nativeSignIn ? true : undefined,
-      // Native mode: everything the UI/tokens need is readable (including custom:role
-      // for admin gating), but custom:role is NOT writable by the client. SSO mode
-      // leaves both at the Cognito default (ALL) so IdP mapping can write custom:role.
-      readAttributes: nativeSignIn
-        ? new cognito.ClientAttributes()
-            .withStandardAttributes({
-              email: true,
-              emailVerified: true,
-              fullname: true,
-              phoneNumber: true,
-              phoneNumberVerified: true,
-            })
-            .withCustomAttributes('role')
-        : undefined,
-      writeAttributes: nativeSignIn
-        ? new cognito.ClientAttributes().withStandardAttributes({
-            email: true,
-            fullname: true,
-            phoneNumber: true,
-          })
-        : undefined,
-      oAuth: {
-        flows: { authorizationCodeGrant: true },
-        scopes: [
-          cognito.OAuthScope.EMAIL,
-          cognito.OAuthScope.OPENID,
-          cognito.OAuthScope.PROFILE,
-          cognito.OAuthScope.PHONE,
-        ],
-        callbackUrls: props.callbackUrls,
-        logoutUrls: props.callbackUrls,
+      generateSecret: false,
+      authFlows: {
+        userSrp: true,
+        userPassword: false,
+        adminUserPassword: false,
+        custom: false,
+        user: false,
       },
-      supportedIdentityProviders,
+      disableOAuth: true,
+      supportedIdentityProviders: [cognito.UserPoolClientIdentityProvider.COGNITO],
+      preventUserExistenceErrors: true,
+      readAttributes: new cognito.ClientAttributes().withStandardAttributes({
+        email: true,
+        emailVerified: true,
+        fullname: true,
+        givenName: true,
+        familyName: true,
+      }),
+      writeAttributes: new cognito.ClientAttributes().withStandardAttributes({
+        email: true,
+        fullname: true,
+        givenName: true,
+        familyName: true,
+      }),
       accessTokenValidity: cdk.Duration.minutes(60),
       idTokenValidity: cdk.Duration.minutes(60),
       refreshTokenValidity: cdk.Duration.days(30),
       authSessionValidity: cdk.Duration.minutes(3),
       enableTokenRevocation: true,
     });
-
-    // The L2 always serialises refresh-token validity in minutes (30 days -> 43200).
-    // Pin it back to days on the L1 child so the synthesized template matches the live
-    // client byte-for-byte and no needless diff is produced (43200 minutes == 30 days).
-    const cfnUserPoolClient = userPoolClient.node.defaultChild as cognito.CfnUserPoolClient;
-    cfnUserPoolClient.refreshTokenValidity = 30;
-    cfnUserPoolClient.tokenValidityUnits = {
-      accessToken: 'minutes',
-      idToken: 'minutes',
-      refreshToken: 'days',
-    };
-
     this.userPoolClient = userPoolClient;
 
-    new cognito.CfnManagedLoginBranding(this, 'ManagedLoginBranding', {
-      userPoolId: userPool.userPoolId,
-      clientId: userPoolClient.userPoolClientId,
-      useCognitoProvidedValues: false,
-      returnMergedResources: false,
-      settings: MANAGED_LOGIN_BRANDING_SETTINGS,
-      assets: [
-        {
-          bytes: LOGIN_LOGO_BASE64,
-          category: 'FORM_LOGO',
-          colorMode: 'LIGHT',
-          extension: LOGIN_LOGO_EXTENSION,
-        },
-      ],
-    });
-
+    // WebSocket $connect authorizer: validates the Cognito ID token passed in
+    // the query string (browsers can't set headers on a WebSocket upgrade).
     const authorizerHandlerFunction = new lambda.Function(this, 'AuthorizationFunction', {
-      runtime: lambda.Runtime.PYTHON_3_12, // Choose any supported Node.js runtime
-      code: lambda.Code.fromAsset(path.join(__dirname, 'websocket-api-authorizer')), // Points to the lambda directory
-      handler: 'lambda_function.lambda_handler', // Points to the 'hello' file in the lambda directory
+      ...LAMBDA_DEFAULTS,
+      runtime: PYTHON_RUNTIME,
+      code: pythonBundledCode(path.join(__dirname, 'websocket-api-authorizer')),
+      handler: 'lambda_function.lambda_handler',
       environment: {
-        "USER_POOL_ID" : userPool.userPoolId,
-        "APP_CLIENT_ID" : userPoolClient.userPoolClientId
+        USER_POOL_ID: userPool.userPoolId,
+        APP_CLIENT_ID: userPoolClient.userPoolClientId,
       },
-      timeout: cdk.Duration.seconds(30)
+      timeout: cdk.Duration.seconds(30),
     });
-
     this.lambdaAuthorizer = authorizerHandlerFunction;
-    
-    new cdk.CfnOutput(this, "UserPool ID", {
-      value: userPool.userPoolId || "",
-    });
 
-    new cdk.CfnOutput(this, "UserPool Client ID", {
-      value: userPoolClient.userPoolClientId || "",
-    });
-
-    // new cdk.CfnOutput(this, "UserPool Client Name", {
-    //   value: userPoolClient.userPoolClientName || "",
-    // });
-
-
-    
+    const suppressions = [
+      {
+        id: 'AwsSolutions-COG2',
+        reason: 'TOTP MFA is optional so invited users can sign in without an authenticator app; admins are encouraged to enroll.',
+      },
+    ];
+    if (!isPlus) {
+      suppressions.push({
+        id: 'AwsSolutions-COG3',
+        reason: 'Threat protection requires the Cognito PLUS feature plan; ESSENTIALS is the cost-conscious default. Deploy with -c cognitoFeaturePlan=PLUS to enable it.',
+      });
+      suppressions.push({
+        id: 'AwsSolutions-COG8',
+        reason: 'ESSENTIALS is the cost-conscious default feature plan; deploy with -c cognitoFeaturePlan=PLUS for threat protection.',
+      });
+    }
+    NagSuppressions.addResourceSuppressions(userPool, suppressions);
   }
 }

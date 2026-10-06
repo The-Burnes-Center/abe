@@ -1,91 +1,79 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { NagSuppressions } from 'cdk-nag';
+import { NODE_RUNTIME, PYTHON_RUNTIME } from './shared/lambda-defaults';
 import { ChatBotApi } from "./chatbot-api";
-import { cognitoDomainName } from "./constants";
 import { AuthorizationStack } from "./authorization";
 import { UserInterface } from "./user-interface";
+import { readDeploymentConfig } from "./deployment-config";
 import { brand } from "../config/brand";
 
-export interface ABEStackProps extends cdk.StackProps {
-  // Custom domain (CloudFront alternate domain name) + its ACM certificate ARN (us-east-1).
-  // Supplied per-deployment via CDK context / env vars (never hardcoded), so each branch and
-  // account that deploys this code provides its own values — or none, in which case the app
-  // stays on the default CloudFront domain.
-  readonly customDomain?: string;
-  readonly certificateArn?: string;
-}
-
 export class ABEStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: ABEStackProps) {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const alarmEmail = this.node.tryGetContext('alarmEmail') as string | undefined;
-
-    // Bind the custom domain only when BOTH the hostname and its cert ARN were provided for
-    // this deployment; otherwise everything below falls back to the CloudFront domain.
-    const customDomain = props?.customDomain && props?.certificateArn ? props.customDomain : undefined;
-    const certificateArn = props?.certificateArn || undefined;
-
-    // OIDC SSO provider to enable on the Cognito app client. Supplied per-deployment via
-    // context/env (never hardcoded), so each environment enables its own console-managed
-    // provider — or none (COGNITO only), which is the safe default for fresh/branch stacks.
-    // For ABEStackNonProd this is "MassGov-Login", supplied by CI (vars.OIDC_PROVIDER_NAME).
-    const oidcProviderName =
-      (this.node.tryGetContext('oidcProviderName') as string | undefined) ?? process.env.OIDC_PROVIDER_NAME;
+    const config = readDeploymentConfig(this.node);
 
     // CloudFront is created inside UserInterface (after ChatBotApi), so its domain isn't known
-    // when the auth client and ChatBotApi are built. Defer both the CORS origin and the app
-    // client's callback/logout URLs with Lazy tokens that resolve at synth, once the
-    // distribution exists. Both must equal the site URL the frontend uses for its redirects.
-    const cfOriginRef = { value: '*' };
-    const allowedOrigin = cdk.Lazy.string({ produce: () => cfOriginRef.value });
-    const callbackUrlsRef: { value: string[] } = { value: [] };
-    const callbackUrls = cdk.Lazy.list({ produce: () => callbackUrlsRef.value });
+    // when the auth construct and ChatBotApi are built. Defer the site URL with a Lazy token
+    // that resolves at synth, once the distribution exists. It feeds the HTTP API + S3 CORS
+    // origin and the link in the Cognito invitation email.
+    const siteUrlRef = { value: '*' };
+    const siteUrl = cdk.Lazy.string({ produce: () => siteUrlRef.value });
 
     const authentication = new AuthorizationStack(this, "Authorization", {
-      callbackUrls,
-      oidcProviderName,
+      allowedSignupDomains: config.allowedSignupDomains,
+      featurePlan: config.cognitoFeaturePlan,
+      siteUrl,
     });
 
-    const chatbotAPI = new ChatBotApi(this, "ChatbotAPI", { authentication, alarmEmail, allowedOrigin });
+    const chatbotAPI = new ChatBotApi(this, "ChatbotAPI", {
+      authentication,
+      alarmEmail: config.alarmEmail,
+      allowedOrigin: siteUrl,
+      enableEval: config.enableEval,
+      kbParserModel: config.kbParserModel,
+      apiGatewayAccountRole: config.apiGatewayAccountRole,
+      metadataHandlerConcurrency: config.metadataHandlerConcurrency,
+    });
     const userInterface = new UserInterface(this, "UserInterface", {
       userPoolId: authentication.userPool.userPoolId,
       userPoolClientId: authentication.userPoolClient.userPoolClientId,
-      cognitoDomain: cognitoDomainName,
+      selfSignUpEnabled: authentication.selfSignUpEnabled,
+      evalEnabled: config.enableEval,
       api: chatbotAPI,
-      customDomain,
-      certificateArn,
-      // Must be the exact value AuthorizationStack received, so the frontend's
-      // login mode (in-app page vs hosted-UI redirect) matches the app client.
-      oidcProviderName,
+      customDomain: config.customDomain,
+      certificateArn: config.certificateArn,
     });
-    // Populate after construction — the Lazy producers read these during app.synth().
-    // When a custom domain is bound, the browser's Origin (and the app's redirect URLs) are
-    // that domain; otherwise everything uses the CloudFront domain. The app client's callback
-    // URLs must match the frontend's redirect URLs, so both are derived from the same siteUrl.
-    const siteUrl = customDomain
-      ? `https://${customDomain}`
+    // Populate after construction; the Lazy producer reads this during app.synth().
+    siteUrlRef.value = config.customDomain
+      ? `https://${config.customDomain}`
       : `https://${userInterface.distribution.distributionDomainName}`;
-    cfOriginRef.value = siteUrl;        // CORS origin (HTTP API + S3)
-    callbackUrlsRef.value = [siteUrl];  // Cognito app client callback + logout URLs
 
-    // Resource tags applied to every taggable resource in the stack.
-    // AOSS resources are excluded: the deployed collection was created with a legacy name
-    // and adding tags would put it in the CloudFormation changeset, surfacing the name
-    // mismatch and requiring replacement. Exclude until the collection is properly renamed.
+    // Stable, top-level output keys for scripts (scripts/create-admin.sh reads UserPoolId).
+    new cdk.CfnOutput(this, 'UserPoolId', { value: authentication.userPool.userPoolId });
+    new cdk.CfnOutput(this, 'UserPoolClientId', { value: authentication.userPoolClient.userPoolClientId });
+    new cdk.CfnOutput(this, 'AppUrl', { value: siteUrl });
+
+    // Resource tags applied to every taggable resource in the stack. The
+    // OpenSearch collection is excluded: tag changes on an existing collection
+    // surface as a replacement in the change set.
     const tagOpts = {
       excludeResourceTypes: ['AWS::OpenSearchServerless::Collection'],
     };
-    const env = process.env.ENVIRONMENT === 'prod' ? 'prod' : 'dev';
     cdk.Tags.of(this).add('Project', brand.slug, tagOpts);
-    cdk.Tags.of(this).add('Environment', env, tagOpts);
+    cdk.Tags.of(this).add('Environment', process.env.ENVIRONMENT || 'dev', tagOpts);
     cdk.Tags.of(this).add('ManagedBy', 'cdk', tagOpts);
-    cdk.Tags.of(this).add('Owner', 'burnes-center', tagOpts);
 
     this.addNagSuppressions();
   }
 
+  /**
+   * Stack-wide suppressions are limited to findings scoped with `appliesTo`
+   * (specific managed policies or wildcard resource patterns). Findings that
+   * apply to a whole resource are suppressed on that resource, next to it.
+   */
   private addNagSuppressions() {
     NagSuppressions.addStackSuppressions(this, [
       {
@@ -94,95 +82,77 @@ export class ABEStack extends cdk.Stack {
         appliesTo: ['Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'],
       },
       {
-        id: 'AwsSolutions-IAM4',
-        reason: 'AmazonAPIGatewayPushToCloudWatchLogs is the AWS-managed policy required for API Gateway access logging.',
-        appliesTo: ['Policy::arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs'],
-      },
-      {
         id: 'AwsSolutions-IAM5',
-        reason: 'X-Ray tracing requires xray:PutTraceSegments/PutTelemetryRecords on Resource::* -- this is the standard pattern for X-Ray.',
+        reason: 'X-Ray (PutTraceSegments/PutTelemetryRecords) and Transcribe streaming have no resource-level ARNs and require Resource::*.',
         appliesTo: ['Resource::*'],
       },
       {
         id: 'AwsSolutions-IAM5',
-        reason: 'S3 object-level operations require /* suffix to access all objects in a bucket. Actions are scoped to specific buckets.',
+        reason: 'S3 object-level operations require the /* suffix. Actions are scoped to specific buckets created by this stack.',
+        appliesTo: [{ regex: '/^Resource::<.*Bucket.*\\.Arn>\\/.*$/' }],
+      },
+      {
+        id: 'AwsSolutions-IAM5',
+        reason: 'DynamoDB GSI access requires the /index/* suffix. Actions are scoped to specific tables created by this stack.',
+        appliesTo: [{ regex: '/^Resource::<.*Table.*\\.Arn>\\/index\\/\\*$/' }],
+      },
+      {
+        id: 'AwsSolutions-IAM5',
+        reason: 'Bedrock model wildcards cover cross-region/global inference profiles (which route to any region) and allow model upgrades without IAM changes.',
         appliesTo: [
-          'Resource::<ChatbotAPIKnowledgeSourceBucketD704DDFD.Arn>/*',
-          'Resource::<ChatbotAPIFeedbackDownloadBucket5357D600.Arn>/*',
-          'Resource::<ChatbotAPIEvalResultsBucketCB2F9C6D.Arn>/*',
-          'Resource::<ChatbotAPIEvalTestCasesBucket3A06FDF6.Arn>/*',
-          'Resource::<UserInterfaceWebsiteBucket2BDEA247.Arn>/*',
+          'Resource::arn:<AWS::Partition>:bedrock:*::foundation-model/anthropic.*',
+          'Resource::arn:<AWS::Partition>:bedrock:*::foundation-model/amazon.titan-embed-*',
+          'Resource::arn:<AWS::Partition>:bedrock:*:<AWS::AccountId>:inference-profile/*',
         ],
       },
       {
         id: 'AwsSolutions-IAM5',
-        reason: 'DynamoDB GSI access requires /index/* suffix. Actions are scoped to specific tables.',
-        appliesTo: [
-          'Resource::<ChatbotAPIChatHistoryTable86F70C1D.Arn>/index/*',
-          'Resource::<ChatbotAPIUserFeedbackTableF734E54F.Arn>/index/*',
-          'Resource::<ChatbotAPIEvaluationResultsTableE72FCF7C.Arn>/index/*',
-          'Resource::<ChatbotAPIEvaluationSummariesTableE9B95A54.Arn>/index/*',
-        ],
+        reason: 'WebSocket connection management requires @connections/* to send messages to any connected client of this API.',
+        appliesTo: [{ regex: '/^Resource::arn:.+:execute-api:.+:<.*WSAPI.*>\\/\\*\\/\\*\\/@connections\\/\\*$/' }],
       },
       {
         id: 'AwsSolutions-IAM5',
-        reason: 'Bedrock model wildcards are required for cross-region inference profiles and to allow model upgrades without redeploying IAM policies.',
-        appliesTo: [
-          'Resource::arn:aws:bedrock:*::foundation-model/anthropic.*',
-          'Resource::arn:aws:bedrock:*::foundation-model/amazon.titan-embed-*',
-          'Resource::arn:aws:bedrock:*:<AWS::AccountId>:inference-profile/*',
-        ],
-      },
-      {
-        id: 'AwsSolutions-IAM5',
-        reason: 'WebSocket connection management requires wildcard on @connections/* to send messages to any connected client.',
-        appliesTo: [
-          'Resource::arn:<AWS::Partition>:execute-api:<AWS::Region>:<AWS::AccountId>:<ChatbotAPIWebsocketBackendWSAPI75718B83>/*/*/@connections/*',
-        ],
-      },
-      {
-        id: 'AwsSolutions-IAM5',
-        reason: 'Step Functions Lambda invoke requires :* suffix to support Lambda function versions and aliases.',
-      },
-      {
-        id: 'AwsSolutions-IAM5',
-        reason: 'CDK BucketDeployment and custom resources require broad S3 permissions -- these are CDK-managed constructs.',
+        reason: 'CDK BucketDeployment and custom resources require broad S3 actions; these are CDK-managed constructs.',
         appliesTo: [
           'Action::s3:GetBucket*',
           'Action::s3:GetObject*',
           'Action::s3:List*',
           'Action::s3:Abort*',
           'Action::s3:DeleteObject*',
+          { regex: '/^Resource::arn:.+:s3:::cdk-[a-z0-9]+-assets-[^/]+\\/\\*$/' },
         ],
       },
       {
-        id: 'AwsSolutions-S1',
-        reason: 'Access logging on internal data buckets (eval, RAGAS, feedback, knowledge) adds cost without proportional security benefit. Distribution and website buckets already have access logging enabled.',
-      },
-      {
-        id: 'AwsSolutions-COG2',
-        reason: 'MFA is set to OPTIONAL. Users with admin roles are encouraged to enable MFA. Making MFA REQUIRED would break OIDC federation flows.',
-      },
-      {
-        id: 'AwsSolutions-APIG4',
-        reason: 'OPTIONS routes handle CORS preflight requests which cannot carry authorization headers by browser specification.',
-      },
-      {
-        id: 'AwsSolutions-APIG1',
-        reason: 'Access logging is configured on both HTTP API and WebSocket API stages via CfnStage escape hatches. CDK Nag may not detect it on the L2 construct.',
-      },
-      {
-        id: 'AwsSolutions-L1',
-        reason: 'CDK-managed custom resource Lambda runtimes (BucketDeployment, Provider framework) are controlled by CDK, not application code.',
-      },
-      {
-        id: 'AwsSolutions-SNS2',
-        reason: 'Monitoring SNS topic carries alarm notifications only (no sensitive data). SSE adds cost without security benefit here.',
-      },
-      {
-        id: 'AwsSolutions-SNS3',
-        reason: 'Monitoring SNS topic uses HTTPS subscriptions by default. Enforcing SSL transport is not configurable on L2 SNS Topic.',
+        id: 'AwsSolutions-IAM5',
+        reason: 'grantInvoke and Step Functions LambdaInvoke add <function-arn>:* so versions and aliases of that one function can be invoked.',
+        appliesTo: [{ regex: '/^Resource::<.*Function.*\\.Arn>:\\*$/' }],
       },
     ]);
+    this.suppressRuntimeFindings();
+  }
+
+  /**
+   * AwsSolutions-L1 flags any runtime older than the newest one. Application
+   * functions are pinned on purpose (NODE_RUNTIME / PYTHON_RUNTIME in
+   * lib/shared/lambda-defaults.ts, matched to the bundling images and CI) and
+   * upgraded deliberately; CDK's own helper functions are versioned by CDK.
+   * Suppressions are attached per function rather than stack-wide.
+   */
+  private suppressRuntimeFindings() {
+    const pinned = new Set([NODE_RUNTIME.name, PYTHON_RUNTIME.name]);
+    for (const node of this.node.findAll()) {
+      if (!(node instanceof lambda.CfnFunction)) continue;
+      if (node.node.path.includes('/Custom::CDK')) {
+        NagSuppressions.addResourceSuppressions(node, [{
+          id: 'AwsSolutions-L1',
+          reason: 'CDK-managed helper function (e.g. BucketDeployment); its runtime is controlled by aws-cdk-lib.',
+        }]);
+      } else if (node.runtime && pinned.has(node.runtime)) {
+        NagSuppressions.addResourceSuppressions(node, [{
+          id: 'AwsSolutions-L1',
+          reason: `Runtime ${node.runtime} is pinned in lib/shared/lambda-defaults.ts and upgraded deliberately with the bundling images and CI.`,
+        }]);
+      }
+    }
   }
 }
