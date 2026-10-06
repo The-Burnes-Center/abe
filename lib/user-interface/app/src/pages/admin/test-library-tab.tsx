@@ -45,31 +45,48 @@ import { ApiClient } from "../../common/api-client/api-client";
 import { useNotifications } from "../../components/notif-manager";
 import { Utils } from "../../common/utils";
 import { TruncatedTextCell } from "../../components/truncated-text-call";
+import type {
+  BulkImportResult,
+  TestCase,
+  TestLibraryItem,
+  TestLibraryStats,
+} from "../../common/api-client/evaluations-client";
+import { normalizeServerTimestamp } from "./eval-metrics";
+
+/** Library timestamps are server-generated; show them in the deployment zone. */
+function formatLibraryDate(value: string | undefined): string {
+  return Utils.formatTimestamp(normalizeServerTimestamp(value));
+}
+
+function csvCell(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
 
 export default function TestLibraryTab() {
   const appContext = useContext(AppContext);
   const apiClient = useMemo(() => new ApiClient(appContext!), [appContext]);
   const { addNotification } = useNotifications();
 
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<TestLibraryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [stats, setStats] = useState<{ total: number; sources: any } | null>(null);
+  const [stats, setStats] = useState<TestLibraryStats | null>(null);
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addQuestion, setAddQuestion] = useState("");
   const [addResponse, setAddResponse] = useState("");
 
-  const [editItem, setEditItem] = useState<any>(null);
+  const [editItem, setEditItem] = useState<TestLibraryItem | null>(null);
   const [editResponse, setEditResponse] = useState("");
 
-  const [deleteItem, setDeleteItem] = useState<any>(null);
+  const [deleteItem, setDeleteItem] = useState<TestLibraryItem | null>(null);
 
-  const [historyItem, setHistoryItem] = useState<any>(null);
-  const [historyData, setHistoryData] = useState<any>(null);
+  const [historyItem, setHistoryItem] = useState<TestLibraryItem | null>(null);
+  const [historyData, setHistoryData] = useState<TestLibraryItem | null>(null);
 
   const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [importResult, setImportResult] = useState<any>(null);
+  const [importResult, setImportResult] = useState<(BulkImportResult & { filename: string }) | null>(null);
 
   const [exportAnchor, setExportAnchor] = useState<null | HTMLElement>(null);
 
@@ -77,11 +94,13 @@ export default function TestLibraryTab() {
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const result = await apiClient.evaluations.listTestLibrary(search || undefined);
-      setItems(result?.Items || []);
-    } catch {
+      setItems(result.Items);
+    } catch (err) {
       setItems([]);
+      setLoadError(Utils.getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -147,13 +166,13 @@ export default function TestLibraryTab() {
     }
   };
 
-  const handleViewHistory = async (item: any) => {
+  const handleViewHistory = async (item: TestLibraryItem) => {
     try {
       const full = await apiClient.evaluations.getTestLibraryItem(item.QuestionId);
       setHistoryData(full);
       setHistoryItem(item);
-    } catch {
-      addNotification("error", "Failed to load version history");
+    } catch (err) {
+      addNotification("error", `Could not load version history: ${Utils.getErrorMessage(err)}`);
     }
   };
 
@@ -176,7 +195,7 @@ export default function TestLibraryTab() {
 
     try {
       const text = await file.text();
-      let parsed: Array<{ question: string; expectedResponse: string }>;
+      let parsed: TestCase[];
 
       if (file.name.endsWith(".json")) {
         parsed = JSON.parse(text);
@@ -223,7 +242,7 @@ export default function TestLibraryTab() {
           "\uFEFF" +
           "question,expectedResponse\n" +
           exportItems
-            .map((i: any) => `"${(i.question || "").replace(/"/g, '""')}","${(i.expectedResponse || "").replace(/"/g, '""')}"`)
+            .map((i) => `${csvCell(i.question || "")},${csvCell(i.expectedResponse || "")}`)
             .join("\n");
         const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
         downloadBlob(blob, "test-library.csv");
@@ -322,6 +341,17 @@ export default function TestLibraryTab() {
         >
           <CircularProgress aria-hidden="true" />
         </Box>
+      ) : loadError ? (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => fetchItems()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load the test library: {loadError}
+        </Alert>
       ) : items.length === 0 ? (
         <Paper sx={{ p: 4, textAlign: "center" }}>
           <Typography variant="subtitle1" component="h3" gutterBottom>
@@ -362,7 +392,7 @@ export default function TestLibraryTab() {
                       variant="outlined"
                       color={item.source === "manual" ? "primary" : "default"}
                     />
-                    {item.versionCount > 0 && (
+                    {(item.versionCount ?? 0) > 0 && (
                       <Chip
                         label={`${item.versionCount}v`}
                         size="small"
@@ -385,7 +415,7 @@ export default function TestLibraryTab() {
                         <EditIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
-                    {item.versionCount > 0 && (
+                    {(item.versionCount ?? 0) > 0 && (
                       <Tooltip title="Version history">
                         <IconButton size="small" aria-label="View version history" onClick={() => handleViewHistory(item)}>
                           <HistoryIcon fontSize="small" />
@@ -507,21 +537,21 @@ export default function TestLibraryTab() {
                 <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "success.light" }}>
                   <Typography variant="body2">{historyData.expectedResponse}</Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Source: {historyData.source} | Updated: {historyData.updatedAt}
+                    Source: {historyData.source} | Updated: {formatLibraryDate(historyData.updatedAt)}
                   </Typography>
                 </Paper>
               </Box>
-              {historyData.versions?.length > 0 && (
+              {historyData.versions && historyData.versions.length > 0 && (
                 <>
                   <Divider />
                   <Typography variant="subtitle2">Previous Versions:</Typography>
-                  {historyData.versions.map((v: any, i: number) => (
+                  {historyData.versions.map((v, i) => (
                     <Paper key={i} variant="outlined" sx={{ p: 1.5 }}>
                       <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
                         <Box sx={{ flex: 1 }}>
                           <Typography variant="body2">{v.expectedResponse}</Typography>
                           <Typography variant="caption" color="text.secondary">
-                            Source: {v.source} | Date: {v.updatedAt}
+                            Source: {v.source} | Date: {formatLibraryDate(v.updatedAt)}
                           </Typography>
                         </Box>
                         <Button size="small" variant="outlined" onClick={() => handleRevert(i)}>

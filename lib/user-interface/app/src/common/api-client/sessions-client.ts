@@ -1,183 +1,152 @@
 import {
   ChatBotHistoryItem,
   ChatBotMessageType,
+  ChatMessageMetadata,
 } from "../../components/chatbot/types";
 
-import {
-  Utils
-} from "../utils"
-
+import { Utils } from "../utils";
 
 import { AppConfig } from "../types";
 
-function devLog(...args: unknown[]) {
-  if (import.meta.env.DEV) console.log(...args);
+/** One row of the session list returned by `list_*sessions_by_user_id`. */
+export interface SessionSummary {
+  session_id: string;
+  user_id?: string;
+  time_stamp: string;
+  title: string;
+}
+
+interface RawChatEntry {
+  user: string;
+  chatbot: string;
+  metadata?: unknown;
+}
+
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 250;
+const HTTP_TOO_MANY_REQUESTS = 429;
+const HTTP_SERVER_ERROR = 500;
+
+/** Error carrying whether the failed request is worth repeating. */
+class SessionRequestError extends Error {
+  constructor(
+    message: string,
+    readonly isRetryable: boolean,
+  ) {
+    super(message);
+    this.name = "SessionRequestError";
+  }
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === HTTP_TOO_MANY_REQUESTS || status >= HTTP_SERVER_ERROR;
+}
+
+function parseMetadata(raw: unknown): ChatMessageMetadata {
+  if (!raw) return {};
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (Array.isArray(parsed)) return { Sources: parsed };
+    return parsed && typeof parsed === "object" ? (parsed as ChatMessageMetadata) : {};
+  } catch {
+    return {};
+  }
 }
 
 export class SessionsClient {
-
   private readonly API;
   constructor(protected _appConfig: AppConfig) {
     this.API = _appConfig.httpEndpoint.slice(0, -1);
   }
-  // Gets all sessions tied to a given user ID
-  // Return format: [{"session_id" : "string", "user_id" : "string", "time_stamp" : "dd/mm/yy", "title" : "string"}...]
-  async getSessions(
-    userId: string,
-    all?: boolean
-  ) {
-    const auth = await Utils.authenticate();
-    let validData = false;
-    let output = [];
-    let runs = 0;
-    let limit = 3;
-    let errorMessage = "Could not load sessions"
-    while (!validData && runs < limit) {
-      runs += 1;
-      const response = await fetch(this.API + '/user-session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + auth,
-        },
-        body: JSON.stringify(all? { "operation": "list_all_sessions_by_user_id", "user_id": userId } : { "operation": "list_sessions_by_user_id", "user_id": userId })
-      });
-      if (response.status != 200) {
-        validData = false;
-        let jsonResponse = await response.json()        
-        errorMessage = jsonResponse;        
-        break;
-      }      
-      try {
-        output = await response.json();
-        validData = true;
-      } catch (e) {
-        devLog(e);
-      }
-    }
-    if (!validData) {
-      throw new Error(errorMessage);
-    }
-    // console.log(output);
-    return output;
-  }
 
-  // Returns a chat history given a specific user ID and session ID
-  // Return format: ChatBotHistoryItem[]
-  async getSession(
-    sessionId: string,
-    userId: string,
-  ): Promise<ChatBotHistoryItem[]> {
-    const auth = await Utils.authenticate();
-    let validData = false;
-    let output;
-    let runs = 0;
-    let limit = 3;
-    let errorMessage = "Could not load session";
-
-    /** Attempt to load a session up to 3 times or until it is validated */
-    while (!validData && runs < limit) {
-      runs += 1;
-      const response = await fetch(this.API + '/user-session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + auth,
-        },
-        body: JSON.stringify({
-          "operation": "get_session", "session_id": sessionId,
-          "user_id": userId
-        })
-      });
-      /** Check for errors */
-      if (response.status != 200) {
-        validData = false;
-        errorMessage = await response.json()
-        break;
-      }
-      if (!response.body) throw new Error("Response body is null");
-      const reader = response.body.getReader();
-      let received = new Uint8Array(0);
-
-      /** Read the response stream */
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          break;
-        }
-        if (value) {
-          let temp = new Uint8Array(received.length + value.length);
-          temp.set(received);
-          temp.set(value, received.length);
-          received = temp;
-        }
-      }
-      // Decode the complete data
-      const decoder = new TextDecoder('utf-8');
-      const decoded = decoder.decode(received);
-      try {
-        output = JSON.parse(decoded).chat_history! as any[];
-        validData = true;
-      } catch (e) {
-        devLog(e);
-      }
-    }
-    if (!validData) {
-      throw new Error(errorMessage)
-    }
-    let history: ChatBotHistoryItem[] = [];
-    // console.log(output);
-    if (output === undefined) {
-      return history;
-    }
-    output.forEach(function (value) {
-      let metadata = {}
-      if (value.metadata) {
-        try {
-          const parsed = typeof value.metadata === "string"
-            ? JSON.parse(value.metadata)
-            : value.metadata;
-          metadata = Array.isArray(parsed) ? { Sources: parsed } : (parsed || {});
-        } catch {
-          metadata = {};
-        }
-      }
-      history.push({
-        type: ChatBotMessageType.Human,
-        content: value.user,
-        metadata: {
-        },
-      },
-        {
-          type: ChatBotMessageType.AI,
-          content: value.chatbot,
-          metadata: metadata,
-        },)
-    })
-    return history;
-  }
-
-  /**Deletes a given session but this is not exposed in the UI */
-  async deleteSession(
-    sessionId: string,
-    userId: string,
-  ) {
+  /** One POST to /user-session. Throws SessionRequestError on any failure. */
+  private async postOnce(
+    auth: string,
+    body: Record<string, unknown>,
+    fallback: string,
+  ): Promise<unknown> {
+    let response: Response;
     try {
-      const auth = await Utils.authenticate();
-      const response = await fetch(this.API + '/user-session', {
-        method: 'POST',
+      response = await fetch(this.API + "/user-session", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + auth,
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + auth,
         },
-        body: JSON.stringify({
-          "operation": "delete_session", "session_id": sessionId,
-          "user_id": userId
-        })
+        body: JSON.stringify(body),
       });
-    } catch {
-      return "FAILED";
+    } catch (error) {
+      // Network failure (offline, DNS, CORS): transient, worth retrying.
+      throw new SessionRequestError(`${fallback}: ${Utils.getErrorMessage(error)}`, true);
     }
-    return "DONE";
+    if (!response.ok) {
+      const message = await Utils.extractServerError(response, fallback);
+      throw new SessionRequestError(message, isRetryableStatus(response.status));
+    }
+    try {
+      return await response.json();
+    } catch {
+      // A truncated body is usually a transient gateway hiccup.
+      throw new SessionRequestError(`${fallback}: the server sent an unreadable response`, true);
+    }
+  }
+
+  /**
+   * POST with bounded retries. Only transient failures (network errors, 429,
+   * 5xx, unreadable bodies) are retried; a 4xx fails immediately. The last
+   * error is rethrown so callers always see a readable message.
+   */
+  private async post(
+    body: Record<string, unknown>,
+    fallback: string,
+    maxAttempts = MAX_ATTEMPTS,
+  ): Promise<unknown> {
+    const auth = await Utils.authenticate();
+    let lastError: Error = new Error(fallback);
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await this.postOnce(auth, body, fallback);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(Utils.getErrorMessage(error));
+        const canRetry = error instanceof SessionRequestError && error.isRetryable;
+        if (!canRetry || attempt === maxAttempts) break;
+        await Utils.delay(RETRY_BASE_DELAY_MS * attempt);
+      }
+    }
+    throw lastError;
+  }
+
+  /** Lists the user's sessions (most recent first, as returned by the API). */
+  async getSessions(userId: string, all?: boolean): Promise<SessionSummary[]> {
+    const operation = all ? "list_all_sessions_by_user_id" : "list_sessions_by_user_id";
+    const output = await this.post({ operation, user_id: userId }, "Could not load sessions");
+    return Array.isArray(output) ? (output as SessionSummary[]) : [];
+  }
+
+  /** Returns the chat history for one session as alternating human/AI items. */
+  async getSession(sessionId: string, userId: string): Promise<ChatBotHistoryItem[]> {
+    const output = await this.post(
+      { operation: "get_session", session_id: sessionId, user_id: userId },
+      "Could not load session",
+    );
+    const entries = (output as { chat_history?: RawChatEntry[] } | null)?.chat_history;
+    if (!Array.isArray(entries)) return [];
+    return entries.flatMap((value) => [
+      { type: ChatBotMessageType.Human, content: value.user, metadata: {} },
+      { type: ChatBotMessageType.AI, content: value.chatbot, metadata: parseMetadata(value.metadata) },
+    ]);
+  }
+
+  /**
+   * Deletes one session. Throws with a readable message if the delete failed.
+   * Not retried: a retry after a 5xx that actually deleted would come back
+   * 404 and misreport the outcome.
+   */
+  async deleteSession(sessionId: string, userId: string): Promise<void> {
+    await this.post(
+      { operation: "delete_session", session_id: sessionId, user_id: userId },
+      "Could not delete session",
+      1,
+    );
   }
 }

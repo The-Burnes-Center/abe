@@ -1,7 +1,6 @@
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Button from "@mui/material/Button";
-import IconButton from "@mui/material/IconButton";
 import Typography from "@mui/material/Typography";
 import Paper from "@mui/material/Paper";
 import Table from "@mui/material/Table";
@@ -26,9 +25,11 @@ import { Link } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { getCurrentUser } from "aws-amplify/auth";
 import { ApiClient } from "../../common/api-client/api-client";
+import type { SessionSummary } from "../../common/api-client/sessions-client";
 import { AppContext } from "../../common/app-context";
+import { Utils } from "../../common/utils";
 import RouterButton from "../wrappers/router-button";
-import { DateTime } from "luxon";
+import { useNotifications } from "../notif-manager";
 
 export interface SessionsProps {
   readonly toolsOpen: boolean;
@@ -38,7 +39,8 @@ type Order = "asc" | "desc";
 
 export default function Sessions(props: SessionsProps) {
   const appContext = useContext(AppContext);
-  const [sessions, setSessions] = useState<any[]>([]);
+  const { addNotification } = useNotifications();
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [showModalDelete, setShowModalDelete] = useState(false);
@@ -50,18 +52,18 @@ export default function Sessions(props: SessionsProps) {
 
   const getSessions = useCallback(async () => {
     if (!appContext) return;
-    let username;
     const apiClient = new ApiClient(appContext);
     try {
-      await getCurrentUser().then((value) => username = value.username);
+      const { username } = await getCurrentUser();
       if (username) {
-        const result = await apiClient.sessions.getSessions(username,true);
+        const result = await apiClient.sessions.getSessions(username, true);
         setSessions(result);
       }
-    } catch {
+    } catch (error) {
       setSessions([]);
+      addNotification("error", `Could not load your sessions: ${Utils.getErrorMessage(error)}`);
     }
-  }, [appContext]);
+  }, [appContext, addNotification]);
 
   useEffect(() => {
     if (!appContext) return;
@@ -75,28 +77,44 @@ export default function Sessions(props: SessionsProps) {
 
   const deleteSelectedSessions = async () => {
     if (!appContext) return;
-    let username;
-    await getCurrentUser().then((value) => username = value.username);
-    setIsLoading(true);
-    const apiClient = new ApiClient(appContext);
-    const itemsToDelete = sessions.filter((s) => selectedItems.has(s.session_id));
-    await Promise.all(
-      itemsToDelete.map((s) => apiClient.sessions.deleteSession(s.session_id, username))
-    );
-    setSelectedItems(new Set());
     setShowModalDelete(false);
-    await getSessions();
-    setIsLoading(false);
-    requestAnimationFrame(() => refreshAfterDialogRef.current?.focus());
-  };
-
-  const deleteUserSessions = async () => {
-    if (!appContext) return;
-
     setIsLoading(true);
-    const apiClient = new ApiClient(appContext);
-    await getSessions();
-    setIsLoading(false);
+    try {
+      const { username } = await getCurrentUser();
+      const apiClient = new ApiClient(appContext);
+      const itemsToDelete = sessions.filter((s) => selectedItems.has(s.session_id));
+      const results = await Promise.allSettled(
+        itemsToDelete.map((s) => apiClient.sessions.deleteSession(s.session_id, username))
+      );
+      const failedIds = new Set(
+        itemsToDelete
+          .filter((_, i) => results[i].status === "rejected")
+          .map((s) => s.session_id)
+      );
+      const deletedIds = new Set(
+        itemsToDelete.map((s) => s.session_id).filter((id) => !failedIds.has(id))
+      );
+      // Drop only rows the server confirmed; failed ones stay listed and selected.
+      setSessions((prev) => prev.filter((s) => !deletedIds.has(s.session_id)));
+      setSelectedItems(failedIds);
+      if (failedIds.size > 0) {
+        const firstFailure = results.find(
+          (r): r is PromiseRejectedResult => r.status === "rejected"
+        );
+        const noun = failedIds.size === 1 ? "session" : "sessions";
+        addNotification(
+          "error",
+          `Could not delete ${failedIds.size} ${noun}: ${Utils.getErrorMessage(firstFailure?.reason)}`
+        );
+      } else {
+        addNotification("success", `Deleted ${deletedIds.size} session${deletedIds.size === 1 ? "" : "s"}`);
+      }
+    } catch (error) {
+      addNotification("error", `Could not delete sessions: ${Utils.getErrorMessage(error)}`);
+    } finally {
+      setIsLoading(false);
+      requestAnimationFrame(() => refreshAfterDialogRef.current?.focus());
+    }
   };
 
   const handleSelectAll = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -262,9 +280,7 @@ export default function Sessions(props: SessionsProps) {
                 </TableRow>
               ) : (
                 paginatedSessions.map((session) => {
-                  const formattedTimestamp = DateTime.fromISO(
-                    new Date(session.time_stamp).toISOString()
-                  ).toLocaleString(DateTime.DATETIME_SHORT);
+                  const formattedTimestamp = Utils.formatTimestamp(session.time_stamp);
                   const sessionLabel = session.title || "Untitled session";
                   return (
                     <TableRow
