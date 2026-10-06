@@ -62,7 +62,21 @@ def _is_item_too_large(error: ClientError) -> bool:
 
 
 def _trim_history_and_append(session_id, user_id, new_chat_entry, title_text):
-    """Rewrite the session with the oldest turns dropped so the new entry fits."""
+    """Rewrite the session with the oldest turns dropped so the new entry fits.
+
+    The rewrite is conditioned on the message_count that was read, so a turn
+    appended concurrently isn't silently overwritten; on conflict it re-reads
+    and tries once more."""
+    for attempt in (1, 2):
+        try:
+            return _trim_once(session_id, user_id, new_chat_entry, title_text)
+        except ClientError as error:
+            if attempt == 2 or error.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+            logger.warning("Session changed while trimming; retrying (session=%s)", session_id)
+
+
+def _trim_once(session_id, user_id, new_chat_entry, title_text):
     existing = table.get_item(Key={"user_id": user_id, "session_id": session_id}).get("Item") or {}
     history = list(existing.get("chat_history") or []) + [new_chat_entry]
     previous_count = existing.get("message_count", len(existing.get("chat_history") or []))
@@ -79,11 +93,24 @@ def _trim_history_and_append(session_id, user_id, new_chat_entry, title_text):
     while len(item["chat_history"]) > 1 and _json_size(item) > MAX_ITEM_BYTES:
         item["chat_history"] = item["chat_history"][1:]
         dropped += 1
-    logger.warning(
-        "Session item near the DynamoDB size limit; dropped %d oldest chat turns (session=%s)",
-        dropped, session_id,
-    )
-    table.put_item(Item=item)
+    if dropped:
+        logger.warning(
+            "Session item near the DynamoDB size limit; dropped %d oldest chat turns (session=%s)",
+            dropped, session_id,
+        )
+    else:
+        logger.warning("Session item hit the DynamoDB size limit but fits after rewrite (session=%s)", session_id)
+
+    if not existing:
+        condition = {"ConditionExpression": "attribute_not_exists(session_id)"}
+    elif "message_count" in existing:
+        condition = {
+            "ConditionExpression": "message_count = :expected",
+            "ExpressionAttributeValues": {":expected": existing["message_count"]},
+        }
+    else:
+        condition = {"ConditionExpression": "attribute_not_exists(message_count)"}
+    table.put_item(Item=item, **condition)
     return not bool(existing)
 
 

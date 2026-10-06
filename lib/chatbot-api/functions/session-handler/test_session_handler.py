@@ -1057,6 +1057,48 @@ class TestItemSizeGuard:
         assert item["chat_history"][0]["user"] != "q0"
 
 
+class TestTrimConcurrency:
+    def test_conflict_retries_once_with_fresh_read(self, ctx, monkeypatch):
+        lf, table = ctx
+        monkeypatch.setattr(lf, "MAX_ITEM_BYTES", 2_000)
+        _seed_session(table, history=[{"user": f"q{i}", "chatbot": "a" * 300} for i in range(5)])
+        table.update_item(
+            Key={"user_id": USER_ID, "session_id": SESSION_ID},
+            UpdateExpression="SET message_count = :n", ExpressionAttributeValues={":n": 5},
+        )
+        real_get = lf.table.get_item
+        calls = {"n": 0}
+
+        def racing_get(**kwargs):
+            item = real_get(**kwargs)
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # Another turn lands between our read and our write.
+                table.update_item(
+                    Key={"user_id": USER_ID, "session_id": SESSION_ID},
+                    UpdateExpression="SET message_count = :n, chat_history = list_append(chat_history, :e)",
+                    ExpressionAttributeValues={":n": 6, ":e": [{"user": "concurrent", "chatbot": "b"}]},
+                )
+            return item
+
+        monkeypatch.setattr(lf.table, "get_item", racing_get)
+        created = lf._trim_history_and_append(SESSION_ID, USER_ID, {"user": "newest", "chatbot": "c"}, "T")
+        assert created is False
+        item = real_get(Key={"user_id": USER_ID, "session_id": SESSION_ID})["Item"]
+        users = [t["user"] for t in item["chat_history"]]
+        assert users[-2:] == ["concurrent", "newest"]
+        assert item["message_count"] == 7
+
+    def test_second_conflict_raises(self, ctx, monkeypatch):
+        lf, table = ctx
+        _seed_session(table)
+        conflict = ClientError({"Error": {"Code": "ConditionalCheckFailedException", "Message": "x"}}, "PutItem")
+        with patch.object(lf.table, "put_item", side_effect=conflict) as put:
+            with pytest.raises(ClientError):
+                lf._trim_history_and_append(SESSION_ID, USER_ID, {"user": "n", "chatbot": "c"}, "T")
+        assert put.call_count == 2
+
+
 class TestMessageCount:
     def _append(self, lf, text="q"):
         return _invoke(lf, {
