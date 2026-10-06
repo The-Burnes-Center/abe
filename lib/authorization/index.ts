@@ -8,6 +8,13 @@ import { brand } from '../../config/brand';
 import { ADMIN_GROUP_NAME } from '../constants';
 import { LAMBDA_DEFAULTS, PYTHON_RUNTIME, pythonBundledCode, pythonCode } from '../shared/lambda-defaults';
 
+/**
+ * ID/access token lifetime. Short, so a user an admin disables or demotes
+ * (followed by a global sign-out that revokes refresh tokens) loses access
+ * within this window; the SPA refreshes silently in the background.
+ */
+const TOKEN_VALIDITY = cdk.Duration.minutes(15);
+
 export interface AuthorizationStackProps {
   /**
    * Email domains allowed to self-register. Empty = invite-only: self sign-up
@@ -132,8 +139,8 @@ export class AuthorizationStack extends Construct {
         givenName: true,
         familyName: true,
       }),
-      accessTokenValidity: cdk.Duration.minutes(60),
-      idTokenValidity: cdk.Duration.minutes(60),
+      accessTokenValidity: TOKEN_VALIDITY,
+      idTokenValidity: TOKEN_VALIDITY,
       refreshTokenValidity: cdk.Duration.days(30),
       authSessionValidity: cdk.Duration.minutes(3),
       enableTokenRevocation: true,
