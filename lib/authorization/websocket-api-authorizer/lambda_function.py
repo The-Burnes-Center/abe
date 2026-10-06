@@ -21,7 +21,7 @@ CLOCK_SKEW_SECONDS = 30
 ADMIN_GROUP_NAME = os.environ.get("ADMIN_GROUP_NAME", "Admin")
 
 _jwks_cache: dict[str, jwt.PyJWK] = {}
-_jwks_fetched_at = 0.0
+_jwks_fetched_at: float | None = None
 
 
 class Unauthorized(Exception):
@@ -51,9 +51,10 @@ def _signing_key(kid: str) -> jwt.PyJWK:
     if kid in _jwks_cache:
         return _jwks_cache[kid]
     now = time.monotonic()
-    if not _jwks_cache or now - _jwks_fetched_at >= JWKS_REFRESH_INTERVAL_SECONDS:
-        _jwks_cache = _fetch_jwks()
+    if _jwks_fetched_at is None or now - _jwks_fetched_at >= JWKS_REFRESH_INTERVAL_SECONDS:
+        # Stamp before fetching so a failing or empty fetch is rate-limited too.
         _jwks_fetched_at = now
+        _jwks_cache = _fetch_jwks()
     if kid not in _jwks_cache:
         raise Unauthorized("unknown kid")
     return _jwks_cache[kid]

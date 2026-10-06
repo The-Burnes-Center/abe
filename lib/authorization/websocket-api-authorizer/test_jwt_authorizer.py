@@ -174,6 +174,20 @@ class TestUnknownKid:
         with pytest.raises(Exception, match="Unauthorized"):
             _call(lf, _make_token(kid="never-seen"))
 
+    def test_failed_fetch_is_rate_limited(self, lf):
+        with patch.object(lf, "_fetch_jwks", side_effect=OSError("down")) as fetch:
+            for _ in range(3):
+                with pytest.raises(Exception, match="Unauthorized"):
+                    lf.lambda_handler(_event(_make_token()), None)
+        assert fetch.call_count == 1
+
+    def test_empty_jwks_is_rate_limited(self, lf):
+        with patch.object(lf, "_fetch_jwks", return_value={}) as fetch:
+            for _ in range(3):
+                with pytest.raises(Exception, match="Unauthorized"):
+                    lf.lambda_handler(_event(_make_token()), None)
+        assert fetch.call_count == 1
+
     def test_refresh_is_rate_limited(self, lf):
         keys = _jwks(_jwk(RSA_PRIVATE, KID))
         with patch.object(lf, "_fetch_jwks", return_value=keys) as fetch:
