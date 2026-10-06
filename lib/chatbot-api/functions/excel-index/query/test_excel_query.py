@@ -406,3 +406,67 @@ class TestLambdaHandler:
         body = json.loads(resp["body"])
         assert body["status"] == "COMPLETE"
         assert body["row_count"] == 5
+
+
+# ---------------------------------------------------------------------------
+# min / max / sort with numeric, date and mixed columns
+# ---------------------------------------------------------------------------
+
+class TestMinMax:
+    def test_numbers_compare_numerically(self, lf):
+        mod, dynamodb = lf
+        _seed(dynamodb.Table(TABLE), [{"Amount": "9"}, {"Amount": "10"}, {"Amount": "100"}, {"Amount": "2.5"}])
+        result = mod._do_query(pk=INDEX, min_value="Amount", max_value="Amount", count_only=True)
+        assert result["min"] == {"column": "Amount", "value": "2.5"}
+        assert result["max"] == {"column": "Amount", "value": "100"}
+
+    def test_currency_and_thousands_separators(self, lf):
+        mod, dynamodb = lf
+        _seed(dynamodb.Table(TABLE), [{"Amount": "$1,200"}, {"Amount": "$950"}, {"Amount": "$12,000"}])
+        result = mod._do_query(pk=INDEX, max_value="Amount", min_value="Amount", count_only=True)
+        assert result["max"]["value"] == "$12,000"
+        assert result["min"]["value"] == "$950"
+
+    def test_dates_compare_chronologically(self, lf):
+        mod, dynamodb = lf
+        _seed(dynamodb.Table(TABLE), [{"End": "12/31/2024"}, {"End": "2025-01-15"}, {"End": "March 3, 2023"}])
+        result = mod._do_query(pk=INDEX, min_value="End", max_value="End", count_only=True)
+        assert result["min"]["value"] == "March 3, 2023"
+        assert result["max"]["value"] == "2025-01-15"
+
+    def test_mixed_column_does_not_raise_and_prefers_dominant_kind(self, lf):
+        mod, dynamodb = lf
+        _seed(dynamodb.Table(TABLE), [
+            {"Value": "5"}, {"Value": "50"}, {"Value": "N/A"}, {"Value": "zzz"}, {"Value": "2024-01-01"},
+        ])
+        result = mod._do_query(pk=INDEX, min_value="Value", max_value="Value", count_only=True)
+        assert result["max"]["value"] == "50"
+        assert result["min"]["value"] == "5"
+
+    def test_text_only_column_uses_text_order(self, lf):
+        mod, dynamodb = lf
+        _seed(dynamodb.Table(TABLE), [{"Name": "beta"}, {"Name": "Alpha"}, {"Name": "gamma"}])
+        result = mod._do_query(pk=INDEX, min_value="Name", max_value="Name", count_only=True)
+        assert result["min"]["value"] == "Alpha"
+        assert result["max"]["value"] == "gamma"
+
+    def test_empty_column_has_no_min_max(self, lf):
+        mod, dynamodb = lf
+        _seed(dynamodb.Table(TABLE), [{"Other": "x"}])
+        result = mod._do_query(pk=INDEX, min_value="Amount", max_value="Amount", count_only=True)
+        assert "min" not in result and "max" not in result
+
+    def test_group_by_value_max_numeric(self, lf):
+        mod, dynamodb = lf
+        _seed(dynamodb.Table(TABLE), [
+            {"Team": "A", "Score": "9"}, {"Team": "A", "Score": "10"}, {"Team": "B", "Score": "N/A"},
+            {"Team": "B", "Score": "7"},
+        ])
+        result = mod._do_query(pk=INDEX, group_by="Team", group_by_value_max="Score", count_only=True)
+        assert result["group_max_values"] == {"A": "10", "B": "7"}
+
+    def test_sort_mixed_dates_and_numbers(self, lf):
+        mod, dynamodb = lf
+        _seed(dynamodb.Table(TABLE), [{"V": "2024-01-01"}, {"V": "3"}, {"V": "abc"}, {"V": "1"}])
+        result = mod._do_query(pk=INDEX, sort_by="V")
+        assert [r["V"] for r in result["rows"]] == ["1", "3", "2024-01-01", "abc"]

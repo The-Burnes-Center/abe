@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 
 import boto3
 
+from common_utils.models import primary_model_id
+
 REGISTRY_TABLE = os.environ.get("INDEX_REGISTRY_TABLE", "")
 PK = "TOOLS"
 
@@ -26,7 +28,7 @@ def _get_table():
 def _get_bedrock():
     global _bedrock
     if _bedrock is None:
-        _bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        _bedrock = boto3.client("bedrock-runtime")
     return _bedrock
 
 
@@ -44,7 +46,7 @@ def _generate_description(display_name: str, columns: list[str], sample_rows: li
         )
         client = _get_bedrock()
         resp = client.invoke_model(
-            modelId=os.environ.get("PRIMARY_MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+            modelId=primary_model_id(),
             contentType="application/json",
             accept="application/json",
             body=json.dumps({
@@ -82,8 +84,8 @@ def write_to_registry(
     try:
         existing = table.get_item(Key={"pk": PK, "sk": index_name}).get("Item", {})
         existing_desc = existing.get("description", "") or ""
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Could not read existing registry entry for '{index_name}': {e}")
 
     description = existing_desc
     if not description and sample_rows:

@@ -16,16 +16,15 @@ distinct values, min/max) are accurate across the entire dataset.
 
 Fuzzy matching:
     Text filters use ``_norm()`` which strips all punctuation and collapses
-    whitespace before comparing. This handles real-world vendor name variations
+    whitespace before comparing. This handles real-world name variations
     like "ABC, LLC." vs "ABC LLC" or "O'Brien" vs "OBrien" without requiring
     exact formatting from the caller.
 
-Sort key ordering:
-    ``_sort_key`` and ``_cmp_for_max`` return comparison tuples of the form
-    ``(priority, value)``. Dates and numbers get priority 0; plain strings get
-    priority 1. This ensures numeric/date values always sort before (or after,
-    when reversed) string values, preventing mixed-type comparison errors and
-    keeping meaningful values at the top of sorted results.
+Sort and min/max ordering:
+    ``_typed`` classifies each cell as a number, date or text. Sorting uses
+    ``(kind rank, value)`` tuples (numbers, then dates, then text) and min/max
+    (``_Extreme``) compare only values of the same kind, so mixed columns never
+    raise TypeError and "10" is greater than "9".
 """
 import json
 import os
@@ -240,13 +239,18 @@ def _project_row(row: dict[str, Any], columns: list[str] | None) -> dict[str, An
     return {k: v for k, v in row.items() if k in cols_set}
 
 
-def _cmp_for_max(cell: Any) -> tuple | None:
-    """Return a comparable tuple for max/min aggregation.
+# Rank used when sorting a column that mixes kinds: numbers, then dates, then
+# text. Values are only ever compared with values of the same kind, so a column
+# holding both dates and numbers can't raise TypeError.
+_KIND_RANK = {"number": 0, "date": 1, "text": 2}
 
-    Tuples are ``(priority, value)`` where priority 0 = date or number and
-    priority 1 = plain string. Because Python compares tuples element-by-element,
-    numeric/date values always sort before strings, which prevents TypeError on
-    mixed-type comparisons and keeps semantically meaningful values ranked higher.
+
+def _typed(cell: Any) -> tuple[str, Any] | None:
+    """Classify a cell as ("date", date), ("number", float) or ("text", str).
+
+    Numbers tolerate thousands separators and a leading currency sign, so
+    "$1,200" compares as 1200 rather than as the string "$1,200" (which used
+    to make "9" the max of a column holding 9 and 10).
     """
     if cell is None:
         return None
@@ -255,11 +259,45 @@ def _cmp_for_max(cell: Any) -> tuple | None:
         return None
     d = _parse_date(s)
     if d is not None:
-        return (0, d)
+        return ("date", d)
     try:
-        return (0, float(cell))
-    except (ValueError, TypeError):
-        return (1, s.lower())
+        return ("number", float(s.replace(",", "").lstrip("$")))
+    except ValueError:
+        return ("text", s.lower())
+
+
+class _Extreme:
+    """Running min or max of a column, compared by kind.
+
+    Tracks the best value per kind and reports the one from the column's
+    dominant non-text kind (numbers win ties), falling back to text only when
+    the column has no numbers or dates. The original cell text is returned.
+    """
+
+    def __init__(self, want_max: bool):
+        self.want_max = want_max
+        self.best: dict[str, tuple[Any, str]] = {}
+        self.counts: dict[str, int] = {}
+
+    def add(self, cell: Any) -> None:
+        typed = _typed(cell)
+        if typed is None:
+            return
+        kind, value = typed
+        self.counts[kind] = self.counts.get(kind, 0) + 1
+        current = self.best.get(kind)
+        if current is None or (value > current[0] if self.want_max else value < current[0]):
+            self.best[kind] = (value, str(cell).strip())
+
+    def result(self) -> str | None:
+        if not self.best:
+            return None
+        typed_kinds = [k for k in ("number", "date") if k in self.best]
+        if typed_kinds:
+            kind = max(typed_kinds, key=lambda k: (self.counts[k], k == "number"))
+        else:
+            kind = "text"
+        return self.best[kind][1]
 
 
 def _do_query(
@@ -302,11 +340,10 @@ def _do_query(
     total = 0
     unique_vals: set[str] = set() if count_unique else None
     group_counts: dict[str, int] = {} if group_by else None
-    group_max_cmp: dict[str, tuple] = {}
-    group_max_display: dict[str, str] = {}
+    group_max: dict[str, _Extreme] = {}
     distinct_set: set[str] = set() if distinct_values else None
-    min_raw: Any = None
-    max_raw: Any = None
+    min_tracker = _Extreme(want_max=False) if min_value is not None else None
+    max_tracker = _Extreme(want_max=True) if max_value is not None else None
 
     scan_kw: dict[str, Any] = {
         "KeyConditionExpression": Key("pk").eq(pk),
@@ -328,28 +365,15 @@ def _do_query(
                     gval = str(row.get(group_by) or "").strip() or "(empty)"
                     group_counts[gval] = group_counts.get(gval, 0) + 1
                     if group_by_value_max:
-                        cmp_v = _cmp_for_max(row.get(group_by_value_max))
-                        if cmp_v is not None:
-                            prev = group_max_cmp.get(gval)
-                            if prev is None or cmp_v > prev:
-                                group_max_cmp[gval] = cmp_v
-                                group_max_display[gval] = str(row.get(group_by_value_max) or "").strip()
+                        group_max.setdefault(gval, _Extreme(want_max=True)).add(row.get(group_by_value_max))
                 if distinct_set is not None:
                     dval = str(row.get(distinct_values) or "").strip()
                     if dval:
                         distinct_set.add(dval)
-                if min_value is not None:
-                    cell = row.get(min_value)
-                    if cell is not None and str(cell).strip():
-                        cmp = _parse_date(str(cell)) or str(cell).strip()
-                        if min_raw is None or cmp < min_raw:
-                            min_raw = cmp
-                if max_value is not None:
-                    cell = row.get(max_value)
-                    if cell is not None and str(cell).strip():
-                        cmp = _parse_date(str(cell)) or str(cell).strip()
-                        if max_raw is None or cmp > max_raw:
-                            max_raw = cmp
+                if min_tracker is not None:
+                    min_tracker.add(row.get(min_value))
+                if max_tracker is not None:
+                    max_tracker.add(row.get(max_value))
                 if not count_only:
                     all_matched.append(row)
         last_key = resp.get("LastEvaluatedKey")
@@ -359,14 +383,8 @@ def _do_query(
 
     if sort_by and not count_only and all_matched:
         def _sort_key(r: dict) -> Any:
-            v = r.get(sort_by)
-            d = _parse_date(str(v)) if v is not None else None
-            if d is not None:
-                return (0, d)
-            try:
-                return (0, float(v))
-            except (ValueError, TypeError):
-                return (1, str(v or "").lower())
+            typed = _typed(r.get(sort_by)) or ("text", "")
+            return (_KIND_RANK[typed[0]], typed[1])
         all_matched.sort(key=_sort_key, reverse=(sort_order == "desc"))
 
     collected = []
@@ -386,6 +404,7 @@ def _do_query(
     if group_counts is not None:
         result["group_by"] = group_by
         result["groups"] = dict(sorted(group_counts.items()))
+    group_max_display = {g: t.result() for g, t in group_max.items() if t.result() is not None}
     if group_by_value_max and group_max_display:
         result["group_by_value_max_column"] = group_by_value_max
         result["group_max_values"] = dict(sorted(group_max_display.items()))
@@ -393,8 +412,10 @@ def _do_query(
         result["distinct_values"] = sorted(distinct_set)
         result["distinct_column"] = distinct_values
         result["distinct_count"] = len(distinct_set)
-    if min_value is not None and min_raw is not None:
-        result["min"] = {"column": min_value, "value": str(min_raw)}
-    if max_value is not None and max_raw is not None:
-        result["max"] = {"column": max_value, "value": str(max_raw)}
+    min_display = min_tracker.result() if min_tracker else None
+    max_display = max_tracker.result() if max_tracker else None
+    if min_display is not None:
+        result["min"] = {"column": min_value, "value": min_display}
+    if max_display is not None:
+        result["max"] = {"column": max_value, "value": max_display}
     return result
