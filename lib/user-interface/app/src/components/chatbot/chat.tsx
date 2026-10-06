@@ -20,7 +20,7 @@ import { ApiClient } from "../../common/api-client/api-client";
 import ChatMessage from "./chat-message";
 import ChatInputPanel from "./chat-input-panel";
 import styles from "../../styles/chat.module.scss";
-import { CHATBOT_NAME, WELCOME_PAGE, SUGGESTED_PROMPTS } from "../../common/constants";
+import { brand } from "../../common/brand";
 import { useNotifications } from "../notif-manager";
 import { Utils } from "../../common/utils";
 import { useWebSocketChat, StreamingStatus } from "../../hooks/useWebSocketChat";
@@ -119,7 +119,7 @@ export default function Chat(props: { sessionId?: string }) {
     if (!running && messageHistory.length > 0) {
       const lastMsg = messageHistory[messageHistory.length - 1];
       if (lastMsg.type === ChatBotMessageType.AI) {
-        setAnnouncement(`${CHATBOT_NAME} has responded`);
+        setAnnouncement(`${brand.shortName} has responded`);
         const timer = setTimeout(() => setAnnouncement(""), 1000);
         return () => clearTimeout(timer);
       }
@@ -219,7 +219,7 @@ export default function Chat(props: { sessionId?: string }) {
 
   return (
     <div className={styles.chat_container} style={{ position: "relative" }}>
-      <Typography variant="h1" className="sr-only">{CHATBOT_NAME} Chat</Typography>
+      <Typography variant="h1" className="sr-only">{brand.assistantName} chat</Typography>
       {/* Scroll-jump FAB — direction depends on current scroll position */}
       {scrollFab && (
         <div className={styles.scrollToBottom}>
@@ -323,19 +323,11 @@ export default function Chat(props: { sessionId?: string }) {
             }}
           >
             <Avatar
-              sx={{
-                width: 56,
-                height: 56,
-                bgcolor: "primary.light",
-                color: "primary.main",
-                mb: 2.5,
-                fontWeight: 800,
-                fontSize: "1.25rem",
-                letterSpacing: "-0.02em",
-              }}
-            >
-              {CHATBOT_NAME.charAt(0)}
-            </Avatar>
+              src={brand.assets.icon}
+              alt=""
+              aria-hidden="true"
+              sx={{ width: 56, height: 56, bgcolor: "transparent", mb: 2.5 }}
+            />
             <Typography
               variant="h2"
               sx={{
@@ -344,17 +336,17 @@ export default function Chat(props: { sessionId?: string }) {
                 fontSize: { xs: "1.25rem", sm: "1.5rem" },
               }}
             >
-              {WELCOME_PAGE}
+              {brand.welcomeMessage}
             </Typography>
             <Typography
               variant="body2"
               sx={{ color: "text.secondary", mb: 3, maxWidth: 420 }}
             >
-              Ask me anything — I'll answer from the documents and data
+              Ask me anything. I'll answer from the documents and data
               available to me.
             </Typography>
             <div className={styles.suggestedPrompts}>
-              {SUGGESTED_PROMPTS.map((prompt, idx) => (
+              {brand.suggestedPrompts.map((prompt, idx) => (
                 <button
                   key={idx}
                   className={styles.suggestedPromptCard}

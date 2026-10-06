@@ -246,6 +246,14 @@
 }
 
 /* Inline citation badge */
+.blockedImage {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.8125rem;
+  color: var(--app-textSecondary);
+}
+
 .citationBadge {
   display: inline-flex;
   align-items: center;
@@ -503,7 +511,8 @@
 /* Suggested prompt cards */
 .suggestedPrompts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  width: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
   gap: 12px;
   margin-top: 24px;
   max-width: 600px;
