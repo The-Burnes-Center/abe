@@ -4,7 +4,8 @@ import { Duration, aws_apigatewayv2 as apigwv2 } from "aws-cdk-lib";
 import * as logs from "aws-cdk-lib/aws-logs";
 
 export interface RestBackendAPIProps {
-  readonly allowedOrigin: string;
+  /** CORS origins: the site URL, plus localhost origins only when devCorsOrigins is set. */
+  readonly allowedOrigins: string[];
 }
 
 export class RestBackendAPI extends Construct {
@@ -24,7 +25,7 @@ export class RestBackendAPI extends Construct {
           apigwv2.CorsHttpMethod.PATCH,
           apigwv2.CorsHttpMethod.DELETE,
         ],
-        allowOrigins: [props.allowedOrigin],
+        allowOrigins: props.allowedOrigins,
         maxAge: Duration.days(10),
       },
     });

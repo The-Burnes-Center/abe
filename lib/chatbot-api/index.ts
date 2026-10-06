@@ -21,7 +21,8 @@ import { MonitoringConstruct } from "./monitoring/monitoring";
 export interface ChatBotApiProps {
   readonly authentication: AuthorizationStack;
   readonly alarmEmail?: string;
-  readonly allowedOrigin: string;
+  /** CORS origins for the HTTP API and S3 buckets (site URL, plus dev origins if configured). */
+  readonly allowedOrigins: string[];
   /** Create the RAGAS evaluation pipeline, its storage and its admin routes. */
   readonly enableEval: boolean;
   /** Optional foundation-model parser for the knowledge base (see KnowledgeBaseStack). */
@@ -44,11 +45,11 @@ export class ChatBotApi extends Construct {
   constructor(scope: Construct, id: string, props: ChatBotApiProps) {
     super(scope, id);
 
-    // CORS is configured at the HTTP API gateway level via corsPreflight, pinned to allowedOrigin.
+    // CORS is configured at the HTTP API gateway level via corsPreflight, pinned to allowedOrigins.
     // No OPTIONS handler needed; the gateway answers CORS preflight itself.
 
     const tables = new TableStack(this, "TableStack", props.enableEval);
-    const buckets = new S3BucketStack(this, "BucketStack", props.allowedOrigin, props.enableEval);
+    const buckets = new S3BucketStack(this, "BucketStack", props.allowedOrigins, props.enableEval);
 
     const openSearch = new OpenSearchStack(this, "OpenSearchStack", {})
     const knowledgeBase = new KnowledgeBaseStack(this, "KnowledgeBaseStack", {
@@ -58,7 +59,7 @@ export class ChatBotApi extends Construct {
       parserModelId: props.kbParserModel,
     })
 
-    const restBackend = new RestBackendAPI(this, "RestBackend", { allowedOrigin: props.allowedOrigin })
+    const restBackend = new RestBackendAPI(this, "RestBackend", { allowedOrigins: props.allowedOrigins })
     this.httpAPI = restBackend;
     const websocketBackend = new WebsocketBackendAPI(this, "WebsocketBackend", {})
     this.wsAPI = websocketBackend;
@@ -124,6 +125,9 @@ export class ChatBotApi extends Construct {
           evalResultsBucket: buckets.evalResultsBucket!,
           feedbackToTestLibraryQueue: tables.feedbackToTestLibraryQueue!,
           models: lambdaFunctions.models,
+          knowledgeBucket: buckets.knowledgeBucket,
+          excelIndexQueryFunction: lambdaFunctions.excelIndexQueryFunction,
+          indexRegistryTable: tables.indexRegistryTable,
         })
       : undefined;
 

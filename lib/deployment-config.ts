@@ -32,6 +32,25 @@ export interface DeploymentConfig {
   readonly apiGatewayAccountRole: boolean;
   /** metadataHandlerConcurrency (METADATA_HANDLER_CONCURRENCY): optional reserved concurrency cap. */
   readonly metadataHandlerConcurrency?: number;
+  /**
+   * devCorsOrigins (DEV_CORS_ORIGINS), comma-separated, default none: extra
+   * localhost origins allowed by the HTTP API and bucket CORS so a local
+   * `npm run dev` frontend can talk to a deployed backend. Only
+   * http://localhost / http://127.0.0.1 origins are accepted.
+   */
+  readonly devCorsOrigins: string[];
+}
+
+const DEV_ORIGIN_PATTERN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/;
+
+function parseDevCorsOrigins(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const origins = raw.split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
+  const invalid = origins.filter((o) => !DEV_ORIGIN_PATTERN.test(o));
+  if (invalid.length > 0) {
+    throw new Error(`devCorsOrigins only accepts http://localhost or http://127.0.0.1 origins, got: ${invalid.join(', ')}`);
+  }
+  return [...new Set(origins)];
 }
 
 const FEATURE_PLANS = ['ESSENTIALS', 'PLUS'] as const;
@@ -97,5 +116,6 @@ export function readDeploymentConfig(node: Node): DeploymentConfig {
     metadataHandlerConcurrency: parseConcurrency(
       read(node, 'metadataHandlerConcurrency', 'METADATA_HANDLER_CONCURRENCY'),
     ),
+    devCorsOrigins: parseDevCorsOrigins(read(node, 'devCorsOrigins', 'DEV_CORS_ORIGINS')),
   };
 }

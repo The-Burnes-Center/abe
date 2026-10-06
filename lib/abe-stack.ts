@@ -31,7 +31,7 @@ export class ABEStack extends cdk.Stack {
     const chatbotAPI = new ChatBotApi(this, "ChatbotAPI", {
       authentication,
       alarmEmail: config.alarmEmail,
-      allowedOrigin: siteUrl,
+      allowedOrigins: [siteUrl, ...config.devCorsOrigins],
       enableEval: config.enableEval,
       kbParserModel: config.kbParserModel,
       apiGatewayAccountRole: config.apiGatewayAccountRole,
