@@ -71,6 +71,20 @@ def test_custom_role_claim_is_ignored():
     assert is_admin(event) is False
 
 
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"requestContext": None},
+        {"requestContext": {"authorizer": None}},
+        {"requestContext": {"authorizer": {"jwt": None}}},
+        {"requestContext": {"authorizer": {"jwt": {"claims": None}}}},
+    ],
+)
+def test_null_levels_do_not_crash(event):
+    assert get_groups(event) == []
+    assert is_admin(event) is False
+
+
 def test_missing_request_context_is_not_admin():
     assert is_admin({}) is False
     assert is_admin(None) is False

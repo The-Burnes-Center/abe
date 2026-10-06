@@ -82,11 +82,15 @@ def _build_cron(day_of_week: str, hour: int, minute: int) -> str:
     return f"cron({minute} {hour} ? * {day_of_week} *)"
 
 
+def _clock_12h(hour: int, minute: int) -> str:
+    suffix = "AM" if hour < 12 else "PM"
+    return f"{hour % 12 or 12}:{minute:02d} {suffix}"
+
+
 def _human_local(cron_parts: dict) -> str:
-    h = cron_parts["hour"]
-    m = cron_parts["minute"]
+    """e.g. "Sundays at 1:00 AM (America/New_York)", in the brand timezone."""
     day = DAY_LABELS.get(cron_parts["dayOfWeek"], cron_parts["dayOfWeek"])
-    return f"Every {day} at {h:02d}:{m:02d} ({TARGET_SCHEDULE_TZ})"
+    return f"{day}s at {_clock_12h(cron_parts['hour'], cron_parts['minute'])} ({TARGET_SCHEDULE_TZ})"
 
 
 def _next_utc_cron_instant(aws_dow: str, hour: int, minute: int) -> datetime:
@@ -111,9 +115,9 @@ def _legacy_utc_body(cron_parts: dict) -> dict:
     ny = nxt.astimezone(ZoneInfo(TARGET_SCHEDULE_TZ))
     aws_dow_ny = _PY_TO_AWS_DOW[ny.weekday()]
     human = (
-        f"Every {DAY_LABELS[cron_parts['dayOfWeek']]} at "
-        f"{cron_parts['hour']:02d}:{cron_parts['minute']:02d} UTC "
-        f"(next run local: {ny.strftime('%b %d, %Y %I:%M %p %Z')})"
+        f"{DAY_LABELS[cron_parts['dayOfWeek']]}s at "
+        f"{_clock_12h(cron_parts['hour'], cron_parts['minute'])} (UTC); next run "
+        f"{ny.strftime('%b %d, %Y')} at {_clock_12h(ny.hour, ny.minute)} ({TARGET_SCHEDULE_TZ})"
     )
     return {
         "dayOfWeek": aws_dow_ny,

@@ -9,13 +9,11 @@ FORBIDDEN_MESSAGE = "You do not have permission to perform this action."
 
 
 def get_claims(event: dict | None) -> dict:
-    return (
-        (event or {})
-        .get("requestContext", {})
-        .get("authorizer", {})
-        .get("jwt", {})
-        .get("claims", {})
-    ) or {}
+    # Each level can be present but null (e.g. "authorizer": None).
+    request_context = (event or {}).get("requestContext") or {}
+    authorizer = request_context.get("authorizer") or {}
+    jwt = authorizer.get("jwt") or {}
+    return jwt.get("claims") or {}
 
 
 def _parse_groups(raw) -> list[str]:
