@@ -23,13 +23,16 @@ const appDir = join(__dirname, "..", "lib", "user-interface", "app");
 
 // 1) Frontend brand module — only the fields the UI needs, as resolved literals.
 const frontendBrand = {
+  slug: brand.slug,
   assistantName: brand.assistantName,
+  shortName: brand.shortName,
   organizationName: brand.organizationName,
   parentOrg: brand.parentOrg,
   tagline: brand.tagline,
   welcomeMessage: brand.welcomeMessage,
   suggestedPrompts: brand.suggestedPrompts,
   supportContact: brand.supportContact,
+  timezone: brand.timezone,
   colorsLight: brand.colorsLight,
   colorsDark: brand.colorsDark,
   fontFamily: brand.fontFamily,
@@ -52,7 +55,7 @@ const manifest = {
   id: "/",
   start_url: "/",
   name: brand.assistantName,
-  short_name: brand.assistantName,
+  short_name: brand.shortName,
   description: brand.tagline,
   theme_color: brand.themeColorLight,
   background_color: brand.themeColorLight,

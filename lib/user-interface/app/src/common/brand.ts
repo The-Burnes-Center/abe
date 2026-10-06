@@ -1,7 +1,9 @@
 /* AUTO-GENERATED from config/brand.ts by `npm run brand:sync`. Do not edit by hand. */
 export const brand = {
-  "assistantName": "ABE - Assistive Buyers Engine",
-  "organizationName": "InnovateUS",
+  "slug": "abe",
+  "assistantName": "ABE",
+  "shortName": "ABE",
+  "organizationName": "Your Organization",
   "parentOrg": "",
   "tagline": "Ask anything about your knowledge base.",
   "welcomeMessage": "What can I help you with?",
@@ -12,6 +14,7 @@ export const brand = {
     "What documents are in the knowledge base?"
   ],
   "supportContact": "your administrator",
+  "timezone": "America/New_York",
   "colorsLight": {
     "primary": "#C8102E",
     "primaryDark": "#A00C24",
@@ -46,7 +49,8 @@ export const brand = {
     "logo": "/images/logo.svg",
     "logoDark": "/images/logo-white.svg",
     "favicon": "/images/icon.svg",
-    "icon": "/images/icon.svg"
+    "icon": "/images/icon.svg",
+    "demoVideo": "/demos/demo.mp4"
   },
   "themeColorLight": "#FFFFFF",
   "themeColorDark": "#0C3354"

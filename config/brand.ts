@@ -12,10 +12,9 @@
  * variables (same pattern as PRIMARY_MODEL_ID), letting one build target
  * multiple brands without code edits.
  *
- * Default brand: Burnes Center for Social Change (Northeastern University).
- *   Palette from the official brand guide — Red #C8102E (primary),
- *   Navy #0C3354, Light Blue #297496, Black, White. Type: Franklin Gothic URW
- *   (web fallback: Libre Franklin).
+ * Default brand: neutral "ABE". Palette: Red #C8102E (primary), Navy #0C3354,
+ * Light Blue #297496, Black, White. Type: Libre Franklin. Replace the names,
+ * colors and logo files below to rebrand a fork.
  */
 
 /** Raw brand palette — the named swatches from the brand guide. */
@@ -48,6 +47,8 @@ export interface BrandConfig {
   slug: string;
   /** The assistant's display name. */
   assistantName: string;
+  /** Compact name for tight spaces: avatars, input placeholder, tab titles, mobile header. */
+  shortName: string;
   /** Owning organization, shown in UI and used in the system prompt. */
   organizationName: string;
   /** Parent org (optional sub-line). */
@@ -60,6 +61,8 @@ export interface BrandConfig {
   supportContact: string;
   /** Optional extra domain context injected into the system prompt. "" = fully generic. */
   domainContext: string;
+  /** IANA time zone used to display timestamps in the UI and backend (e.g. "America/New_York"). */
+  timezone: string;
   /** Starter prompt chips shown on the empty chat screen. */
   suggestedPrompts: string[];
   palette: BrandPalette;
@@ -75,6 +78,8 @@ export interface BrandConfig {
     logoDark: string;
     favicon: string;
     icon: string;
+    /** Optional demo clip on the Help page and onboarding. Hidden when the file is missing. */
+    demoVideo: string;
   };
   /** <meta name="theme-color"> values for light/dark. */
   themeColorLight: string;
@@ -93,13 +98,15 @@ const palette: BrandPalette = {
 
 export const brand: BrandConfig = {
   slug: env("BRAND_SLUG", "abe"),
-  assistantName: env("ASSISTANT_NAME", "ABE - Assistive Buyers Engine"),
-  organizationName: env("ORGANIZATION_NAME", "InnovateUS"),
+  assistantName: env("ASSISTANT_NAME", "ABE"),
+  shortName: env("SHORT_NAME", "ABE"),
+  organizationName: env("ORGANIZATION_NAME", "Your Organization"),
   parentOrg: env("PARENT_ORG", ""),
   tagline: env("BRAND_TAGLINE", "Ask anything about your knowledge base."),
   welcomeMessage: env("WELCOME_MESSAGE", "What can I help you with?"),
   supportContact: env("SUPPORT_CONTACT", "your administrator"),
   domainContext: env("DOMAIN_CONTEXT", ""),
+  timezone: env("BRAND_TIMEZONE", "America/New_York"),
   suggestedPrompts: [
     "Summarize the most recent document.",
     "What topics can you help me with?",
@@ -143,6 +150,7 @@ export const brand: BrandConfig = {
     logoDark: "/images/logo-white.svg",
     favicon: "/images/icon.svg",
     icon: "/images/icon.svg",
+    demoVideo: env("BRAND_DEMO_VIDEO", "/demos/demo.mp4"),
   },
   themeColorLight: palette.white,
   themeColorDark: palette.navy,
