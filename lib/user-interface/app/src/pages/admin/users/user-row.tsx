@@ -49,7 +49,7 @@ export default function UserRow({ user, isSelf, busy, onAction }: UserRowProps) 
 
   return (
     <TableRow hover>
-      <TableCell sx={{ maxWidth: 280 }}>
+      <TableCell sx={{ maxWidth: 280, minWidth: 140 }}>
         <Typography variant="body2" sx={{ fontWeight: 600, overflowWrap: "anywhere" }}>
           {user.email || user.username}
         </Typography>
@@ -69,7 +69,7 @@ export default function UserRow({ user, isSelf, busy, onAction }: UserRowProps) 
           {user.isAdmin && <Chip size="small" label="Admin" color="primary" />}
         </Stack>
       </TableCell>
-      <TableCell sx={{ whiteSpace: "nowrap", color: "text.secondary" }}>
+      <TableCell sx={{ whiteSpace: "nowrap", color: "text.secondary", display: { xs: "none", sm: "table-cell" } }}>
         {Utils.formatTimestamp(user.createdAt)}
       </TableCell>
       <TableCell align="right">

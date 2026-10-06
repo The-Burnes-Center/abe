@@ -23,9 +23,11 @@ vi.mock("aws-amplify/auth", () => ({
   signOut: vi.fn().mockResolvedValue(undefined),
 }));
 
+const history = vi.hoisted(() => ({ items: [] as unknown[] }));
+
 vi.mock("../../common/api-client/api-client", () => ({
   ApiClient: class {
-    sessions = { getSession: vi.fn().mockResolvedValue([]) };
+    sessions = { getSession: vi.fn(async () => history.items) };
     userFeedback = { submitFeedback: vi.fn() };
   },
 }));
@@ -89,6 +91,7 @@ async function sendMessage(text: string) {
 describe("Chat streaming lifecycle", () => {
   beforeEach(() => {
     MockWebSocket.instances = [];
+    history.items = [];
     vi.stubGlobal("WebSocket", MockWebSocket);
   });
   afterEach(() => {
@@ -127,5 +130,38 @@ describe("Chat streaming lifecycle", () => {
     await waitFor(() => expect(screen.queryByText(/Answer for A/)).not.toBeInTheDocument());
     expect(screen.queryByText(/still streaming A/)).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /send message/i })).toBeInTheDocument();
+  });
+
+  it("opens a reloaded source (no uri) through source-presign with its s3Key", async () => {
+    history.items = [
+      { type: "human", content: "Where is the policy?", metadata: {} },
+      {
+        type: "ai",
+        content: "It is in the handbook [1].",
+        metadata: {
+          Sources: [
+            { chunkIndex: 1, title: "Handbook.pdf", s3Key: "docs/Handbook.pdf", page: 2, excerpt: "x",
+              score: 0.9, sourceType: "knowledgeBase", cited: true },
+          ],
+        },
+      },
+    ];
+    const tab = { opener: {}, location: { href: "" }, close: vi.fn() };
+    const open = vi.fn(() => tab);
+    vi.stubGlobal("open", open);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ signedUrl: "https://signed.example/doc" })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderChat("session-reloaded");
+    fireEvent.click(await screen.findByRole("button", { name: /1 document referenced/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /open handbook\.pdf/i }));
+
+    await waitFor(() => expect(tab.location.href).toBe("https://signed.example/doc"));
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    expect(tab.opener).toBeNull();
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.example.com/source-presign");
+    expect(JSON.parse(init.body as string)).toEqual({ s3Key: "docs/Handbook.pdf" });
+    expect((init.headers as Record<string, string>).Authorization).toBe("id-token");
   });
 });

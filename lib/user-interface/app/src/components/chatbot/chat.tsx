@@ -190,8 +190,17 @@ export default function Chat(props: { sessionId?: string }) {
     return `Please answer my previous question again.\n\nOriginal question: ${originalQuestion}\n\nWhat went wrong: ${contextParts.join("\n")}`;
   };
 
+  /**
+   * Open a cited document. Stored history carries only the S3 key (presigned
+   * URLs expire and are stripped server-side), so always ask the
+   * source-presign endpoint for a fresh link. The tab is opened synchronously
+   * inside the click so popup blockers allow it, then pointed at the URL.
+   * HTML sources come back as downloads rather than rendering inline.
+   */
   const handleOpenSource = useCallback(async (s3Key: string) => {
     if (!appContext) return;
+    const tab = window.open("", "_blank");
+    if (tab) tab.opener = null;
     const api = appContext.httpEndpoint.replace(/\/$/, "");
     try {
       const auth = await Utils.authenticate();
@@ -200,10 +209,17 @@ export default function Chat(props: { sessionId?: string }) {
         headers: { "Content-Type": "application/json", Authorization: auth },
         body: JSON.stringify({ s3Key }),
       });
-      if (!res.ok) throw new Error("Failed to get source URL");
-      const { signedUrl } = await res.json();
-      window.open(signedUrl, "_blank", "noopener,noreferrer");
-    } catch {
+      if (!res.ok) throw new Error(await Utils.extractServerError(res, "Failed to get source URL"));
+      const { signedUrl } = (await res.json()) as { signedUrl?: string };
+      if (!signedUrl) throw new Error("Failed to get source URL");
+      if (tab) {
+        tab.location.href = signedUrl;
+      } else {
+        window.open(signedUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      tab?.close();
+      console.error("Could not open source", error);
       addNotification("error", "Could not open source document. Please try again.");
     }
   }, [appContext, addNotification]);

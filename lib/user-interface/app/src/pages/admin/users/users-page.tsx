@@ -198,7 +198,7 @@ export default function UsersPage() {
               <TableRow>
                 <TableCell>Email</TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell>Created</TableCell>
+                <TableCell sx={{ display: { xs: "none", sm: "table-cell" } }}>Created</TableCell>
                 <TableCell align="right">
                   <span className="sr-only">Actions</span>
                 </TableCell>

@@ -65,7 +65,7 @@ export default function BaseAppLayout({ children }: BaseAppLayoutProps) {
                 PaperProps={{ "aria-label": "Main navigation" }}
                 sx={{
                   // Above the sticky AppBar so the panel's top isn't hidden behind it.
-                  zIndex: (t) => t.zIndex.appBar + 1,
+                  zIndex: (t) => t.zIndex.modal,
                   "& .MuiDrawer-paper": { width: DRAWER_WIDTH, maxWidth: "85vw", boxSizing: "border-box" },
                 }}
               >
