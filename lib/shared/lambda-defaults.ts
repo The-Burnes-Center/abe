@@ -45,6 +45,7 @@ export function pythonBundledCode(dir: string): lambda.Code {
           'cp -au . /asset-output',
           "find /asset-output \\( -name 'test_*.py' -o -name '*_test.py' -o -name conftest.py \\) -delete",
           'rm -rf /asset-output/tests /asset-output/.pytest_cache',
+          'find /asset-output -name __pycache__ -type d -prune -exec rm -rf {} +',
         ].join(' && '),
       ],
     },
