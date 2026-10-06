@@ -4,7 +4,7 @@ import io
 import os
 import uuid
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 TEST_CASE_BUCKET = os.environ['TEST_CASES_BUCKET']
 
@@ -24,7 +24,7 @@ def lambda_handler(event, context):
         eval_name = event.get('evalName')
     print("eval_name: ", eval_name)
     if not eval_name:
-        eval_name = f"Evaluation on {str(datetime.now())}"
+        eval_name = f"Evaluation on {datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}"
 
     # Use provided evaluation_id or generate a new one
     eval_id = event.get('evaluation_id', str(uuid.uuid4()))

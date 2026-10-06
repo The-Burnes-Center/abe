@@ -3,7 +3,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 import logging
 
@@ -21,6 +21,13 @@ dynamodb = boto3.resource("dynamodb")
 
 summaries_table = dynamodb.Table(EVALUATION_SUMMARIES_TABLE)
 results_table = dynamodb.Table(EVALUATION_RESULTS_TABLE)
+
+def _utc_now_iso() -> str:
+    """Timezone-aware ISO 8601 UTC, e.g. 2026-10-06T19:23:24.959000Z. Rows
+    written before this used naive str(datetime.now()); readers sort these
+    strings and the UI treats a missing offset as UTC, so both stay readable."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 # Summary metrics written by the save step. average_relevance is no longer
 # produced (it duplicated response_relevancy) but older rows still carry it.
@@ -107,7 +114,7 @@ def mark_evaluation_failed(evaluation_id, evaluation_name, error_message):
         # No placeholder found (e.g. split failed very early) -- create a minimal row.
         summaries_table.put_item(Item={
             "PartitionKey": "Evaluation",
-            "Timestamp": str(datetime.now()),
+            "Timestamp": _utc_now_iso(),
             "EvaluationId": evaluation_id,
             "evaluation_name": (evaluation_name or "").strip() or "Unnamed",
             "status": "FAILED",
@@ -170,7 +177,7 @@ def add_evaluation(evaluation_id, evaluation_name, metrics, total_questions, fai
     else:
         summary_item = {
             'EvaluationId': evaluation_id,
-            'Timestamp': str(datetime.now()),
+            'Timestamp': _utc_now_iso(),
             'total_questions': total_questions,
             'failed_questions': failed_questions,
             'evaluation_name': evaluation_name.strip() if evaluation_name else None,
@@ -233,7 +240,7 @@ def lambda_handler(event, context):
     if missing:
         raise ValueError(f"Missing required fields: {', '.join(missing)}")
 
-    evaluation_name = data.get('evaluation_name', f"Evaluation on {str(datetime.now())}")
+    evaluation_name = data.get('evaluation_name', f"Evaluation on {_utc_now_iso()}")
     metrics = {name: data.get(name) for name in SUMMARY_METRICS}
     total_questions = int(data.get('total_questions', 0) or 0)
     failed_questions = int(data.get('failed_questions', 0) or 0)

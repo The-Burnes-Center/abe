@@ -2,7 +2,7 @@ import boto3
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from botocore.exceptions import ClientError
 
 # Environment variables
@@ -49,7 +49,10 @@ def lambda_handler(event, context):
     if not evaluation_id:
         raise AggregationError("Missing required evaluation_id parameter")
 
-    evaluation_name = event.get('evaluation_name', f"Evaluation on {str(datetime.now())}")
+    evaluation_name = event.get(
+        'evaluation_name',
+        f"Evaluation on {datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}",
+    )
     test_cases_key = event.get('test_cases_key')
     partial_result_keys = []
 

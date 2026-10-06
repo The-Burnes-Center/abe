@@ -134,10 +134,61 @@ def test_invoke_falls_back_to_sources_content(eval_lf):
     assert eval_lf.invoke_generate_response_lambda(client, "q") == ("A", "old ctx")
 
 
-def test_lambda_client_waits_for_long_generations(eval_lf):
-    config = eval_lf.lambda_client.meta.config
-    assert config.read_timeout >= 900
+def _ctx(remaining_ms):
+    ctx = MagicMock()
+    ctx.get_remaining_time_in_millis.return_value = remaining_ms
+    return ctx
+
+
+def test_generation_budget_tracks_remaining_time(eval_lf):
+    assert eval_lf._generation_budget_seconds(_ctx(15 * 60 * 1000)) == 750
+    assert eval_lf._generation_budget_seconds(_ctx(30 * 60 * 1000)) == eval_lf.MAX_READ_TIMEOUT_SECONDS
+    assert eval_lf._generation_budget_seconds(_ctx(400_000)) == (400_000 - 150_000) // 1000
+    assert eval_lf._generation_budget_seconds(_ctx(170_000)) == 0
+
+
+def test_lambda_client_never_retries(eval_lf):
+    config = eval_lf._lambda_client(250).meta.config
+    assert config.read_timeout == 250
     assert config.retries["total_max_attempts"] == 1
+
+
+def test_out_of_time_records_remaining_questions_as_failed(eval_lf, s3, monkeypatch):
+    _put_json(s3, "chunks/c2.json", [
+        {"question": "q1", "expectedResponse": "x"},
+        {"question": "q2", "expectedResponse": "x"},
+        {"question": "q3", "expectedResponse": "x"},
+    ])
+    budgets = []
+
+    def fake_process(idx, test_case, context, budget_seconds):
+        budgets.append(budget_seconds)
+        return {"question": test_case["question"], **{m: 1.0 for m in METRICS}}
+
+    monkeypatch.setattr(eval_lf, "process_test_case", fake_process)
+    ctx = MagicMock()
+    # Enough for the first question only.
+    ctx.get_remaining_time_in_millis.side_effect = [600_000, 100_000, 100_000]
+
+    out = eval_lf.lambda_handler({"chunk_key": "chunks/c2.json", "evaluation_id": "e2"}, ctx)
+
+    assert out["num_test_cases"] == 1 and out["num_failed"] == 2
+    assert budgets == [(600_000 - 150_000) // 1000]
+    partial = _get_json(s3, out["partial_result_key"])
+    skipped = [r for r in partial["detailed_results"] if r.get("failed")]
+    assert [r["question"] for r in skipped] == ["q2", "q3"]
+    assert all("ran out of time" in r["error"] for r in skipped)
+
+
+def test_generate_error_is_recorded_on_the_question(eval_lf, s3, monkeypatch):
+    _put_json(s3, "chunks/c3.json", [{"question": "q1", "expectedResponse": "x"}])
+    client = MagicMock()
+    client.invoke.return_value = _invoke_payload({"error": "boom"}, status=500)
+    monkeypatch.setattr(eval_lf, "_lambda_client", lambda _timeout: client)
+    out = eval_lf.lambda_handler({"chunk_key": "chunks/c3.json", "evaluation_id": "e3"}, None)
+    partial = _get_json(s3, out["partial_result_key"])
+    assert out["num_failed"] == 1
+    assert "generate-response returned an error" in partial["detailed_results"][0]["error"]
 
 
 def test_eval_raises_when_chunk_unreadable(eval_lf):
@@ -254,4 +305,6 @@ def test_mark_failed_creates_row_when_no_placeholder(ddb_lf):
     ddb_lf.lambda_handler({"evaluation_id": "e9", "mark_failed": True, "error_message": "x" * 3000}, None)
     rows = ddb_lf.summaries_table.scan()["Items"]
     assert rows[0]["status"] == "FAILED"
+    # New rows carry a timezone-aware UTC timestamp.
+    assert rows[0]["Timestamp"].endswith("Z") and "T" in rows[0]["Timestamp"]
     assert len(rows[0]["error_message"]) < 2100
