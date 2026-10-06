@@ -173,6 +173,7 @@ export default function DataFileUpload({
           setUploadingIndex(Math.min(filesToUpload.length, i + 2));
         } catch (error) {
           devError(error);
+          setGlobalError(`Could not upload ${file.name}: ${Utils.getErrorMessage(error)}`);
           setUploadingStatus("error");
           hasError = true;
           break;
@@ -360,7 +361,7 @@ export default function DataFileUpload({
           />
           <Typography variant="caption">
             {uploadingStatus === "success"
-              ? "Upload complete"
+              ? "Upload complete. Click \u201cSync data now\u201d to make these files available to the assistant."
               : uploadingStatus === "error"
                 ? "Upload failed"
                 : currentFileName}

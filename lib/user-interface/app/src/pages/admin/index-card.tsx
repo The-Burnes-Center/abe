@@ -174,11 +174,13 @@ export default function IndexCard({
   }, [loadStatus]);
 
   // ── single polling mechanism for PROCESSING / newly-created NO_DATA ──
+  // Keyed on the status *value*, not the object: every poll returns a new
+  // object, and depending on it would tear down and restart the interval.
+  const statusValue = status?.status ?? null;
   useEffect(() => {
-    if (!status) return undefined;
     const shouldPoll =
-      status.status === "PROCESSING" ||
-      (pollUntilReady && status.status === "NO_DATA");
+      statusValue === "PROCESSING" ||
+      (pollUntilReady && statusValue === "NO_DATA");
     if (!shouldPoll) return undefined;
 
     const interval = setInterval(async () => {
@@ -191,7 +193,7 @@ export default function IndexCard({
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [status?.status, pollUntilReady, api, applyStatus]);
+  }, [statusValue, pollUntilReady, api, applyStatus]);
 
   // ── file selection ──
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {

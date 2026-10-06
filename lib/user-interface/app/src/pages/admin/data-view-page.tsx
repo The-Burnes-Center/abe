@@ -19,6 +19,7 @@ import { Utils } from "../../common/utils";
 import AdminPageLayout from "../../components/admin-page-layout";
 import StatusChip, { type StatusVariant } from "./status-chip";
 import type { SyncSchedule } from "../../common/api-client/sync-client";
+import { describeSchedule } from "./sync-schedule-format";
 
 export default function DataPage() {
   useDocumentTitle("Admin \u00b7 Data");
@@ -40,6 +41,7 @@ export default function DataPage() {
   } | null>(null);
   const [showUnsyncedAlert, setShowUnsyncedAlert] = useState(false);
   const [syncSchedule, setSyncSchedule] = useState<SyncSchedule | null>(null);
+  const [scheduleError, setScheduleError] = useState(false);
 
   const refreshSyncTime = useCallback(async () => {
     try {
@@ -66,7 +68,14 @@ export default function DataPage() {
 
   useEffect(() => {
     refreshSyncTime();
-    apiClient.sync.getSyncSchedule().then(setSyncSchedule).catch(() => {});
+    apiClient.sync
+      .getSyncSchedule()
+      .then(setSyncSchedule)
+      .catch((error) => {
+        // The Automation tab shows the full error; here we just stop the spinner.
+        if (import.meta.env.DEV) console.error("Could not load sync schedule:", error);
+        setScheduleError(true);
+      });
   }, [apiClient, refreshSyncTime]);
 
   const kbChipVariant = (): StatusVariant => {
@@ -94,27 +103,30 @@ export default function DataPage() {
       // admin can see *why* it failed without digging into CloudWatch.
       const base = lastSyncTime || "Sync failed";
       return lastSyncData.failureMessage
-        ? `${base} — ${lastSyncData.failureMessage}`
+        ? `${base}: ${lastSyncData.failureMessage}`
         : base;
     }
     return lastSyncTime || "";
   };
 
   const autoSyncChipVariant = (): StatusVariant => {
+    if (scheduleError) return "error";
     if (!syncSchedule) return "empty";
     if (syncSchedule.enabled) return "ready";
     return "empty";
   };
 
   const autoSyncChipLabel = (): string => {
+    if (scheduleError) return "Unavailable";
     if (!syncSchedule) return "Loading";
     if (syncSchedule.state === "NOT_FOUND") return "Not configured";
     return syncSchedule.enabled ? "Scheduled" : "Disabled";
   };
 
   const autoSyncDetail = (): string => {
+    if (scheduleError) return "Could not load the schedule";
     if (!syncSchedule) return "";
-    return syncSchedule.humanReadable ?? "";
+    return describeSchedule(syncSchedule);
   };
 
   return (
@@ -147,8 +159,9 @@ export default function DataPage() {
           severity="warning"
           onClose={() => setShowUnsyncedAlert(false)}
         >
-          Some files may have been added or modified since the last sync.
-          Please sync with the &apos;Sync data now&apos; button.
+          Some files were added or changed since the last sync. They are not
+          used by the assistant until you click &ldquo;Sync data now&rdquo; on
+          the Documents tab.
         </Alert>
       )}
 

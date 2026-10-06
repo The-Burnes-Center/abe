@@ -6,14 +6,19 @@ export interface SyncSchedule {
   state: string;
   enabled: boolean;
   dayOfWeek?: string;
-  /** Local hour in scheduleTimezone (America/New_York for new schedules) */
+  /** Local hour in the schedule's time zone (see scheduleTimezone) */
   hour?: number;
   minute?: number;
+  /** IANA zone the schedule fires in, as stored on the EventBridge schedule */
   scheduleTimezone?: string;
-  /** True when the schedule is still in UTC; UI uses hour/minute as next run in Eastern */
+  /**
+   * True when the schedule is still a legacy UTC cron. hour/minute/dayOfWeek
+   * then describe the next run converted to the backend's target zone, while
+   * scheduleTimezone reports "UTC".
+   */
   legacyUtc?: boolean;
   humanReadable?: string;
-  /** Only when legacy UTC — raw cron in UTC for reference */
+  /** Only when legacy UTC: raw cron in UTC for reference */
   hourUtc?: number;
   minuteUtc?: number;
   dayOfWeekUtc?: string;
@@ -61,7 +66,9 @@ export class SyncClient {
         Authorization: auth,
       },
     });
-    if (!response.ok) throw new Error("Failed to get sync schedule");
+    if (!response.ok) {
+      throw new Error(await Utils.extractServerError(response, "Failed to load the sync schedule."));
+    }
     return response.json();
   }
 
@@ -80,7 +87,9 @@ export class SyncClient {
       },
       body: JSON.stringify({ dayOfWeek, hour, minute, enabled }),
     });
-    if (!response.ok) throw new Error("Failed to update sync schedule");
+    if (!response.ok) {
+      throw new Error(await Utils.extractServerError(response, "Failed to update the sync schedule."));
+    }
     return response.json();
   }
 
@@ -92,7 +101,9 @@ export class SyncClient {
         Authorization: auth,
       },
     });
-    if (!response.ok) throw new Error("Failed to get sync destinations");
+    if (!response.ok) {
+      throw new Error(await Utils.extractServerError(response, "Failed to load upload destinations."));
+    }
     return response.json();
   }
 
@@ -107,7 +118,9 @@ export class SyncClient {
         },
       }
     );
-    if (!response.ok) throw new Error("Failed to get sync history");
+    if (!response.ok) {
+      throw new Error(await Utils.extractServerError(response, "Failed to load sync history."));
+    }
     return response.json();
   }
 
@@ -124,14 +137,7 @@ export class SyncClient {
       // Surface the backend's specific error (e.g. "Model access is denied
       // due to ...") instead of a generic "Failed to trigger sync" message
       // that gives admins no clue what's actually wrong.
-      let serverMessage: string | undefined;
-      try {
-        const errorBody = await response.json();
-        serverMessage = errorBody?.error || errorBody?.message;
-      } catch {
-        // Response body wasn't JSON; fall through to generic message.
-      }
-      throw new Error(serverMessage ?? "Failed to trigger sync.");
+      throw new Error(await Utils.extractServerError(response, "Failed to trigger sync."));
     }
     return response.json();
   }
