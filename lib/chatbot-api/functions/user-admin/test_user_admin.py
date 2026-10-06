@@ -146,6 +146,17 @@ def test_self_guard_matches_url_encoded_email(ctx):
     assert resp["statusCode"] == 400
 
 
+def test_disable_and_demote_revoke_sessions(ctx):
+    lf, *_ = ctx
+    username = _invite(lf, is_admin=True)["json"]["user"]["username"]
+    with patch.object(lf.cognito, "admin_user_global_sign_out", wraps=lf.cognito.admin_user_global_sign_out) as sign_out:
+        assert _call(lf, "POST", f"/admin/users/{username}/admin", {"isAdmin": False})["statusCode"] == 200
+        assert _call(lf, "POST", f"/admin/users/{username}/disable")["statusCode"] == 200
+        assert _call(lf, "POST", f"/admin/users/{username}/admin", {"isAdmin": True})["statusCode"] == 200
+        assert _call(lf, "POST", f"/admin/users/{username}/enable")["statusCode"] == 200
+    assert [c.kwargs["Username"] for c in sign_out.call_args_list] == [username, username]
+
+
 def test_disable_enable_delete(ctx):
     lf, idp, pool_id, _ = ctx
     username = _invite(lf)["json"]["user"]["username"]

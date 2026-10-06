@@ -98,6 +98,13 @@ def _get_user(username: str) -> dict:
     return cognito.admin_get_user(UserPoolId=USER_POOL_ID, Username=username)
 
 
+def _sign_out_everywhere(username: str) -> None:
+    """Revoke the user's refresh tokens so a disabled or demoted user can't keep
+    minting tokens. ID tokens already issued stay valid until they expire
+    (Cognito default: 1 hour), so admin rights end at the latest then."""
+    cognito.admin_user_global_sign_out(UserPoolId=USER_POOL_ID, Username=username)
+
+
 def _ensure_not_self(event, username: str, action: str) -> dict:
     user = _get_user(username)
     if _caller_ids(event) & _target_ids(user):
@@ -169,6 +176,8 @@ def set_admin(event, username: str) -> dict:
     else:
         user = _ensure_not_self(event, username, "remove admin access from")
         cognito.admin_remove_user_from_group(UserPoolId=USER_POOL_ID, Username=user["Username"], GroupName=ADMIN_GROUP_NAME)
+        # Their current tokens still carry cognito:groups=Admin; force a re-login.
+        _sign_out_everywhere(user["Username"])
     _audit(event, "admin_granted" if is_admin else "admin_revoked", username)
     return json_response(200, {"username": user["Username"], "isAdmin": is_admin})
 
@@ -176,6 +185,7 @@ def set_admin(event, username: str) -> dict:
 def disable_user(event, username: str) -> dict:
     user = _ensure_not_self(event, username, "disable")
     cognito.admin_disable_user(UserPoolId=USER_POOL_ID, Username=user["Username"])
+    _sign_out_everywhere(user["Username"])
     _audit(event, "user_disabled", username)
     return json_response(200, {"username": user["Username"], "enabled": False})
 
