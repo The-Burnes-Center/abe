@@ -1,10 +1,13 @@
-"""Generate ABE architecture diagram using the Python diagrams DSL.
+"""Generate the ABE architecture diagram using the Python diagrams DSL.
 
 Render with:
-    python -m venv .venv && . .venv/bin/activate
+    python3 -m venv .venv && . .venv/bin/activate
     pip install diagrams           # requires the graphviz `dot` binary on PATH
     python docs/generate_architecture.py
 Produces docs/architecture.png.
+
+Keep this in step with lib/chatbot-api/index.ts (routes) and
+lib/chatbot-api/functions/*.ts (Lambdas) when the architecture changes.
 """
 import os
 from diagrams import Diagram, Cluster, Edge
@@ -18,22 +21,25 @@ from diagrams.aws.storage import S3
 from diagrams.aws.analytics import AmazonOpensearchService
 from diagrams.aws.management import Cloudwatch
 from diagrams.onprem.client import Users
-from diagrams.programming.framework import React
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 graph_attr = {
-    "fontsize": "14",
+    "fontsize": "22",
     "fontname": "Helvetica",
     "bgcolor": "white",
     "pad": "0.5",
-    "nodesep": "0.6",
+    "nodesep": "0.5",
     "ranksep": "1.1",
+    "labelloc": "b",
+    "splines": "spline",
 }
 
 edge_attr = {
     "color": "#555555",
-    "penwidth": "1.5",
+    "penwidth": "1.4",
+    "fontsize": "10",
+    "fontname": "Helvetica",
 }
 
 node_attr = {
@@ -42,7 +48,7 @@ node_attr = {
 }
 
 with Diagram(
-    "ABE",
+    "ABE \u00b7 AI for Impact",
     show=False,
     filename="architecture",
     outformat="png",
@@ -51,102 +57,84 @@ with Diagram(
     edge_attr=edge_attr,
     node_attr=node_attr,
 ):
-    users = Users("Users")
+    users = Users("Users\n(browser)")
 
-    with Cluster("CDN & Auth"):
-        waf = WAF("WAF")
+    with Cluster("Web app and sign-in"):
+        waf = WAF("WAF\n(us-east-1 only)")
         cf = CloudFront("CloudFront")
-        cognito = Cognito("Cognito\n(OIDC / SSO)")
-        frontend = React("React App\n(Vite + MUI)")
+        site = S3("S3\nReact app")
+        cognito = Cognito("Cognito user pool\nemail + password, TOTP\nAdmin group, invite-only")
+        presignup = Lambda("PreSignUp\n(domain allowlist)")
 
-    with Cluster("API Layer"):
-        rest = APIGateway("REST API")
-        ws = APIGateway("WebSocket API")
-        authorizer = Lambda("JWT Authorizer\n(Lambda)")
+    with Cluster("APIs"):
+        http = APIGateway("HTTP API\n(Cognito JWT)")
+        ws = APIGateway("WebSocket API\n(JWT authorizer on $connect)")
 
-    with Cluster("Chat & RAG"):
-        chat_fn = Lambda("Chat Lambda\n(Node.js, agentic loop)")
-        bedrock_chat = Bedrock("Bedrock\nClaude Opus 4.6 / Sonnet 4.6")
+    with Cluster("Chat"):
+        chat = Lambda("Chat Lambda\n(agentic tool loop)")
+        claude = Bedrock("Bedrock\nClaude Opus 4.6 / Sonnet 4.6")
         kb = Bedrock("Bedrock\nKnowledge Base")
-        opensearch = AmazonOpensearchService("OpenSearch\nServerless")
+        aoss = AmazonOpensearchService("OpenSearch\nServerless")
+        idx_query = Lambda("Excel index\nquery")
+        helpers = Lambda("Helper Lambdas\nmetadata retrieval,\ncontext summarizer,\nFAQ classifier")
 
-    with Cluster("Excel Index"):
-        idx_query = Lambda("Index Query\nLambda")
-        idx_parser = Lambda("Index Parser\nLambda (S3 trigger)")
-        idx_ddb = Dynamodb("DynamoDB\nExcelIndexData")
-        idx_s3 = S3("S3\nContract Index Bucket")
+    app_fns = Lambda("App and admin Lambdas\nsessions, feedback, metrics,\nusers, documents, indexes,\nsync schedule, presign")
+    ddb = Dynamodb("DynamoDB\nsessions, feedback, traces,\nprompts, analytics")
 
-    with Cluster("Data Ingestion & Sync"):
-        upload_fn = Lambda("Upload / Knowledge\nMgmt Lambdas")
-        staging_s3 = S3("S3\nData Staging")
-        sync_fn = Lambda("Sync Orchestrator\nLambda")
-        eventbridge = Eventbridge("EventBridge\nScheduler (weekly)")
-        kb_s3 = S3("S3\nKnowledge Source")
+    with Cluster("Knowledge sources and sync"):
+        staging = S3("S3 staging bucket\ndocuments/ indexes/")
+        orchestrator = Lambda("Sync orchestrator")
+        scheduler = Eventbridge("EventBridge Scheduler\nweekly sync, hourly backfill")
+        kb_s3 = S3("S3 knowledge bucket")
+        meta_fn = Lambda("Metadata handler\n(document summaries)")
+        idx_s3 = S3("S3 index bucket\nindexes/{id}/latest.xlsx")
+        parser = Lambda("Excel parser")
+        idx_ddb = Dynamodb("DynamoDB\nExcel index + registry")
 
-    with Cluster("Sessions & Feedback"):
-        session_fn = Lambda("Session / Feedback\nLambdas (Python)")
-        session_ddb = Dynamodb("DynamoDB\nSessions & Feedback")
-
-    with Cluster("LLM Evaluation Pipeline"):
-        sfn = StepFunctions("Step Functions\n(Split > RAGAS > Agg > Save)")
-        eval_ddb = Dynamodb("DynamoDB\nEval Results")
-        eval_s3 = S3("S3\nEval Results")
-
-    with Cluster("Feedback to Test Library"):
-        sqs = SQS("SQS Queue\n(+ DLQ)")
-        process_fn = Lambda("Process Lambda")
-        rewrite = Bedrock("Bedrock\n(Rewrite Q)")
-        test_lib = Dynamodb("DynamoDB\nTest Library")
-
-    with Cluster("Analytics"):
-        faq_fn = Lambda("FAQ Classifier\nLambda")
-        analytics_ddb = Dynamodb("DynamoDB\nAnalytics")
+    with Cluster("Quality (eval is optional: enableEval)"):
+        sqs = SQS("SQS + DLQ\n(admin-promoted feedback)")
+        process = Lambda("Test library\nprocess")
+        sfn = StepFunctions("Step Functions\nRAGAS evaluation")
+        eval_store = Dynamodb("DynamoDB + S3\ntest library, results")
 
     with Cluster("Monitoring"):
-        cw = Cloudwatch("CloudWatch\nDashboard + Alarms")
-        sns = SNS("SNS\nEmail Alerts")
+        cw = Cloudwatch("CloudWatch\ndashboard + alarms")
+        sns = SNS("SNS email")
 
-    # User > CDN > Frontend > API
-    users >> waf >> cf >> frontend
-    cognito - Edge(style="dashed", label="Auth") - cf
-    frontend >> rest
-    frontend >> ws
+    # Web delivery and sign-in
+    users >> waf >> cf >> site
+    users >> Edge(label="sign in", style="dashed") >> cognito
+    cognito >> Edge(style="dashed", label="trigger") >> presignup
+    users >> Edge(label="REST") >> http
+    users >> Edge(label="chat stream") >> ws
 
-    # WebSocket connect is JWT-authorized by a Lambda authorizer
-    ws >> Edge(style="dashed", label="JWT") >> authorizer
+    # Chat flow and the four tools
+    ws >> chat
+    chat >> Edge(label="LLM") >> claude
+    chat >> Edge(label="query_db,\nretrieve_full_document") >> kb >> aoss
+    chat >> Edge(label="query_excel_index") >> idx_query >> idx_ddb
+    chat >> Edge(label="fetch_metadata") >> helpers
+    chat >> Edge(label="history") >> ddb
 
-    # Chat flow + agent tools
-    ws >> chat_fn
-    chat_fn >> Edge(label="LLM") >> bedrock_chat
-    chat_fn >> Edge(label="query_db") >> kb >> opensearch
-    chat_fn >> Edge(label="query_excel_index") >> idx_query >> idx_ddb
+    # REST routes
+    http >> app_fns >> ddb
+    app_fns >> Edge(label="invites,\nroles") >> cognito
+    app_fns >> Edge(label="presigned PUT\n(browser uploads direct)") >> kb_s3
+    app_fns >> Edge(label="presigned PUT") >> idx_s3
+    app_fns >> Edge(label="sync now") >> orchestrator
+    http >> Edge(label="run eval") >> sfn >> eval_store
+    app_fns >> Edge(label="promote\nfeedback") >> sqs >> process >> eval_store
 
-    # Excel index ingestion: index bucket S3 event -> parser -> DynamoDB
-    idx_s3 >> Edge(label="S3 event") >> idx_parser >> idx_ddb
-
-    # Data ingestion & sync: upload to staging, then orchestrator fans out
-    rest >> upload_fn >> Edge(label="upload") >> staging_s3
-    eventbridge >> Edge(label="weekly") >> sync_fn
-    rest >> Edge(label="sync now") >> sync_fn
-    staging_s3 >> sync_fn
-    sync_fn >> Edge(label="docs") >> kb_s3
-    sync_fn >> Edge(label="indexes") >> idx_s3
-    sync_fn >> Edge(label="start ingestion") >> kb
-    kb_s3 >> kb
-
-    # Sessions & feedback
-    rest >> session_fn >> session_ddb
-
-    # Eval pipeline
-    rest >> sfn
-    sfn >> eval_ddb
-    sfn >> eval_s3
-
-    # Positive feedback > Test Library (SQS-buffered LLM rewrite)
-    session_fn >> Edge(label="thumbs-up") >> sqs >> process_fn >> rewrite >> test_lib
-
-    # Analytics
-    chat_fn - Edge(style="dashed") - faq_fn >> analytics_ddb
+    # Ingestion
+    kb_s3 >> Edge(label="ingestion") >> kb
+    kb_s3 >> Edge(label="S3 event") >> meta_fn >> claude
+    idx_s3 >> Edge(label="S3 event") >> parser >> idx_ddb
+    scheduler >> orchestrator
+    staging >> orchestrator
+    orchestrator >> Edge(label="documents") >> kb_s3
+    orchestrator >> Edge(label="indexes") >> idx_s3
+    orchestrator >> Edge(label="start ingestion") >> kb
+    orchestrator >> Edge(label="backfill", style="dashed") >> meta_fn
 
     # Monitoring
     cw >> sns
