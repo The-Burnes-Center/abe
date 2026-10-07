@@ -12,7 +12,7 @@ it and uploads it to S3 behind CloudFront, together with a generated
 ## Run it locally
 
 You need a deployed stack (the app talks to the real Cognito pool and APIs) and
-Node.js 20.
+Node.js 22.
 
 ```bash
 cd lib/user-interface/app
@@ -31,8 +31,8 @@ aws cloudformation describe-stacks --stack-name <STACK_NAME> --query "Stacks[0].
 | `.env` key | Stack output |
 |------------|--------------|
 | `ABE_REGION` | the region you deployed to |
-| `ABE_USER_POOL_ID` | `UserPool ID` |
-| `ABE_USER_POOL_CLIENT_ID` | `UserPool Client ID` |
+| `ABE_USER_POOL_ID` | `UserPoolId` |
+| `ABE_USER_POOL_CLIENT_ID` | `UserPoolClientId` |
 | `ABE_HTTP_ENDPOINT` | `HTTP-API - apiEndpoint` |
 | `ABE_WS_ENDPOINT` | `WS-API - apiEndpoint` followed by `/prod` |
 | `ABE_SELF_SIGNUP_ENABLED` | `true` only if the stack allows self sign-up |

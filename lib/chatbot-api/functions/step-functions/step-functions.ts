@@ -12,7 +12,7 @@ import { StateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import * as stepfunctions from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { ADMIN_GROUP_NAME, BRAND_PROMPT_ENV, EVAL_METRICS_NAMESPACE, PROMPT_FAMILY } from '../../../constants';
-import { anthropicInvokeResources, guardrailEnv, ModelIds } from '../../../shared/bedrock';
+import { anthropicInvokeResources, guardrailEnv, guardrailPolicy, ModelIds } from '../../../shared/bedrock';
 import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, nodeCode, pythonCode } from '../../../shared/lambda-defaults';
 
 interface StepFunctionsStackProps {
@@ -143,6 +143,8 @@ export class StepFunctionsStack extends Construct {
             },
             timeout: GENERATE_RESPONSE_TIMEOUT,
         });
+        const evalGuardrail = guardrailPolicy(this);
+        if (evalGuardrail) generateResponseFunction.addToRolePolicy(evalGuardrail);
         generateResponseFunction.addToRolePolicy(new iam.PolicyStatement({
             effect: iam.Effect.ALLOW,
             actions: [

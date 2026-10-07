@@ -107,6 +107,11 @@ export class ABEStack extends cdk.Stack {
       },
       {
         id: 'AwsSolutions-IAM5',
+        reason: 'An opt-in KB parser inference profile (-c kbParserModel=<geo>.<model>) routes to its model in any region of the profile, so the underlying foundation-model grant needs a region wildcard. The model id itself is fixed.',
+        appliesTo: [{ regex: '/^Resource::arn:<AWS::Partition>:bedrock:\\*::foundation-model\\/[A-Za-z0-9.:-]+$/' }],
+      },
+      {
+        id: 'AwsSolutions-IAM5',
         reason: 'WebSocket connection management requires @connections/* to send messages to any connected client of this API.',
         appliesTo: [{ regex: '/^Resource::arn:.+:execute-api:.+:<.*WSAPI.*>\\/\\*\\/\\*\\/@connections\\/\\*$/' }],
       },

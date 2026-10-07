@@ -10,6 +10,7 @@ import LandingPage from "./pages/landing-page";
 import LandingPageInfo from "./pages/landing-page-info";
 import LandingPageStart from "./pages/landing-page-start";
 import AdminRoute from "./components/admin-route";
+import EvalRoute from "./components/eval-route";
 import "./styles/app.scss";
 
 const Playground = React.lazy(() => import("./pages/chatbot/playground/playground"));
@@ -103,7 +104,7 @@ function App() {
                     <Route path="user-feedback" element={<UserFeedbackPage />} />
                     <Route path="user-feedback/:feedbackId" element={<UserFeedbackDetailPage />} />
                     <Route path="metrics" element={<MetricsPage />} />
-                    <Route path="llm-evaluation" element={<Outlet />}>
+                    <Route path="llm-evaluation" element={<EvalRoute />}>
                       <Route index element={<LlmEvaluationPage />} />
                       <Route
                         path=":evaluationId"

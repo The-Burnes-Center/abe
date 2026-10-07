@@ -95,6 +95,30 @@ describe('synth health', () => {
     expect(nagErrors(stack)).toEqual([]);
   });
 
+  test.each([
+    ['foundation model', 'anthropic.claude-3-5-sonnet-20240620-v1:0'],
+    ['inference profile', 'us.anthropic.claude-sonnet-4-6'],
+  ])('opt-in KB parser model (%s) has no cdk-nag errors', (_kind, model) => {
+    const { stack } = synth({ context: { kbParserModel: model } });
+    expect(nagErrors(stack)).toEqual([]);
+  });
+
+  test('a configured guardrail grants ApplyGuardrail to the chat Lambda', () => {
+    process.env.GUARDRAIL_ID = 'gr-test123';
+    try {
+      const { template: t } = synth();
+      t.hasResourceProperties('AWS::IAM::Policy', {
+        PolicyDocument: {
+          Statement: Match.arrayWith([
+            Match.objectLike({ Action: 'bedrock:ApplyGuardrail' }),
+          ]),
+        },
+      });
+    } finally {
+      delete process.env.GUARDRAIL_ID;
+    }
+  });
+
   test('rejects an invalid sign-up domain at synth', () => {
     expect(() => synth({ context: { allowedSignupDomains: 'not a domain' } })).toThrow(/allowedSignupDomains/);
   });

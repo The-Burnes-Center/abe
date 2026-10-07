@@ -121,11 +121,17 @@ jobs:
         # module so a deployment can brand itself without editing config.
         run: npm run brand:sync
 
-      - name: Bootstrap CDK environment
-        # Idempotent: a no-op when the bootstrap stack is already current.
+      - name: Bootstrap CDK environment (first deploy only)
+        # Only bootstraps when the CDKToolkit stack is missing, so a deploy role
+        # without bootstrap permissions still deploys to a bootstrapped account.
+        # A real bootstrap failure on a fresh account still fails the job.
         run: |
-          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-          npx cdk bootstrap "aws://${ACCOUNT}/${AWS_REGION}"
+          if aws cloudformation describe-stacks --stack-name CDKToolkit >/dev/null 2>&1; then
+            echo "CDKToolkit already exists; skipping bootstrap."
+          else
+            ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+            npx cdk bootstrap "aws://${ACCOUNT}/${AWS_REGION}"
+          fi
 
       - name: Wait for stack to reach a stable state
         run: |

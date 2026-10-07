@@ -1,4 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { IConstruct } from 'constructs';
 
 const PRIMARY_MODEL = 'anthropic.claude-opus-4-6-v1';
@@ -40,6 +41,21 @@ export function guardrailEnv(): Record<string, string> {
     GUARDRAIL_ID: process.env.GUARDRAIL_ID || '',
     GUARDRAIL_VERSION: process.env.GUARDRAIL_VERSION || '1',
   };
+}
+
+/**
+ * ApplyGuardrail grant for the configured guardrail, or undefined when no
+ * guardrail is set. Bedrock checks this permission whenever a request passes
+ * guardrailIdentifier, so chat breaks without it once GUARDRAIL_ID is set.
+ */
+export function guardrailPolicy(scope: IConstruct): iam.PolicyStatement | undefined {
+  const id = process.env.GUARDRAIL_ID;
+  if (!id) return undefined;
+  const { partition, region, account } = cdk.Stack.of(scope);
+  return new iam.PolicyStatement({
+    actions: ['bedrock:ApplyGuardrail'],
+    resources: [`arn:${partition}:bedrock:${region}:${account}:guardrail/${id}`],
+  });
 }
 
 /**

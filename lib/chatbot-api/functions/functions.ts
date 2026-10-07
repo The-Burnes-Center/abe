@@ -51,7 +51,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { SyncFunctions } from './sync-functions';
 import { ExcelIndexFunctions } from './excel-index-functions';
 import { ADMIN_GROUP_NAME, BRAND_PROMPT_ENV, BRAND_TIMEZONE, METRICS_NAMESPACE, PROMPT_FAMILY } from '../../constants';
-import { anthropicInvokeResources, guardrailEnv, ModelIds, modelIds } from '../../shared/bedrock';
+import { anthropicInvokeResources, guardrailEnv, guardrailPolicy, ModelIds, modelIds } from '../../shared/bedrock';
 import { LAMBDA_DEFAULTS, NODE_RUNTIME, PYTHON_RUNTIME, nodeCode, pythonBundledCode, pythonCode } from '../../shared/lambda-defaults';
 
 interface LambdaFunctionStackProps {
@@ -180,6 +180,8 @@ export class LambdaFunctionStack extends Construct {
           // socket stays alive throughout an active turn.
           timeout: cdk.Duration.minutes(15),
         });
+        const chatGuardrail = guardrailPolicy(scope);
+        if (chatGuardrail) websocketAPIFunction.addToRolePolicy(chatGuardrail);
         websocketAPIFunction.addToRolePolicy(new iam.PolicyStatement({
           effect: iam.Effect.ALLOW,
           actions: [
@@ -569,6 +571,8 @@ metricsHandlerFunction.addToRolePolicy(new iam.PolicyStatement({
   actions: [
     'dynamodb:Scan',
     'dynamodb:Query',
+    // Legacy sessions without message_count are counted via BatchGetItem.
+    'dynamodb:BatchGetItem',
   ],
   resources: [
     props.sessionTable.tableArn,
