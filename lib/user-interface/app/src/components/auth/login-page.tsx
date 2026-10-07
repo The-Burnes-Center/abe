@@ -159,7 +159,7 @@ export default function LoginPage({ onSignedIn, selfSignUpEnabled = false }: Log
       case "CONTINUE_SIGN_IN_WITH_MFA_SETUP_SELECTION": {
         // Authenticator apps are the supported method; pick TOTP when offered.
         const allowed = nextStep.allowedMFATypes ?? [];
-        const choice = allowed.includes("TOTP") ? "TOTP" : allowed[0];
+        const choice = allowed.includes("TOTP") ? "TOTP" : undefined;
         if (!choice) break;
         const { nextStep: following } = await confirmSignIn({ challengeResponse: choice });
         await handleSignInStep(following as SignInNextStep);

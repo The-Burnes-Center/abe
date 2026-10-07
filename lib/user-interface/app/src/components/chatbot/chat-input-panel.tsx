@@ -64,6 +64,9 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
   const { addNotification } = useNotifications();
   const messageHistoryRef = useRef<ChatBotHistoryItem[]>([]);
   const handleSendRef = useRef<(msg?: string) => Promise<void>>();
+  // Set synchronously so two quick sends can't both pass the running check
+  // while getCurrentUser() is still resolving.
+  const sendingRef = useRef(false);
   // Text already in the box when dictation started, so live speech is appended
   // to it rather than overwriting it.
   const dictationBaseRef = useRef("");
@@ -110,7 +113,8 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
   };
 
   const handleSendMessage = async (overrideMessage?: string) => {
-    if (props.running) return;
+    if (props.running || sendingRef.current) return;
+    sendingRef.current = true;
 
     let username: string | undefined;
     try {
@@ -119,13 +123,18 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
     } catch {
       // Session is gone/expired — bounce the user to re-authenticate rather than
       // stranding them with a notification they can't act on.
+      sendingRef.current = false;
       Utils.redirectToLogin();
       return;
     }
-    if (!username) return;
+    if (!username) {
+      sendingRef.current = false;
+      return;
+    }
 
     const messageToSend = (overrideMessage ?? state.value).trim();
     if (messageToSend.length === 0) {
+      sendingRef.current = false;
       addNotification("error", "Type a message before sending.");
       return;
     }
@@ -201,6 +210,7 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
         if (firstMessage) {
           Utils.delay(1500).then(() => setNeedsRefresh(true));
         }
+        sendingRef.current = false;
         props.setRunning(false);
       },
 
@@ -217,6 +227,7 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
           "error",
           `${message || "Sorry, something went wrong."} Your message is back in the box so you can try again.`
         );
+        sendingRef.current = false;
         props.setRunning(false);
       },
     });
@@ -301,14 +312,15 @@ const ChatInputPanel = forwardRef<HTMLTextAreaElement, ChatInputPanelProps>(
                 <IconButton
                   onClick={() => {
                     props.onStop?.();
+                    sendingRef.current = false;
                     props.setRunning(false);
                     props.setStreamingStatus({ text: "", active: false });
-                    // The answer arrives in one frame at the end, so on stop the
-                    // assistant bubble is still empty — drop it instead of leaving
-                    // a blank response on screen.
+                    // The server discards a stopped answer, so drop the partial
+                    // assistant bubble too: it would vanish on reload anyway and
+                    // must not leak into the next request's history.
                     const hist = props.messageHistory;
                     const last = hist[hist.length - 1];
-                    if (last && last.type === ChatBotMessageType.AI && !last.content?.trim()) {
+                    if (last && last.type === ChatBotMessageType.AI) {
                       props.setMessageHistory(hist.slice(0, -1));
                     }
                   }}

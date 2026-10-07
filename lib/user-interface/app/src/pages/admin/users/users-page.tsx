@@ -51,6 +51,9 @@ export default function UsersPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [me, setMe] = useState<CurrentIdentity | null>(null);
+  // Row actions stay disabled until we know who "me" is, so self-actions are
+  // never offered by mistake while the session is still loading.
+  const [meResolved, setMeResolved] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [busyUser, setBusyUser] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AdminUser | null>(null);
@@ -73,7 +76,8 @@ export default function UsersPage() {
     void load();
     fetchAuthSession()
       .then((session) => setMe(identityFromPayload(session.tokens?.idToken?.payload)))
-      .catch(() => setMe(null));
+      .catch(() => setMe(null))
+      .finally(() => setMeResolved(true));
   }, [load]);
 
   const loadMore = async () => {
@@ -231,7 +235,7 @@ export default function UsersPage() {
                     key={user.username}
                     user={user}
                     isSelf={isSelfUser(user, me)}
-                    busy={busyUser === user.username}
+                    busy={busyUser === user.username || !meResolved}
                     onAction={handleAction}
                   />
                 ))}

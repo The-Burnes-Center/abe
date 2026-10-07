@@ -21,7 +21,7 @@
 | `/help` | BaseAppLayout | Typically authenticated shell | Tabs: tips / about / support |
 | `*` (catch-all) | — | Redirects to **new** `/chatbot/playground/<uuid>` | See §8 |
 
-**Admin nav** ([`navigation-panel.tsx`](../src/components/navigation-panel.tsx)): links shown only when Cognito `custom:role` includes `Admin` or `Master Admin`.
+**Admin nav** ([`navigation-panel.tsx`](../src/components/navigation-panel.tsx)): links shown only to members of the Cognito `Admin` group (`isAdmin()` in [`common/auth.ts`](../src/common/auth.ts)); `/admin/*` is also route-guarded.
 
 ---
 

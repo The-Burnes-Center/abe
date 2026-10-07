@@ -62,7 +62,7 @@ const SourcesPanel = forwardRef<HTMLDivElement, SourcesPanelProps>(function Sour
             const openSource = () => {
               if (group.s3Key && onOpenSource) {
                 onOpenSource(group.s3Key);
-              } else if (legacyUri) {
+              } else if (legacyUri && /^https?:\/\//i.test(legacyUri)) {
                 window.open(legacyUri, "_blank", "noopener,noreferrer");
               }
             };
