@@ -10,7 +10,7 @@ Thanks for helping. This guide covers setting up a development environment, how 
 
 ## Development setup
 
-Prerequisites: Node.js 22 (`.nvmrc` pins it, `nvm use` picks it up), Docker running (needed to synthesize the stack, see below), and Python 3.12 if you want to run the Python tests. You do not need an AWS account to run the unit tests.
+Prerequisites: Git, Node.js 22 (`.nvmrc` pins it, `nvm use` picks it up), Docker running (needed to run `cdk synth` and `cdk deploy`, see below), and Python 3.12 if you want to run the Python tests. You do not need an AWS account to run the unit tests.
 
 ```bash
 git clone https://github.com/The-Burnes-Center/abe.git
@@ -79,7 +79,7 @@ Match the surrounding code's idiom, comment density and naming. The project conv
 
 ### Branding
 
-If you change `config/brand.ts`, run `npm run brand:sync` and commit the regenerated files under `lib/user-interface/app` (`src/common/brand.ts`, `public/manifest.json`). CI deploys do not regenerate them.
+If you change `config/brand.ts`, run `npm run brand:sync` and commit the regenerated files under `lib/user-interface/app` (`src/common/brand.ts`, `public/manifest.json`). A plain `npx cdk deploy` and the tests do not regenerate them (the deploy workflow does, but only to apply brand Variables).
 
 ### Docs
 

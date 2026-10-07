@@ -56,12 +56,12 @@ Everything else (documents, users, feedback, sync, metrics) goes through an HTTP
 
 ## Quick start
 
-These steps take you from nothing to a working deployment in your own AWS account.
+These steps take you from nothing to a working deployment in your own AWS account. The stack costs roughly $190 to $200 per month while idle, almost all of it OpenSearch Serverless (see [Costs](#costs)), so plan to tear it down if you are only trying it out.
 
 ### 1. Prerequisites
 
 - An AWS account and credentials for it (for example `aws configure` or SSO). The identity needs permission to create IAM roles and the services in the stack. An administrator role is the simplest for the first deploy.
-- Node.js 22 (the repo pins it in `.nvmrc`; `nvm use` picks it up).
+- Git and Node.js 22 (the repo pins it in `.nvmrc`; `nvm use` picks it up). Node.js 22 is in Maintenance LTS and gets security fixes until 30 April 2027, and the Lambda runtime the stack uses (`nodejs22.x`) is scheduled for deprecation on 30 April 2027. Plan a move to Node.js 24 (the current Active LTS) before then by changing `NODE_RUNTIME` in `lib/shared/lambda-defaults.ts` and `.nvmrc`.
 - AWS CLI v2.
 - AWS CDK v2. The repo depends on it, so `npx cdk` works without a global install.
 - Docker, running, for every synth and deploy. CDK builds the Python Lambdas that have pip dependencies inside a container, and builds the evaluation image (skipped only when `enableEval=false`, but the Python bundling still needs Docker).
@@ -69,16 +69,16 @@ These steps take you from nothing to a working deployment in your own AWS accoun
 
 ### 2. Choose a region
 
-`us-east-1` is the region this project is tested in, and the only one where the CloudFront web application firewall (WAF) is created. The WAF must live in `us-east-1`, so in any other region the stack deploys without it and prints a synth warning. Everything else works in other regions where Bedrock, OpenSearch Serverless and the models below are available.
+`us-east-1` is the region this project is tested in, and the only one where the CloudFront web application firewall (WAF) is created. The WAF must live in `us-east-1`, so in any other region the stack deploys without it and prints a synth warning. Everything else works in other regions where Bedrock, OpenSearch Serverless and the models below are available (Titan Text Embeddings V2, for example, is not offered in every region, so check the model's region list first).
 
 ```bash
 export AWS_REGION=us-east-1
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
-### 3. Turn on Bedrock model access
+### 3. Check Bedrock model access
 
-In the Bedrock console for your region, make sure these models are available to your account:
+Bedrock no longer has a separate model access page for most models. Serverless foundation models are enabled by default, and the first call to a third-party model subscribes your account to it automatically through AWS Marketplace. The stack uses these models by default:
 
 | Use | Model | ID the stack uses by default |
 |-----|-------|------------------------------|
@@ -86,30 +86,40 @@ In the Bedrock console for your region, make sure these models are available to 
 | Titles, summaries, topic classification, context compaction | Claude Sonnet 4.6 | `us.anthropic.claude-sonnet-4-6` |
 | Embeddings (Knowledge Base and evaluations) | Amazon Titan Text Embeddings V2 | `amazon.titan-embed-text-v2:0` |
 
-The `us.` prefix is a cross-region inference profile. The stack picks the prefix from the stack's region: `us.` for `us-*`, `eu.` for `eu-*`, `apac.` for `ap-*`, and `global.` for other regions. Override either model with the `PRIMARY_MODEL_ID` and `FAST_MODEL_ID` environment variables (see [Deployment settings](#deployment-settings)).
+Before the first chat, do this once with an administrator identity (not the stack's Lambda roles, which have no Marketplace permissions):
 
-Anthropic models ask first-time users to submit a short use-case form. Submit it once for the account (Bedrock console, model catalog, or by invoking a Claude model in the playground) before you deploy, or the first chat request fails with an access error.
+1. Make sure the identity has `aws-marketplace:Subscribe`, `aws-marketplace:Unsubscribe` and `aws-marketplace:ViewSubscriptions`, and that the account has a valid payment method.
+2. Open each Claude model in the Bedrock console (model catalog, then the playground) in your region and send one message. Anthropic also requires a one-time use-case form (company name, website, intended users, use case) per account, or once at the management account of an AWS Organization. The console shows the form the first time you open a Claude model. You can also submit it with `aws bedrock put-use-case-for-model-access`.
+3. If the first request still returns `AccessDeniedException`, wait a few minutes (the subscription can take up to 15 minutes to finish) and retry.
 
-### 4. Bootstrap CDK
+The `us.` prefix is a cross-region inference profile. The stack picks the prefix from its region: `us.` for `us-*`, `eu.` for `eu-*`, `apac.` for `ap-*`, and `global.` for every other region. The Bedrock model cards list only `us.`, `eu.`, `au.` and `global.` profiles for Opus 4.6, plus `jp.` for Sonnet 4.6, so in an `ap-*` region set `PRIMARY_MODEL_ID` and `FAST_MODEL_ID` yourself (for example `global.anthropic.claude-opus-4-6-v1` and `global.anthropic.claude-sonnet-4-6`). Override either model with those environment variables (see [Deployment settings](#deployment-settings)).
 
-Once per account and region:
+Bedrock lists Opus 4.6 and Sonnet 4.6 as active, with end of life no sooner than February 2027, and newer Claude models exist. To use one, set the two variables to its ID or inference profile ID.
 
-```bash
-npx cdk bootstrap
-```
-
-### 5. Install, build and deploy
+### 4. Clone and install
 
 ```bash
-git clone https://github.com/The-Burnes-Center/abe.git
+git clone https://github.com/The-Burnes-Center/abe.git   # or your fork
 cd abe
 nvm use
 npm ci
-npm run build        # optional: compiles the CDK app and refreshes the brand files
+```
+
+### 5. Bootstrap CDK and deploy
+
+Bootstrap once per account and region. It creates the CDK toolkit stack that holds deployment assets:
+
+```bash
+npx cdk bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/$AWS_REGION
+```
+
+Then deploy:
+
+```bash
 npx cdk deploy       # or: npm run deploy
 ```
 
-`npm run deploy` runs the brand sync first and then `cdk deploy`. The first deploy takes a while (plan for roughly 20 to 30 minutes), mostly OpenSearch Serverless, the Knowledge Base and the evaluation image. CDK prints stack outputs at the end, including `AppUrl`, `UserPoolId` and `UserPoolClientId`. List them again any time with:
+`npm run deploy` runs the brand sync first and then `cdk deploy`. Docker must be running. The first deploy takes a while (plan for roughly 20 to 30 minutes), mostly OpenSearch Serverless, the Knowledge Base and the evaluation image. CDK prints stack outputs at the end, including `AppUrl`, `UserPoolId` and `UserPoolClientId`. List them again any time with:
 
 ```bash
 aws cloudformation describe-stacks --stack-name ABEStack --query "Stacks[0].Outputs"
@@ -168,9 +178,9 @@ Steps to rebrand a fork:
 
 1. Edit `config/brand.ts` and replace the logo files in `lib/user-interface/app/public/images/`.
 2. Run `npm run brand:sync`. It regenerates `lib/user-interface/app/src/common/brand.ts` and `public/manifest.json`.
-3. Commit the regenerated files. CI deploys do not run the sync (except for the workflow's brand variables below), so the committed files are what ships.
+3. Commit the regenerated files. The deploy workflow runs the sync again, but only to apply any brand Variables you set in the repository (see below). With none set, the committed files are what ships.
 
-These environment variables override fields at sync and deploy time, which lets one build serve several brands: `BRAND_SLUG`, `ASSISTANT_NAME`, `SHORT_NAME`, `ORGANIZATION_NAME`, `PARENT_ORG`, `BRAND_TAGLINE`, `WELCOME_MESSAGE`, `SUPPORT_CONTACT`, `DOMAIN_CONTEXT`, `BRAND_TIMEZONE`, `BRAND_DEMO_VIDEO`. The deploy workflow runs `npm run brand:sync` after exporting the brand Variables you set, so a CI deployment can brand itself without a commit. Local `npm run deploy` also syncs first.
+These environment variables override fields at sync and deploy time, which lets one build serve several brands: `BRAND_SLUG`, `ASSISTANT_NAME`, `SHORT_NAME`, `ORGANIZATION_NAME`, `PARENT_ORG`, `BRAND_TAGLINE`, `WELCOME_MESSAGE`, `SUPPORT_CONTACT`, `DOMAIN_CONTEXT`, `BRAND_TIMEZONE`, `BRAND_DEMO_VIDEO`. The deploy workflow runs `npm run brand:sync` after exporting the brand Variables you set, so a CI deployment can brand itself without a commit. Local `npm run deploy` also syncs first, but a plain `npx cdk deploy` does not, so run `npm run brand:sync` yourself after editing `config/brand.ts`.
 
 The default brand shows the AI for Impact name and logos. They belong to AI for Impact. If you fork the project for your own deployment, replace them through `config/brand.ts`.
 
@@ -221,7 +231,7 @@ If the registry is unreachable, the chat Lambda serves the embedded default rath
 - **The Admin group.** Admins are members of the Cognito group `Admin`. The API reads the `cognito:groups` claim from the token, and every admin API checks it (the match is exact). Users cannot change their own group.
 - **Self sign-up by email domain.** Set `allowedSignupDomains` (for example `-c allowedSignupDomains=example.org,example.edu`). The login page then shows **Create account**. A PreSignUp Lambda rejects any other domain on the server, so the check cannot be bypassed by calling the Cognito API directly. Self-registered users confirm their email with a code and are never admins. The PreSignUp trigger is wired even with an empty list, which keeps the sign-up API closed.
 - **Two-step verification.** Optional TOTP (authenticator app) only. There is no SMS and no phone number. Users enroll from the account menu.
-- **Email limits.** The stack uses Cognito's default email sender, which is limited to about 50 emails per day per account and region (check the current Cognito quota). Invitations, verification codes and password resets all count. For a larger rollout, configure Amazon SES as the Cognito email provider in the user pool settings and raise your SES sending limits.
+- **Email limits.** The stack uses Cognito's default email sender, which is limited to 50 emails per day per AWS account (the count resets at 09:00 UTC; see the Cognito quotas page). Invitations, verification codes and password resets all count. Once you expect more than that, switch the user pool to Amazon SES by passing `email: cognito.UserPoolEmail.withSES({ fromEmail: ... })` to the user pool in `lib/authorization/index.ts`, verify the sender in SES and move SES out of its sandbox. Do this in code, not in the Cognito console, because the user pool is managed by CDK.
 
 ## CI/CD with GitHub Actions
 
@@ -264,11 +274,11 @@ Three workflows live in `.github/workflows/`:
 3. Give the role permission to deploy the stack. The simplest option is `AdministratorAccess` on a dedicated account. A narrower policy needs to cover CloudFormation, IAM role creation, and every service in the stack, plus assuming the CDK bootstrap roles.
 4. Save the role ARN as the repository secret `AWS_ROLE_ARN`.
 
-The condition above limits the role to runs on the `main` branch of one repository. Pull requests cannot assume it.
+The condition above limits the role to runs on the `main` branch of one repository (a push to `main` or a manual run of the workflow on `main`). Pull requests cannot assume it. If you later add a GitHub `environment:` to the deploy job, the `sub` claim becomes `repo:<owner>/<repo>:environment:<name>` and the condition must change to match.
 
 ### Optional read-only role for PR diffs
 
-Create a second role with the same trust pattern, but allow `pull_request` runs by using a `StringLike` on `token.actions.githubusercontent.com:sub` with the value `repo:<owner>/<repo>:pull_request`, and attach read-only permissions (CloudFormation describe and get access, plus read access to the CDK bootstrap resources). Save its ARN as the secret `AWS_DIFF_ROLE_ARN`. Pull requests from forks never receive secrets, so they skip the diff.
+Create a second role with the same trust pattern, but allow `pull_request` runs by setting `token.actions.githubusercontent.com:sub` to `repo:<owner>/<repo>:pull_request`, and attach read-only permissions (CloudFormation describe and get access, plus read access to the CDK bootstrap resources). Save its ARN as the secret `AWS_DIFF_ROLE_ARN`. Pull requests from forks never receive secrets, so they skip the diff.
 
 ### Repository Secrets and Variables
 
@@ -304,11 +314,11 @@ You can work on the frontend against a backend you have deployed.
 ```bash
 cd lib/user-interface/app
 npm install
-cp .env.example .env     # fill in the values from your stack outputs
+cp .env.example .env     # fill in the values from your stack outputs (see below)
 npm run dev              # http://localhost:3000
 ```
 
-`.env` holds `ABE_REGION`, `ABE_USER_POOL_ID`, `ABE_USER_POOL_CLIENT_ID`, `ABE_HTTP_ENDPOINT`, `ABE_WS_ENDPOINT` (the WebSocket endpoint plus the `/prod` stage), `ABE_SELF_SIGNUP_ENABLED` and `ABE_EVAL_ENABLED`. The dev server turns them into `/aws-exports.json`, the same file the deployed site fetches. The app README ([`lib/user-interface/app/README.md`](lib/user-interface/app/README.md)) has the full table.
+The stack outputs you need are `UserPoolId`, `UserPoolClientId`, `HTTP-API - apiEndpoint` and `WS-API - apiEndpoint`. `.env` holds `ABE_REGION`, `ABE_USER_POOL_ID`, `ABE_USER_POOL_CLIENT_ID`, `ABE_HTTP_ENDPOINT`, `ABE_WS_ENDPOINT` (the WebSocket endpoint plus the `/prod` stage), `ABE_SELF_SIGNUP_ENABLED` and `ABE_EVAL_ENABLED`. The dev server turns them into `/aws-exports.json`, the same file the deployed site fetches. The app README ([`lib/user-interface/app/README.md`](lib/user-interface/app/README.md)) has the full table.
 
 The deployed API only accepts the site's own origin, so for `http://localhost:3000` redeploy the stack with the dev origin allowed:
 
@@ -344,14 +354,14 @@ CI runs the same set on every pull request (`.github/workflows/test.yml`).
 
 ## Costs
 
-These are rough estimates for an idle deployment in `us-east-1`, based on public list prices. They change, so check the pricing pages before you commit: [OpenSearch Serverless](https://aws.amazon.com/opensearch-service/pricing/), [WAF](https://aws.amazon.com/waf/pricing/), [Cognito](https://aws.amazon.com/cognito/pricing/), [CloudWatch](https://aws.amazon.com/cloudwatch/pricing/), [Bedrock](https://aws.amazon.com/bedrock/pricing/), [Transcribe](https://aws.amazon.com/transcribe/pricing/).
+These are rough estimates for an idle deployment in `us-east-1`, based on public list prices checked in October 2026. They change, so check the pricing pages before you commit: [OpenSearch Serverless](https://aws.amazon.com/opensearch-service/pricing/), [WAF](https://aws.amazon.com/waf/pricing/), [Cognito](https://aws.amazon.com/cognito/pricing/), [CloudWatch](https://aws.amazon.com/cloudwatch/pricing/), [Bedrock](https://aws.amazon.com/bedrock/pricing/), [Transcribe](https://aws.amazon.com/transcribe/pricing/).
 
 | Item | Estimated monthly cost | Notes |
 |------|------------------------|-------|
-| OpenSearch Serverless | about $175 and up | The dominant fixed cost. The collection is created with standby replicas disabled (the cheaper dev and test layout), at roughly one OCU in total at $0.24 per OCU-hour. It grows with data and traffic, and it bills whether or not anyone chats. |
-| WAF | about $9 plus $0.60 per million requests | One web ACL, four rules. Created only in `us-east-1`. |
-| CloudWatch | a few dollars | Alarms are about $0.10 each per month (39, or 47 with evals), plus logs (kept 1 month) and the dashboard. |
-| Cognito | $0 up to 10,000 monthly active users on Essentials | `PLUS` costs more per user. |
+| OpenSearch Serverless | about $175 and up | The dominant fixed cost. The collection is created with standby replicas disabled (the cheaper dev and test layout), which allows a minimum of 0.5 OCU for indexing plus 0.5 OCU for search, 1 OCU in total. At $0.24 per OCU-hour that is about $175 per month (730 hours), plus $0.02 per GB-month of storage. With standby replicas on, the minimum is 2 OCUs (about $350). It grows with data and traffic, and it bills whether or not anyone chats. Vector search collections do not share OCUs with other collection types. AWS also offers a NextGen generation that scales to zero, but it is created through collection groups and this stack does not use it. |
+| WAF | about $9 plus $0.60 per million requests | One web ACL at $5 per month and four rules (three AWS managed rule groups and the rate limit) at $1 each. Created only in `us-east-1`. |
+| CloudWatch | about $4 to $8 | Alarms are $0.10 each per month (39, or 47 with evals, so $3.90 or $4.70 before the 10 free alarm metrics). The dashboard is $3 per month beyond the 3 free dashboards per account. Logs cost $0.50 per GB ingested after the first 5 GB (kept 1 month). |
+| Cognito | $0 up to 10,000 monthly active users on Essentials | Essentials is $0.015 per monthly active user above that. `PLUS` (`cognitoFeaturePlan=PLUS`) is $0.02 per monthly active user with no free tier. |
 | DynamoDB, S3, Lambda, API Gateway, CloudFront | usually under $10 at low traffic | All pay-per-use. DynamoDB is on-demand with point-in-time recovery on. |
 | Bedrock | per token | Scales with usage. Prompt caching cuts repeated system-prompt cost. Claude Opus is the most expensive component per question, so check the per-token prices for your models. |
 | Knowledge Base ingestion | pennies per sync for text | Titan embeddings are cheap. `kbParserModel` adds a model call per page. |
@@ -401,8 +411,8 @@ A later redeploy with the same name creates fresh tables and buckets (their name
 | Symptom | Cause and fix |
 |---------|---------------|
 | `cdk synth` or `cdk deploy` fails with `Cannot connect to the Docker daemon` or an image build error | Docker is not running. Start Docker and retry. Docker is needed for every synth and deploy (Python bundling, and the eval image unless `enableEval=false`). |
-| `This stack uses assets, so the toolkit stack must be deployed` or a missing `/cdk-bootstrap/...` SSM parameter | The account and region are not bootstrapped. Run `npx cdk bootstrap` with the same credentials and region you deploy with. |
-| Chat shows an error and the chat Lambda log has `AccessDeniedException` on `bedrock:InvokeModel...` | The model is not available to the account, the form for Anthropic was not submitted, or the inference profile prefix does not match your region. Check the Bedrock console in the stack's region, then check `PRIMARY_MODEL_ID` and `FAST_MODEL_ID`. |
+| `This stack uses assets, so the toolkit stack must be deployed` or a missing `/cdk-bootstrap/...` SSM parameter | The account and region are not bootstrapped. Run the `cdk bootstrap` command from step 5 with the same credentials and region you deploy with. |
+| Chat shows an error and the chat Lambda log has `AccessDeniedException` on `bedrock:InvokeModel...` | The account is not yet subscribed to the model (the Lambda role cannot subscribe, so do the one-time playground call from step 3), the Anthropic use-case form was not submitted, or the inference profile prefix does not match your region. Check the Bedrock console in the stack's region, then check `PRIMARY_MODEL_ID` and `FAST_MODEL_ID`. |
 | Deploy fails creating the metadata Lambda: `decreases UnreservedConcurrentExecution below its minimum` | A new account has a low total Lambda concurrency quota. Do not set `metadataHandlerConcurrency` yet, and request a Lambda concurrency quota increase. The same quota can cause throttling during large syncs. |
 | Deploy fails with `CloudWatch Logs role ARN must be set in account settings` or the API Gateway account role conflicts with another stack | One stack per account and region owns the API Gateway logging role. Deploy the second stack with `-c apiGatewayAccountRole=false`. |
 | The synth prints `CloudFront WAF not created` | Expected outside `us-east-1`. The site works without the WAF. |
@@ -410,7 +420,7 @@ A later redeploy with the same name creates fresh tables and buckets (their name
 | Uploaded documents are not found by the assistant | The Knowledge Base only sees documents after an ingestion job. Click **Sync data now** on **Data**, then wait for it to finish. |
 | A document has no summary, or the summary is empty | Summaries need ingested chunks and are generated by the hourly backfill. Wait up to an hour after ingestion completes. |
 | A spreadsheet index stays empty | The file must be at `indexes/{index_id}/latest.xlsx` in the index bucket (the **Data Indexes** tab does this). Check the parser Lambda's log. |
-| Invitation or verification emails do not arrive | Check spam. Cognito's default sender is limited to about 50 emails per day. Configure SES for more. |
+| Invitation or verification emails do not arrive | Check spam. Cognito's default sender is limited to 50 emails per day per AWS account. Switch the user pool to SES (see [User management](#user-management)). |
 | Sign-in succeeds but admin pages are missing | The user is not in the `Admin` group. Run `scripts/create-admin.sh --email <user>` or promote them on the Users page, then sign out and back in so the new token carries the group. |
 | Stack is in `ROLLBACK_COMPLETE` after a failed first deploy | Delete the stack (`aws cloudformation delete-stack`), fix the cause shown in the CloudFormation events, and deploy again. |
 
