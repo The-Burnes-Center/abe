@@ -1,380 +1,453 @@
 # ABE
 
-Configurable, white-label AI assistant — a grounded RAG + agentic chatbot you can point at any knowledge base. Combines a Bedrock Knowledge Base (semantic RAG over your documents) with structured Excel/tabular indexes through an agentic tool-use loop. Brand, copy, and domain are set in [config/brand.ts](config/brand.ts).
+Configurable, white-label AI assistant: a grounded RAG + agentic chatbot you can point at any knowledge base. Combines a Bedrock Knowledge Base (hybrid semantic and keyword search over your documents) with structured spreadsheet indexes through an agentic tool-use loop. Brand, copy, and domain are set in [config/brand.ts](config/brand.ts). Open source (MIT); see [README.md](README.md) for the deploy guide and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Stack
 
 | Layer | Tech |
 |-------|------|
-| IaC | AWS CDK v2 (TypeScript) |
-| Chat Lambda | Node.js 20 ESM + Bedrock streaming |
-| Other Lambdas | Python 3.12 (29 total) |
-| LLM | Claude Opus 4.6 (primary), Claude Sonnet 4.6 (fast) |
-| Vector DB | OpenSearch Serverless (Titan Embed v2, 1024-dim) |
-| Data | DynamoDB (13 tables), S3 (8 buckets), SQS (1 queue + DLQ) |
-| Auth | Cognito + WebSocket JWT authorizer |
+| IaC | AWS CDK v2 (TypeScript), cdk-nag checks on every synth |
+| Chat Lambda | Node.js 22 ESM + Bedrock streaming |
+| Other Lambdas | 23 application Lambdas without eval (17 Python 3.12, 6 Node.js 22); 35 with eval (24 Python, 10 Node, 1 container image) |
+| LLM | Claude Opus 4.6 (primary), Claude Sonnet 4.6 (fast), via the regional inference profile (`us.`, `eu.`, `apac.`, else `global.`) |
+| Vector DB | OpenSearch Serverless (Titan Text Embeddings V2, 1024-dim), standby replicas disabled |
+| Data | DynamoDB (13 tables, 10 without eval), S3 (7 data buckets, 5 without eval, plus website and log buckets), SQS (1 queue + DLQ, eval only) |
+| Auth | Cognito user pool (email + password, optional TOTP, `Admin` group, invite-only) + WebSocket Lambda authorizer + HTTP API JWT authorizer |
 | Frontend | React 18 + TypeScript + Vite + MUI v6 |
-| CI/CD | GitHub Actions → CDK deploy on push to `main` |
+| CI/CD | GitHub Actions: tests on every push and PR; CDK deploy on push to `main` when `AWS_ROLE_ARN` is set |
 
 ## Commands
 
 ```bash
 # Backend (CDK)
-npm install
-npm run build        # Compile TypeScript
+npm ci
+npm run build        # Brand sync + tsc (also emits .js next to .ts, git-ignored)
 npm run watch        # Watch mode
-npm test             # Jest CDK snapshot tests
-npm run test:lambda  # Vitest websocket-chat unit tests
+npm test             # Jest CDK tests (synth without Docker)
+npx tsc --noEmit     # Typecheck
+npm run test:lambda  # Vitest: every *.test.mjs under lib/chatbot-api/functions
+
+# Python Lambda tests (Python 3.12), same selection as CI
+python3 -m pytest $(git ls-files 'lib/*test_*.py' | grep -E '/test_[^/]+\.py$')
 
 # Frontend
 cd lib/user-interface/app
-npm install
-npm run dev          # Local dev server (port 3000)
-npm run build        # Production build
+npm ci
+npm run dev          # Local dev server (port 3000), needs .env (see .env.example)
+npm run build        # Typecheck + production build
+npm run lint         # ESLint, zero warnings
+npm test             # Vitest + Testing Library
 
-# Deploy
-npx cdk synth ABEStack          # Preview CloudFormation
-npx cdk diff ABEStack           # Diff against deployed
-npx cdk deploy ABEStack         # Deploy stack
-npx cdk deploy ABEStack -c alarmEmail=you@example.com  # With alerts
+# Brand
+npm run brand:sync   # Regenerate the frontend brand.ts and manifest.json from config/brand.ts
+
+# Deploy (Docker must be running for synth and deploy)
+npx cdk synth                      # Preview CloudFormation
+npx cdk diff                       # Diff against deployed
+npx cdk deploy                     # Deploy (npm run deploy syncs the brand first)
+npx cdk deploy -c alarmEmail=you@example.com -c enableEval=false
+scripts/create-admin.sh --email you@example.org [--stack-name ABEStack] [--region us-east-1]
 ```
 
 ## Architecture
 
 ### Chat Request Flow
-1. Client connects via WebSocket → JWT Lambda authorizer validates Cognito token (signature, expiry, audience)
-2. Message → `getChatbotResponse` route → Chat Lambda ([index.mjs](lib/chatbot-api/functions/websocket-chat/index.mjs))
-3. Agentic loop (max 20 rounds): Claude calls tools → Lambda processes → Claude refines → repeat until done
+1. Client connects via WebSocket (token in the query string); the Python Lambda authorizer validates the Cognito ID token (signature, expiry, audience) on `$connect` only
+2. Message arrives on the `getChatbotResponse` route and runs in the chat Lambda ([index.mjs](lib/chatbot-api/functions/websocket-chat/index.mjs)). Identity comes from the authorizer context, never the message body
+3. Agentic loop (max 25 rounds, `MAX_TOOL_ROUNDS`): Claude calls tools, the Lambda runs them, Claude refines, repeat until done. Modules: `connection.mjs` (sends, stop detection), `stream-turn.mjs` (one streamed response), `tool-runner.mjs` (tool execution), `compaction.mjs` (context window), `persistence.mjs` (DynamoDB and session handler), `citations.mjs`, `kb.mjs`, `tools.mjs`, `retry.mjs`
 4. Available tools:
-   - `query_db` — Bedrock KB semantic search (25 results, confidence > 0.6)
-   - `retrieve_full_document` — Full-document retrieval from KB by filename (all chunks, paginated, no truncation)
-   - `fetch_metadata` — S3 metadata.txt (cached 5-min TTL)
-   - `query_excel_index` — Structured DynamoDB queries (filters, counts, aggregations, sorts, distinct values)
-5. Context management: keeps last 12 exchanges; auto-compresses at 120K tokens (75% of 160K limit)
-6. Response streamed back via WebSocket with `!<|STATUS|>!`, `!<|EOF_STREAM|>!` protocol markers; UI renders incrementally
-7. Prompt loaded from DynamoDB registry (with fallback to embedded default); template renders `{{current_date}}` and `{{metadata_json}}`
+   - `query_db`: Bedrock KB hybrid (semantic + keyword) search, 25 results per page and 2 pages, at most 5 chunks per document, no score threshold; optional `within_document` filter; `metadata.txt` and non-text chunks excluded
+   - `retrieve_full_document`: all chunks of one document by (partial) file name; up to 5 pages of 100, capped at 150 chunks and 120,000 characters, and says so when it cuts the document
+   - `fetch_metadata`: document inventory from `metadata.txt` (compact map by default; `full` for summaries; `filename_contains` to filter)
+   - `query_excel_index`: structured DynamoDB queries (filters, counts, aggregations, sorts, distinct values; default limit 50); built at runtime from the index registry and only offered when an index exists
+5. Context management: loads the last 12 exchanges; auto-compacts at 120K estimated tokens (up to 3 rounds via the context-summarizer Lambda, pinning the current question); hard ceiling 160K
+6. Response streamed back via WebSocket with `!<|STATUS|>!`, `!<|REPLACE|>!`, `!<|EOF_STREAM|>!` protocol markers (a JSON frame of Sources, Trace and ContextUsage follows EOF); UI renders incrementally
+7. Prompt loaded from the DynamoDB registry (LIVE pointer, fallback to the embedded default); the template renders `{{current_date}}` and the brand placeholders. The document inventory is no longer inlined, the model fetches it with `fetch_metadata`
+8. After the answer: session history saved (presigned source URIs stripped), response trace written, FAQ classifier invoked asynchronously
 
 ### Two Separate Data Systems
 | System | Bucket Path | Trigger | Storage | Tool |
 |--------|-------------|---------|---------|------|
-| Knowledge Base | `KnowledgeSourceBucket` | Manual "Sync" or scheduled (Sunday 1 AM ET) | OpenSearch (semantic chunking, 512 tokens, 95th-percentile breakpoint) | `query_db` |
-| Excel Index | `indexes/{id}/latest.xlsx` | S3 event (automatic) | DynamoDB (`ExcelIndexDataTable`) | `query_excel_index` |
+| Knowledge Base | `KnowledgeSourceBucket` | Manual "Sync data now" or schedule (Sunday 1 AM in the brand timezone) | OpenSearch (semantic chunking, 512 tokens, 95th-percentile breakpoint) | `query_db`, `retrieve_full_document` |
+| Spreadsheet index | `ContractIndexBucket`, `indexes/{id}/latest.xlsx` | S3 event (automatic) | DynamoDB (`ExcelIndexDataTable`, registry in `IndexRegistryTable`) | `query_excel_index` |
 
-**Critical:** Uploading an Excel file to the knowledge bucket does NOT populate the Excel index. They are independent pipelines.
+**Critical:** Uploading an Excel file to the knowledge bucket does NOT populate the spreadsheet index. They are independent pipelines. Detail in [docs/data-ingestion-s3-and-sync.md](docs/data-ingestion-s3-and-sync.md).
 
 ### Data Sync Pipeline
-1. Files uploaded to `DataStagingBucket` (staging area)
-2. `SyncOrchestratorFunction` copies docs → KB bucket, indexes → Contract index bucket
-3. Triggers Bedrock KB ingestion job
-4. Records history in `SyncHistoryTable` (TTL auto-cleanup via `expiresAt`)
-5. Scheduled via EventBridge Scheduler (default: Sunday 1 AM America/New_York); configurable from admin UI
-6. Hourly EventBridge schedule re-invokes the orchestrator in backfill-only mode (`{"backfillOnly": true}`): generates LLM summaries for documents whose KB chunks now exist. Summaries can't be created at upload time — ingestion completes minutes-to-hours after the S3 events fire — so this pass is what actually fills them in. No staging moves, no ingestion job, no history record.
+1. Browsers upload documents straight to `KnowledgeSourceBucket` and spreadsheets to `ContractIndexBucket` with presigned URLs. Bulk loads can go to `DataStagingBucket` under `documents/` and `indexes/{id}/latest.xlsx`
+2. `SyncOrchestratorFunction` moves `documents/*` to the KB bucket (prefix dropped) and `indexes/*` to the index bucket (key kept)
+3. It starts a Bedrock KB ingestion job unless one is already running
+4. Records history in `SyncHistoryTable` (90-day TTL via `expiresAt`)
+5. Scheduled via EventBridge Scheduler (default `cron(0 1 ? * SUN *)` in the brand timezone); editable from the admin UI
+6. A second hourly schedule re-invokes the orchestrator in backfill-only mode (`{"backfillOnly": true}`): generates LLM summaries for documents whose KB chunks now exist. Summaries can't be created at upload time because ingestion finishes minutes to hours after the S3 events fire. No staging moves, no ingestion job, no history record
+
+### Auth Model
+- Native Cognito only: email + password (SRP), optional TOTP, no SMS, no hosted UI, no federation
+- Invite-only: admins create users (Users page or `scripts/create-admin.sh`); Cognito emails a temporary password valid 7 days
+- Self sign-up is off unless `allowedSignupDomains` is set; the PreSignUp Lambda enforces the allowlist server-side and fails closed
+- Admins are members of the Cognito group `Admin`, read from the `cognito:groups` claim (exact match, many claim encodings parsed). One helper per runtime: `common_utils/auth.py` (Python layer), `shared-node/auth.mjs` (Node), `isAdmin` in `src/common/auth.ts` (frontend)
+- Non-admins get 403 from admin APIs; the frontend guards `/admin/*` with `AdminRoute`
+- Tokens: ID and access 15 minutes, refresh 30 days; user pool is RETAIN with deletion protection
 
 ### Key Files
 | File | Role |
 |------|------|
 | [bin/abe.ts](bin/abe.ts) | CDK app entry point + cdk-nag AwsSolutionsChecks |
-| [lib/constants.ts](lib/constants.ts) | Stack name, Cognito domain, OIDC name |
-| [lib/abe-stack.ts](lib/abe-stack.ts) | Root stack — orchestrates all constructs, applies tags, CDK nag suppressions |
-| [lib/chatbot-api/index.ts](lib/chatbot-api/index.ts) | ChatBotApi construct — wires tables, buckets, OpenSearch, KB, APIs, Lambdas, routes, monitoring |
-| [lib/chatbot-api/functions/functions.ts](lib/chatbot-api/functions/functions.ts) | All 23 Lambda definitions with `LAMBDA_DEFAULTS` (ARM64, X-Ray, 1-month logs) |
-| [lib/chatbot-api/functions/websocket-chat/index.mjs](lib/chatbot-api/functions/websocket-chat/index.mjs) | Chat handler + agentic tool-use loop (max 20 rounds, streaming, context compression) |
-| [lib/chatbot-api/functions/websocket-chat/prompt.mjs](lib/chatbot-api/functions/websocket-chat/prompt.mjs) | System prompt (cached at Bedrock ~4K tokens) |
-| [lib/chatbot-api/functions/websocket-chat/tools.mjs](lib/chatbot-api/functions/websocket-chat/tools.mjs) | Tool definitions (static + dynamic Excel tool from registry), token estimation, result capping |
+| [lib/constants.ts](lib/constants.ts) | Stack name, prompt family, metric namespaces, admin group name, brand env for Lambdas |
+| [lib/deployment-config.ts](lib/deployment-config.ts) | Reads per-deployment settings from CDK context and env vars |
+| [lib/abe-stack.ts](lib/abe-stack.ts) | Root stack: orchestrates constructs, tags, outputs, CDK nag suppressions |
+| [lib/shared/](lib/shared/) | `LAMBDA_DEFAULTS` and runtimes, bundling helpers, model ID and inference-profile helpers, name helpers |
+| [lib/authorization/index.ts](lib/authorization/index.ts) | Cognito user pool, Admin group, app client, PreSignUp trigger, WebSocket authorizer |
+| [lib/authorization/pre-signup/lambda_function.py](lib/authorization/pre-signup/lambda_function.py) | PreSignUp trigger: domain allowlist for self sign-up |
+| [lib/chatbot-api/index.ts](lib/chatbot-api/index.ts) | ChatBotApi construct: tables, buckets, OpenSearch, KB, APIs, Lambdas, routes, monitoring |
+| [lib/chatbot-api/functions/functions.ts](lib/chatbot-api/functions/functions.ts) | Core Lambda definitions (plus `excel-index-functions.ts`, `sync-functions.ts`, `eval-functions.ts`) |
+| [lib/chatbot-api/functions/websocket-chat/index.mjs](lib/chatbot-api/functions/websocket-chat/index.mjs) | Chat handler + agentic tool-use loop |
+| [lib/chatbot-api/functions/websocket-chat/prompt.mjs](lib/chatbot-api/functions/websocket-chat/prompt.mjs) | System prompt default (cached at Bedrock, ~4K tokens) |
+| [lib/chatbot-api/functions/websocket-chat/tools.mjs](lib/chatbot-api/functions/websocket-chat/tools.mjs) | Tool definitions (static + dynamic spreadsheet tool), result capping |
 | [lib/chatbot-api/functions/websocket-chat/models/chat-model.mjs](lib/chatbot-api/functions/websocket-chat/models/chat-model.mjs) | Bedrock runtime wrapper: streaming, prompt caching, guardrails |
-| [lib/chatbot-api/functions/websocket-chat/kb.mjs](lib/chatbot-api/functions/websocket-chat/kb.mjs) | Knowledge Base retrieval: semantic search + full-document retrieval + fuzzy filename resolution |
-| [lib/chatbot-api/functions/websocket-chat/citations.mjs](lib/chatbot-api/functions/websocket-chat/citations.mjs) | Citation management: Bedrock native → [N] markers, validation, renumbering, sentence-boundary snapping |
-| [lib/chatbot-api/functions/websocket-chat/prompt-registry.mjs](lib/chatbot-api/functions/websocket-chat/prompt-registry.mjs) | DynamoDB prompt registry: LIVE pointer → versioned templates, SHA256 hash change detection |
-| [lib/chatbot-api/functions/excel-index/parser/lambda_function.py](lib/chatbot-api/functions/excel-index/parser/lambda_function.py) | S3 trigger → parse .xlsx → DynamoDB rows + auto-generate AI description via Bedrock |
-| [lib/chatbot-api/functions/excel-index/query/lambda_function.py](lib/chatbot-api/functions/excel-index/query/lambda_function.py) | DynamoDB queries (filters, free-text fuzzy match, date ranges, aggregations, sorting, pagination) |
-| [lib/chatbot-api/tables/tables.ts](lib/chatbot-api/tables/tables.ts) | All 13 DynamoDB tables + SQS queue definitions |
-| [lib/chatbot-api/buckets/buckets.ts](lib/chatbot-api/buckets/buckets.ts) | All 8 S3 bucket definitions |
-| [lib/chatbot-api/monitoring/monitoring.ts](lib/chatbot-api/monitoring/monitoring.ts) | CloudWatch dashboard + 43 alarms + SNS topic |
-| [lib/chatbot-api/knowledge-base/knowledge-base.ts](lib/chatbot-api/knowledge-base/knowledge-base.ts) | Bedrock KB with semantic chunking (Titan Embed v2) |
-| [lib/chatbot-api/opensearch/opensearch.ts](lib/chatbot-api/opensearch/opensearch.ts) | OpenSearch Serverless collection + security policies + vector index custom resource |
-| [lib/chatbot-api/functions/step-functions/step-functions.ts](lib/chatbot-api/functions/step-functions/step-functions.ts) | Evaluation pipeline: Step Functions state machine + 7 eval-related Lambdas |
-| [lib/authorization/index.ts](lib/authorization/index.ts) | Cognito User Pool + domain + client + WebSocket Lambda authorizer |
-| [lib/user-interface/index.ts](lib/user-interface/index.ts) | CloudFront + S3 static site + BucketDeployment (builds React app) |
+| [lib/chatbot-api/functions/websocket-chat/kb.mjs](lib/chatbot-api/functions/websocket-chat/kb.mjs) | KB retrieval: hybrid search, full-document retrieval, fuzzy filename resolution |
+| [lib/chatbot-api/functions/websocket-chat/citations.mjs](lib/chatbot-api/functions/websocket-chat/citations.mjs) | Citations: Bedrock native to `[N]` markers, validation, renumbering, sentence snapping |
+| [lib/chatbot-api/functions/websocket-chat/prompt-registry.mjs](lib/chatbot-api/functions/websocket-chat/prompt-registry.mjs) | Prompt registry: LIVE pointer to versioned templates, SHA256 change detection |
+| [lib/chatbot-api/functions/user-admin/lambda_function.py](lib/chatbot-api/functions/user-admin/lambda_function.py) | Admin-only user API (invite, role, enable, disable, resend, delete) |
+| [lib/chatbot-api/functions/excel-index/parser/lambda_function.py](lib/chatbot-api/functions/excel-index/parser/lambda_function.py) | S3 trigger: parse .xlsx to DynamoDB rows + AI description via Bedrock |
+| [lib/chatbot-api/functions/excel-index/query/lambda_function.py](lib/chatbot-api/functions/excel-index/query/lambda_function.py) | DynamoDB queries (filters, fuzzy free text, date ranges, aggregations, sorting, pagination) |
+| [lib/chatbot-api/functions/layers/python-common/](lib/chatbot-api/functions/layers/python-common/) | Shared Python layer: auth, logging, responses, validation |
+| [lib/chatbot-api/tables/tables.ts](lib/chatbot-api/tables/tables.ts) | DynamoDB tables + SQS queues |
+| [lib/chatbot-api/buckets/buckets.ts](lib/chatbot-api/buckets/buckets.ts) | S3 data buckets |
+| [lib/chatbot-api/monitoring/monitoring.ts](lib/chatbot-api/monitoring/monitoring.ts) | CloudWatch dashboard, alarms, SNS topic |
+| [lib/chatbot-api/knowledge-base/knowledge-base.ts](lib/chatbot-api/knowledge-base/knowledge-base.ts) | Bedrock KB with semantic chunking (Titan Embed v2), optional FM parser |
+| [lib/chatbot-api/opensearch/opensearch.ts](lib/chatbot-api/opensearch/opensearch.ts) | OpenSearch Serverless collection, policies, vector index custom resource |
+| [lib/chatbot-api/functions/step-functions/step-functions.ts](lib/chatbot-api/functions/step-functions/step-functions.ts) | Evaluation pipeline: state machine + 7 Lambdas (incl. the Docker one) |
+| [lib/user-interface/index.ts](lib/user-interface/index.ts) | S3 website + `aws-exports.json` + BucketDeployment (builds the React app); `generate-app.ts` holds CloudFront, WAF, headers |
 | [lib/user-interface/app/src/app.tsx](lib/user-interface/app/src/app.tsx) | React router + lazy-loaded pages |
-| [lib/user-interface/app/src/components/app-configured.tsx](lib/user-interface/app/src/components/app-configured.tsx) | Auth gate: fetches aws-exports.json, configures Amplify; renders the in-app login page (native mode) or redirects to the hosted UI (SSO mode) |
-| [lib/user-interface/app/src/components/auth/login-page.tsx](lib/user-interface/app/src/components/auth/login-page.tsx) | Branded in-app login: SRP sign-in, self sign-up with email verification, forgot password, MFA and new-password challenges |
-| [lib/user-interface/app/src/hooks/useWebSocketChat.ts](lib/user-interface/app/src/hooks/useWebSocketChat.ts) | WebSocket hook: auto-reconnect (3 attempts, exponential backoff), 90s timeout, protocol parsing |
-| [lib/user-interface/app/src/common/theme.ts](lib/user-interface/app/src/common/theme.ts) | MUI theme with light/dark modes, CSS variables, responsive overrides |
+| [lib/user-interface/app/src/components/app-configured.tsx](lib/user-interface/app/src/components/app-configured.tsx) | Auth gate: fetches aws-exports.json, configures Amplify, renders the login page or the app |
+| [lib/user-interface/app/src/components/auth/login-page.tsx](lib/user-interface/app/src/components/auth/login-page.tsx) | Branded login: SRP sign-in, optional sign-up with email verification, forgot password, MFA and new-password challenges |
+| [lib/user-interface/app/src/hooks/useWebSocketChat.ts](lib/user-interface/app/src/hooks/useWebSocketChat.ts) | WebSocket hook: auto-reconnect, 120s inactivity timeout, protocol parsing, stop |
+| [lib/user-interface/app/src/common/theme.ts](lib/user-interface/app/src/common/theme.ts) | MUI theme with light/dark modes, brand colors from `brand.ts` |
+| [scripts/create-admin.sh](scripts/create-admin.sh) | Invite the first (or any) admin |
+| [scripts/sync-brand.ts](scripts/sync-brand.ts) | Generate the frontend `brand.ts` and `manifest.json` from `config/brand.ts` |
 
 ## Key Conventions
 
 ### CDK
-- Use `scope` (not `this`) when creating sub-resources inside constructs — preserves CloudFormation logical IDs and prevents accidental resource recreation
-- All Lambdas use `LAMBDA_DEFAULTS` in [functions.ts](lib/chatbot-api/functions/functions.ts): ARM64, X-Ray, 1-month log retention
+- Use `scope` (not `this`) when creating sub-resources inside constructs: preserves CloudFormation logical IDs and prevents accidental recreation
+- All Lambdas spread `LAMBDA_DEFAULTS` ([lambda-defaults.ts](lib/shared/lambda-defaults.ts)): ARM64, X-Ray, 1-month log retention. Runtimes are pinned in `NODE_RUNTIME` and `PYTHON_RUNTIME`
+- Python code with pip dependencies uses `pythonBundledCode` (Docker bundling for ARM64); dependency-free code uses `pythonCode`; Node uses `nodeCode`
 - Resources are separated by concern: `functions.ts`, `tables.ts`, `buckets.ts`
-- cdk-nag compliance checks run on every synth; add suppressions with explicit reasons
-- All DynamoDB tables: PAY_PER_REQUEST billing, PITR enabled, RETAIN removal policy
-- Tags applied stack-wide: `Project: ABE`, `Environment: {stackId}`, `ManagedBy: CDK`, `DataClass: Sensitive`
+- cdk-nag compliance checks run on every synth; add suppressions with explicit reasons, scoped to the resource or an `appliesTo` pattern
+- All DynamoDB tables: PAY_PER_REQUEST, PITR enabled, RETAIN removal policy. Data buckets and SQS queues are RETAIN too
+- Tags applied stack-wide (the OpenSearch collection is excluded): `Project: <brand slug>`, `Environment: <ENVIRONMENT or dev>`, `ManagedBy: cdk`
+- Never hardcode a region. Use `Stack.of(this).region`, `Aws.REGION`, `Aws.PARTITION`; the CloudFront WAF is created only when the stack region is `us-east-1`
 
 ### Python Lambdas
-- Use Pydantic models for request/response validation
+- Use Pydantic models for request/response validation where payloads are structured
 - Shared utilities (auth, logging, responses) live in the Lambda layer: [layers/python-common](lib/chatbot-api/functions/layers/python-common/)
 - Return structured JSON error responses; catch exceptions explicitly
 - Structured JSON logging with correlation IDs (session-based) for CloudWatch Insights
+- Admin handlers call the shared `require_admin` helper and return 403, never 500, for non-admins
 
 ### Node.js Lambdas (ESM)
 - All handlers use `.mjs` extension and ESM imports
 - AWS SDK v3 modular imports (`@aws-sdk/client-*`)
 - Bedrock streaming: parse events chunk-by-chunk; citations need custom validation
 - Prompt caching: system prompt wrapped in `cache_control: { type: "ephemeral" }` (5-min TTL, up to 90% input token savings)
-- Tool result capping: binary search to fit within 60K chars; rows truncated with note
+- Tool result capping: binary search to fit within 60K chars; rows truncated with a note
+- Shared admin check: `shared-node/auth.mjs`, copied into each package at bundle time (symlinks are followed)
 
 ### Frontend
 - Route-based code splitting via `React.lazy()` + `Suspense`
-- AppConfigured wrapper handles auth gate (Amplify + Cognito federated sign-in)
-- API clients in [src/common/api-client/](lib/user-interface/app/src/common/api-client/) — 7 sub-clients (sessions, knowledgeManagement, userFeedback, evaluations, metrics, excelIndex, sync)
-- WebSocket chat logic in `useWebSocketChat` hook (auto-reconnect, exponential backoff, 90s timeout)
-- MUI v6 theming via [src/common/theme.ts](lib/user-interface/app/src/common/theme.ts) — light/dark modes with CSS variables
-- Notification system via React Context (`notif-manager.tsx`) with auto-dismiss (success: 4s, info: 5s, error: 8s)
+- `AppConfigured` handles the auth gate (Amplify + Cognito, native sign-in only); `AdminRoute` guards `/admin/*`
+- API clients in [src/common/api-client/](lib/user-interface/app/src/common/api-client/): 8 sub-clients (knowledgeManagement, sessions, userFeedback, evaluations, metrics, excelIndex, sync, users)
+- WebSocket chat logic in the `useWebSocketChat` hook (auto-reconnect, exponential backoff, 120s inactivity timeout)
+- MUI v6 theming via [src/common/theme.ts](lib/user-interface/app/src/common/theme.ts), light/dark modes with CSS variables
+- Notification system via React Context (`notif-manager.tsx`) with auto-dismiss (success 4s, info 5s, error 8s)
 - ErrorBoundary wraps routes at multiple levels
-- Vite build with manual chunk splitting: vendor-react, vendor-mui, vendor-charts
+- Vite build with manual chunk splitting
+
+## Deployment Settings
+
+Read from CDK context (`-c key=value`) then the env var, in [deployment-config.ts](lib/deployment-config.ts) and [shared/bedrock.ts](lib/shared/bedrock.ts):
+
+| Context / env | Default | Effect |
+|---------------|---------|--------|
+| `allowedSignupDomains` / `ALLOWED_SIGNUP_DOMAINS` | none | Non-empty enables self sign-up for those email domains (PreSignUp trigger) |
+| `cognitoFeaturePlan` / `COGNITO_FEATURE_PLAN` | `ESSENTIALS` | `PLUS` adds threat protection |
+| `enableEval` / `ENABLE_EVAL` | `true` | `false` drops the eval pipeline, its tables, buckets, queues, routes and the UI page |
+| `kbParserModel` / `KB_PARSER_MODEL` | unset | Foundation-model parsing (multimodal); replaces the data source |
+| `apiGatewayAccountRole` / `API_GATEWAY_ACCOUNT_ROLE` | `true` | Manage the region-wide API Gateway logs role; `false` for a second stack in the account and region |
+| `metadataHandlerConcurrency` / `METADATA_HANDLER_CONCURRENCY` | unset | Reserved concurrency for the summary Lambda (fails in accounts with a quota of 10) |
+| `devCorsOrigins` / `DEV_CORS_ORIGINS` | none | Extra localhost CORS origins for `npm run dev` against a deployed backend |
+| `alarmEmail` / `ALARM_EMAIL` | none | Alarm SNS subscription |
+| `customDomain` + `certificateArn` / `CUSTOM_DOMAIN` + `CERTIFICATE_ARN` | none | Bind a custom domain (both required; cert in us-east-1) |
+| `STACK_NAME` | `<SLUG>Stack` (`ABEStack`) | CloudFormation stack name |
+| `ENVIRONMENT` | `dev` | `Environment` tag |
+| `PRIMARY_MODEL_ID`, `FAST_MODEL_ID` | `<geo prefix>anthropic.claude-opus-4-6-v1`, `<geo prefix>anthropic.claude-sonnet-4-6` | Model or inference-profile overrides |
+| `GUARDRAIL_ID`, `GUARDRAIL_VERSION` | unset, `1` | Bedrock Guardrail (empty id = disabled) |
+| Brand: `BRAND_SLUG`, `ASSISTANT_NAME`, `SHORT_NAME`, `ORGANIZATION_NAME`, `PARENT_ORG`, `BRAND_TAGLINE`, `WELCOME_MESSAGE`, `SUPPORT_CONTACT`, `DOMAIN_CONTEXT`, `BRAND_TIMEZONE`, `BRAND_DEMO_VIDEO` | see [brand.ts](config/brand.ts) | Override brand fields at sync and deploy time |
 
 ## DynamoDB Tables
 
 | Table | PK | SK | GSIs | Purpose |
 |-------|----|----|------|---------|
 | ChatHistoryTable | user_id | session_id | TimeIndex | Chat sessions and history |
-| UserFeedbackTable | Topic | CreatedAt | CreatedAtIndex, AnyIndex | User feedback submissions |
-| FeedbackRecordsTable | FeedbackId | — | 5 GSIs (RecordType, ReviewStatus, Disposition, ClusterId, MessageId) | Detailed feedback with disposition tracking |
-| ResponseTraceTable | MessageId | — | SessionCreatedAtIndex | Audit trail for LLM responses |
-| PromptRegistryTable | PromptFamily | VersionId | — | Versioned system prompt management |
+| UserFeedbackTable | Topic | CreatedAt | CreatedAtIndex, AnyIndex | Legacy feedback submissions |
+| FeedbackRecordsTable | FeedbackId | none | 5 GSIs (RecordTypeCreatedAt, ReviewStatus, Disposition, Cluster, MessageId) | Detailed feedback with disposition tracking |
+| ResponseTraceTable | MessageId | none | SessionCreatedAtIndex | Audit trail for LLM responses; TTL (`expiresAt`) only for disconnect markers |
+| PromptRegistryTable | PromptFamily | VersionId | none | Versioned system prompt management |
 | MonitoringCasesTable | SetName | CaseId | SourceFeedbackIndex | Monitoring test cases |
-| EvaluationResultsTable | EvaluationId | QuestionId | QuestionIndex | Per-question eval scores |
-| EvaluationSummariesTable | PartitionKey | Timestamp | — | Aggregated eval summaries |
-| AnalyticsTable | topic | timestamp | DateIndex, AgencyIndex | FAQ classification analytics |
-| ExcelIndexDataTable | pk | sk | — | Parsed Excel contract data |
-| IndexRegistryTable | pk | sk | — | Index definitions with AI descriptions |
-| TestLibraryTable | PartitionKey | QuestionId | NormalizedQuestionIndex (KEYS_ONLY) | Test cases for evaluation |
-| SyncHistoryTable | pk | sk | — | Sync run history (TTL: expiresAt) |
+| AnalyticsTable | topic | timestamp | DateIndex | Question topic classification |
+| ExcelIndexDataTable | pk | sk | none | Parsed spreadsheet rows |
+| IndexRegistryTable | pk | sk | none | Index definitions with AI descriptions |
+| SyncHistoryTable | pk | sk | none | Sync run history (TTL: expiresAt, 90 days) |
+| EvaluationSummariesTable (eval) | PartitionKey | Timestamp | none | Aggregated eval summaries |
+| EvaluationResultsTable (eval) | EvaluationId | QuestionId | QuestionIndex | Per-question eval scores |
+| TestLibraryTable (eval) | PartitionKey | QuestionId | NormalizedQuestionIndex (KEYS_ONLY) | Test cases for evaluation |
 
 ## S3 Buckets
 
 | Bucket | Versioning | Purpose |
 |--------|------------|---------|
-| KnowledgeSourceBucket | Yes | KB documents (PDFs, policies) |
-| KnowledgeBaseSupplementalBucket | No | Bedrock KB multimodal parsing output (extracted page images/visual elements) |
+| KnowledgeSourceBucket | Yes | KB documents (PDFs and other files) and `metadata.txt` |
+| KnowledgeBaseSupplementalBucket | No | Bedrock KB multimodal parsing output (extracted page images) |
 | FeedbackDownloadBucket | Yes | Feedback CSV exports |
-| EvalResultsBucket | Yes | LLM evaluation results |
-| EvalTestCasesBucket | Yes | Test case files (CSV/JSON) |
-| RagasDependenciesBucket | Yes | RAGAS Docker image dependencies |
-| ContractIndexBucket | No | Excel index files (`indexes/{id}/latest.xlsx`) |
-| DataStagingBucket | No | Staging area for sync pipeline |
+| ContractIndexBucket | No | Spreadsheet index files (`indexes/{id}/latest.xlsx`) |
+| DataStagingBucket | No | Staging area for the sync pipeline (`documents/`, `indexes/`) |
+| EvalResultsBucket (eval) | Yes | LLM evaluation results |
+| EvalTestCasesBucket (eval) | Yes | Test case files (CSV/JSON) |
+
+The stack also creates a private website bucket and two log buckets (DESTROY with auto-delete). Without eval the stack has 8 buckets in total, with eval 10.
 
 ## Lambda Functions
 
-### Core Chat (Node.js 20)
-| Function | Memory | Timeout | Purpose |
-|----------|--------|---------|---------|
-| ChatHandlerFunction | 512 MB | 15 min | Main chat LLM handler + agentic loop |
-| GetS3FilesHandlerFunction | default | 30s | List/retrieve KB files |
-| UploadS3FilesHandlerFunction | default | 30s | Upload KB files |
-| ExcelIndexApiFunction | default | 30s | Index management API |
-| SourcePresignFunction | default | 10s | Generate presigned S3 URLs |
+Memory is the Lambda default (128 MB) unless listed.
 
-### Core Chat Support (Python 3.12)
-| Function | Memory | Timeout | Purpose |
-|----------|--------|---------|---------|
-| SessionHandlerFunction | default | 30s | Session CRUD operations |
-| FeedbackHandlerFunction | 256 MB | 30s | Feedback management + disposition + audit |
-| ContextSummarizerFunction | default | 60s | Compress conversation history |
-| FAQClassifierFunction | default | 30s | Classify questions into 10 categories |
-| MetadataHandlerFunction | default | 30s | S3 trigger: auto-extract doc metadata via LLM |
-| MetadataRetrievalFunction | default | 30s | Retrieve cached metadata.txt |
+### Core Chat
+| Function | Runtime | Memory | Timeout | Purpose |
+|----------|---------|--------|---------|---------|
+| ChatHandlerFunction | Node | 512 MB | 15 min | Main chat handler + agentic loop |
+| SessionHandlerFunction | Python | default | 30s | Session CRUD |
+| ContextSummarizerFunction | Python | default | 60s | Compact conversation history |
+| FAQClassifierFunction | Python | default | 30s | Classify questions by topic |
+| MetadataHandlerFunction | Python | default | 30s | S3 trigger: document summaries and `metadata.txt` |
+| MetadataRetrievalFunction | Python | default | 30s | Return `metadata.txt` (fetch_metadata tool) |
+| SourcePresignFunction | Node | default | 10s | Presigned URLs for source citations |
+| TranscribePresignFunction | Node | default | 10s | Presigned Transcribe streaming URL for dictation |
 
-### Excel Index (Python 3.12)
-| Function | Memory | Timeout | Purpose |
-|----------|--------|---------|---------|
-| ExcelIndexParserFunction | 512 MB | 2 min | S3 trigger → parse .xlsx → DynamoDB + AI description |
-| ExcelIndexQueryFunction | 256 MB | 30s | Filters, aggregations, free-text fuzzy search |
+### Knowledge Management
+| Function | Runtime | Memory | Timeout | Purpose |
+|----------|---------|--------|---------|---------|
+| GetS3FilesHandlerFunction | Node | default | 30s | List files and sync status |
+| UploadS3FilesHandlerFunction | Node | default | 30s | Presigned upload URLs for the KB bucket |
+| DeleteS3FilesHandlerFunction | Python | default | 30s | Delete KB files (removes KB chunks first; path-traversal checks) |
+| SyncKBHandlerFunction | Python | default | 30s | Trigger Bedrock KB ingestion; sync status |
+| SyncOrchestratorFunction | Python | 256 MB | 5 min | Staging to KB/index buckets, ingestion, backfill |
+| SyncScheduleFunction | Python | default | 30s | Sync schedule and history API |
 
-### Knowledge Management (Python 3.12)
-| Function | Memory | Timeout | Purpose |
-|----------|--------|---------|---------|
-| DeleteS3FilesHandlerFunction | default | 30s | Delete KB files (path traversal protection) |
-| SyncKBHandlerFunction | default | 30s | Trigger Bedrock KB ingestion |
-| SyncOrchestratorFunction | 256 MB | 5 min | Copy staging → KB/index buckets |
-| SyncScheduleFunction | default | 30s | Manage EventBridge sync schedule |
+### Excel Index
+| Function | Runtime | Memory | Timeout | Purpose |
+|----------|---------|--------|---------|---------|
+| ExcelIndexParserFunction | Python | 512 MB | 2 min | S3 trigger: parse .xlsx to DynamoDB + AI description |
+| ExcelIndexQueryFunction | Python | 256 MB | 30s | Filters, aggregations, fuzzy search |
+| ExcelIndexApiFunction | Node | default | 30s | Index management API |
 
-### Evaluation Pipeline
-| Function | Memory | Timeout | Purpose |
-|----------|--------|---------|---------|
-| SplitEvalTestCasesFunction (Python) | default | 30s | Split test cases into chunks of 15 |
-| GenerateResponseFunction (Node.js) | 512 MB | 60s | Generate LLM response for eval |
-| LlmEvalFunction (Docker) | 10 GB | 15 min | RAGAS evaluation (max concurrency: 2) |
-| AggregateEvalResultsFunction (Python) | 256 MB | 120s | Compute average metrics across chunks |
-| LlmEvalResultsHandlerFunction (Python) | default | 30s | Write results to DynamoDB |
-| LlmEvalCleanupFunction (Pytho) | default | 30s | Delete S3 evaluation artifacts |
+### Admin, Feedback, Metrics
+| Function | Runtime | Memory | Timeout | Purpose |
+|----------|---------|--------|---------|---------|
+| UserAdminFunction | Python | default | 15s | Invite, roles, enable, disable, delete users |
+| FeedbackHandlerFunction | Python | 256 MB | 30s | Feedback, prompts, monitoring, activity log |
+| MetricsHandlerFunction | Python | default | 60s | Analytics API |
 
-### Test Library & Analytics (Python 3.12)
-| Function | Memory | Timeout | Purpose |
-|----------|--------|---------|---------|
-| TestLibraryHandlerFunction | default | 30s | Test library CRUD with versioning |
-| FeedbackToTestLibraryProcessFunction | 256 MB | 90s | LLM-rewrite questions → test library (SQS-triggered) |
-| EvalResultsHandlerFunction | default | 60s | Read eval summaries/results for admin dashboard |
-| MetricsHandlerFunction (Python) | default | 30s | Analytics: sessions, agencies, FAQ breakdown |
+### Auth and Infrastructure
+| Function | Runtime | Timeout | Purpose |
+|----------|---------|---------|---------|
+| PreSignUpFunction | Python | 5s | Cognito PreSignUp: sign-up domain allowlist |
+| AuthorizationFunction | Python | 30s | WebSocket `$connect` JWT authorizer |
+| OpenSearchCreateIndexFunction | Python | 5 min | Custom resource: create the vector index |
+
+### Evaluation Pipeline (only with `enableEval`)
+| Function | Runtime | Memory | Timeout | Purpose |
+|----------|---------|--------|---------|---------|
+| StartLlmEvalStateMachineFunction | Node | default | 30s | Start an evaluation run |
+| SplitEvalTestCasesFunction | Python | default | 30s | Split test cases (one question per chunk) |
+| GenerateResponseFunction | Node | 512 MB | 15 min | Run the production agent loop for one question |
+| LlmEvaluationFunction | Container (Python) | 10 GB | 15 min | RAGAS evaluation |
+| AggregateEvalResultsFunction | Python | 256 MB | 120s | Average metrics across questions |
+| LlmEvalResultsHandlerFunction | Python | default | 30s | Write results to DynamoDB |
+| LlmEvalCleanupFunction | Python | default | 30s | Delete S3 evaluation artifacts |
+| EvalResultsHandlerFunction | Python | default | 60s | Read eval summaries and results for the admin UI |
+| TestLibraryHandlerFunction | Python | default | 30s | Test library CRUD with versioning |
+| FeedbackToTestLibraryProcessFunction | Python | 256 MB | 90s | LLM-rewrite questions into the test library (SQS-triggered) |
+| GetS3TestCasesFilesHandlerFunction | Node | default | 30s | List test case files |
+| UploadS3TestCasesFilesHandlerFunction | Node | default | 30s | Presigned upload for test cases |
 
 ## Environment Variables
 
-### Lambda (set by CDK, override in console for testing)
+### Lambda (set by CDK; override in the console for testing)
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PRIMARY_MODEL_ID` | `us.anthropic.claude-opus-4-6-v1` | Chat + eval model |
-| `FAST_MODEL_ID` | `us.anthropic.claude-sonnet-4-6` | Titles, metadata, FAQ classification |
-| `GUARDRAIL_ID` | *(unset = disabled)* | Bedrock Guardrail |
-| `GUARDRAIL_VERSION` | *(unset = disabled)* | Bedrock Guardrail version |
-| `KB_ID` | *(set by CDK)* | Knowledge Base ID |
-| `TABLE_NAME` | *(set by CDK)* | Excel index DynamoDB table |
-| `PROMPT_REGISTRY_TABLE` | *(set by CDK)* | Versioned prompt storage |
-| `PROMPT_FAMILY` | `ASSISTANT_CHAT` | Prompt registry partition key |
-| `RESPONSE_TRACE_TABLE` | *(set by CDK)* | Audit trail table |
-| `INDEX_REGISTRY_TABLE` | *(set by CDK)* | Excel index metadata/schema registry |
+| `PRIMARY_MODEL_ID` | `<geo>anthropic.claude-opus-4-6-v1` (e.g. `us.anthropic.claude-opus-4-6-v1`) | Chat, eval judge, prompt rewrite |
+| `FAST_MODEL_ID` | `<geo>anthropic.claude-sonnet-4-6` | Titles, summaries, topic classification, compaction, feedback analysis |
+| `GUARDRAIL_ID`, `GUARDRAIL_VERSION` | unset (disabled), `1` | Bedrock Guardrail |
+| `KB_ID` | set by CDK | Knowledge Base ID |
+| `PROMPT_REGISTRY_TABLE` | set by CDK | Versioned prompt storage |
+| `PROMPT_FAMILY` | `<SLUG>_CHAT` (e.g. `ABE_CHAT`) | Prompt registry partition key |
+| `RESPONSE_TRACE_TABLE` | set by CDK | Audit trail table |
+| `INDEX_REGISTRY_TABLE` | set by CDK | Spreadsheet index metadata |
+| `METRICS_NAMESPACE` | `<SLUG>/Chat` | CloudWatch EMF namespace for chat metrics (`SessionSaveFailures`) |
+| `BRAND_TIMEZONE` | from `config/brand.ts` | IANA zone for dates and schedules |
+| `ASSISTANT_NAME`, `ORGANIZATION_NAME`, `SUPPORT_CONTACT`, `DOMAIN_CONTEXT` | from `config/brand.ts` | Prompt placeholders |
+| `MAX_TOOL_ROUNDS` | `25` (not set by CDK) | Tool rounds per request |
+| `USER_POOL_ID`, `ADMIN_GROUP_NAME` | set by CDK | User-admin Lambda |
+| `ALLOWED_SIGNUP_DOMAINS` | from deployment settings | PreSignUp Lambda |
 
-### Frontend (`.env` in `lib/user-interface/app/`)
+### Frontend (`.env` in `lib/user-interface/app/`, dev server only)
 ```
-AWS_PROJECT_REGION=
-AWS_COGNITO_REGION=
-AWS_USER_POOLS_ID=
-AWS_USER_POOLS_WEB_CLIENT_ID=
-API_DISTRIBUTION_DOMAIN_NAME=
-RAG_ENABLED=true
+ABE_REGION=
+ABE_USER_POOL_ID=
+ABE_USER_POOL_CLIENT_ID=
+ABE_HTTP_ENDPOINT=
+ABE_WS_ENDPOINT=
+ABE_SELF_SIGNUP_ENABLED=false
+ABE_EVAL_ENABLED=true
 ```
+In production CDK writes `aws-exports.json` (user pool, client, endpoints, `selfSignUpEnabled`, `evalEnabled`).
 
 ## Constraints & Gotchas
 
-- **KB sync is manual:** No auto-sync when files are uploaded to the knowledge bucket. Admin must click "Sync data now" in the UI (or wait for Sunday 1 AM ET scheduled sync).
-- **Metadata summaries lag ingestion:** Document summaries (metadata.txt) require chunks in the KB, which only exist after ingestion completes. At upload time the metadata handler returns 404 without writing anything; the hourly backfill schedule fills the summary in afterward. Never summarize when retrieval returns no chunks — historically that produced "could not be retrieved" filler persisted as real summaries.
-- **Excel index path:** Must be exactly `indexes/{index_id}/latest.xlsx` — other S3 paths are ignored by the parser.
-- **DynamoDB schema changes:** Changing partition/sort keys requires table recreation. Use the `scope` pattern to avoid unintended logical ID changes.
-- **System prompt caching:** Prompt is ~4K tokens, cached at Bedrock (5-min TTL). Modifying [prompt.mjs](lib/chatbot-api/functions/websocket-chat/prompt.mjs) invalidates the cache temporarily.
-- **Prompt registry:** System prompt is loaded from DynamoDB (`PromptRegistryTable`) with LIVE pointer indirection. Code default is auto-synced via SHA256 hash comparison. Custom versions (created_by != "system") are preserved.
-- **Max output tokens:** Set to 16,384 (lowered from Bedrock default to prevent truncation on long vendor lists).
-- **Context limits:** Max estimated tokens = 160K; compression triggers at 120K (75%); aggressive trim at 5K chars per document when overflow detected.
-- **Agentic loop cap:** Max 20 tool rounds per request; max 3 retries on transient Bedrock errors.
-- **Citation markers:** Self-managed `[N]` style; validation strips out-of-range indices. Native Bedrock citations are converted and snapped to sentence boundaries.
-- **Model permissions:** IAM uses `foundation-model/anthropic.*` wildcard — allows model upgrades without redeploy but is intentionally broad.
-- **Tool result size:** Capped at 60K chars via binary search truncation; rows removed with "results truncated" note.
-- **Excel query scans:** Full partition scan with in-code filtering — works for current data volumes but not indexed for scale.
-- **WebSocket timeout:** Client-side 90s timeout hardcoded in `useWebSocketChat` hook; no server-side configuration.
-- **Stop vs. network drop:** `$disconnect` writes a TTL'd `WSDISCONNECT#<connId>` marker to `ResponseTraceTable`. On a mid-stream `GoneException` the chat handler polls for it: marker found ⇒ deliberate stop (abort, discard, no save — a stopped answer must never reappear on reload); absent ⇒ silent network drop (finish generating with sends suppressed and save the exchange, so a reload shows the full answer).
-- **Two login modes, keyed off `OIDC_PROVIDER_NAME`:** Without it (native mode), the app client enables USER_SRP_AUTH and the frontend renders the branded in-app login page ([login-page.tsx](lib/user-interface/app/src/components/auth/login-page.tsx)); the client's write attributes explicitly exclude `custom:role` so a user's own token cannot call UpdateUserAttributes to self-assign Admin (operators assign roles via the console / AdminUpdateUserAttributes, which bypasses client write permissions). With it (SSO mode), SRP stays disabled, users go to the Cognito Managed Login page, and attribute permissions stay open so IdP mapping can write `custom:role`. The frontend picks its mode from `federatedSignInProvider` in aws-exports.json (empty = native), which is derived from the same `oidcProviderName` value the app client got, so the two can't drift.
-- **Frontend brand copy is committed, not generated in CI:** CI deploys run `npx cdk deploy` directly and never run `npm run brand:sync`, so [lib/user-interface/app/src/common/brand.ts](lib/user-interface/app/src/common/brand.ts) ships exactly as committed. After editing [config/brand.ts](config/brand.ts), run `npm run brand:sync` and commit the regenerated file.
-- **CORS origin:** Uses Lazy CDK token pattern — CloudFront domain resolved at synth time, not construct time.
-- **Custom domain is deploy-time config, not a console toggle:** Binding the app to a custom domain (e.g. `app.example.gov`) is driven entirely by per-deployment values — `CUSTOM_DOMAIN` (GitHub Actions Variable) + `CERTIFICATE_ARN` (Secret, ACM cert in **us-east-1**) + `OIDC_PROVIDER_NAME` (Variable, if SSO). [abe-stack.ts](lib/abe-stack.ts) computes one `siteUrl` from these and feeds it via Lazy tokens into **four** places: CloudFront alias+cert, Cognito app client callback/sign-out URLs, HTTP API + S3 CORS origin, and `aws-exports.json` redirect URLs. A deploy missing the domain values reverts all of them to the `*.cloudfront.net` fallback; a deploy missing `OIDC_PROVIDER_NAME` drops the SSO provider and breaks sign-in. **The Cognito app client is fully CDK-managed** ([authorization/index.ts](lib/authorization/index.ts)) — do **not** hand-edit callback URLs / scopes / providers in the console or patch `aws-exports.json` in S3; those are drift the next deploy silently overwrites. Symptom of a domain bound only via console+DNS (no redeploy): the page loads (HTTP 200) but the UI hangs on a spinner and/or chat hits CORS errors, because auth+CORS still target the old domain. Full runbook + troubleshooting: [docs/custom-domain.md](docs/custom-domain.md).
+- **Docker is required for every synth and deploy** (Python bundling, the eval image). Jest tests skip bundling and need no Docker
+- **KB sync is manual:** no auto-sync when files are uploaded. An admin clicks "Sync data now" (or waits for the Sunday 1 AM schedule)
+- **Metadata summaries lag ingestion:** summaries need chunks in the KB, which only exist after ingestion completes. At upload time the metadata handler writes nothing; the hourly backfill fills the summary in afterward. Never summarize when retrieval returns no chunks: historically that produced "could not be retrieved" filler persisted as real summaries
+- **Spreadsheet index path:** must be exactly `indexes/{index_id}/latest.xlsx`; other S3 paths are ignored by the parser
+- **DynamoDB schema changes:** changing partition or sort keys requires table recreation. Use the `scope` pattern to avoid unintended logical ID changes
+- **System prompt caching:** ~4K tokens, cached at Bedrock (5-min TTL). Editing [prompt.mjs](lib/chatbot-api/functions/websocket-chat/prompt.mjs) invalidates the cache temporarily
+- **Prompt registry:** the prompt is loaded from DynamoDB with LIVE pointer indirection. The code default is auto-synced via SHA256 comparison. Custom versions (created_by != "system") are preserved. Evals read the LIVE prompt read-only
+- **Max output tokens:** 16,384 (lowered from the Bedrock default to prevent truncation on long lists)
+- **Context limits:** estimated tokens max 160K; compaction triggers at 120K (up to 3 rounds); aggressive trimming of large tool results if the ceiling is still exceeded; message length cap 10,000 characters
+- **Agentic loop cap:** max 25 tool rounds per request (`MAX_TOOL_ROUNDS`); max 3 retries on transient Bedrock errors with jittered backoff
+- **Citation markers:** self-managed `[N]` style; validation strips out-of-range indices. Native Bedrock citations are converted and snapped to sentence boundaries. Persisted sources drop presigned `uri`s; the UI reopens sources via `/source-presign` with the `s3Key`
+- **Model permissions:** IAM allows `foundation-model/anthropic.*` in any region plus account inference profiles, so model upgrades need no IAM change (intentionally broad; inference profiles route across regions)
+- **Tool result size:** capped at 60K chars via binary-search truncation; rows removed with a "results truncated" note. Full-document retrieval has its own caps (150 chunks, 120,000 chars)
+- **Spreadsheet query scans:** full partition scan with in-code filtering: fine for current volumes, not indexed for scale
+- **WebSocket timeouts:** client-side 120s inactivity timeout (`useWebSocketChat`), server sends a heartbeat every 20s; the chat Lambda runs up to 15 minutes
+- **Stop vs. network drop:** `$disconnect` writes a TTL'd `WSDISCONNECT#<connId>` marker to `ResponseTraceTable`. On a mid-stream `GoneException` the chat handler polls for it: marker found means a deliberate stop (abort, discard, no save; a stopped answer must never reappear on reload); absent means a silent network drop (finish generating with sends suppressed and save the exchange so a reload shows the full answer)
+- **Auth is native Cognito only.** Admin rights come only from the `Admin` group. The app client has SRP only, no OAuth, and write attributes limited to profile fields. The user pool is RETAIN with deletion protection; moving to a different pool schema needs a new pool
+- **Self sign-up is off by default.** The PreSignUp trigger is wired even with an empty allowlist so the SignUp API stays closed
+- **Cognito email:** the default sender allows about 50 emails per day; configure SES for larger rollouts
+- **WAF only in us-east-1:** the CloudFront web ACL is created only when the stack region is `us-east-1` (a synth warning otherwise)
+- **Region-agnostic code:** no hardcoded regions; model IDs take their geo prefix from the stack region
+- **Frontend brand copy is committed:** `lib/user-interface/app/src/common/brand.ts` and `public/manifest.json` are generated by `npm run brand:sync` and committed. The deploy workflow runs `npm run brand:sync` after exporting the brand Variables, so CI can apply Variable overrides without a commit; otherwise it ships as committed. After editing `config/brand.ts`, run the sync and commit
+- **CORS origin:** a lazy CDK token resolves the CloudFront (or custom) domain at synth time. Extra localhost origins only via `devCorsOrigins`
+- **Custom domain is deploy-time config, not a console toggle:** `customDomain` + `certificateArn` (ACM cert in us-east-1) feed one `siteUrl` into three places: the CloudFront alias and certificate, the HTTP API and S3 CORS origin, and the Cognito invitation email link. A deploy missing the values reverts all of them to `*.cloudfront.net`. Do not hand-edit the distribution or CORS in the console (the next deploy overwrites it). Symptom of a domain bound only via console and DNS: the page loads (HTTP 200) but the UI hangs on a spinner or chat hits CORS errors. Runbook: [docs/custom-domain.md](docs/custom-domain.md)
+- **One API Gateway account role per region:** a second stack in the same account and region must set `apiGatewayAccountRole=false`
+- **Reserved concurrency fails in new accounts** whose total Lambda quota is 10; leave `metadataHandlerConcurrency` unset there
 
 ## Monitoring
 
-CloudWatch dashboard: `ABEStack-Operations`
+CloudWatch dashboard: `<StackName>-Operations` (for example `ABEStack-Operations`)
 
-43 active alarms (trigger SNS email):
-- **Lambda** (per function): errors >= 3 in 5 min | throttles >= 1 in 5 min | chat avg duration > 60s
-- **API Gateway**: HTTP 5xx >= 10 in 5 min | HTTP 4xx >= 50 in 5 min (3 periods)
-- **WebSocket**: zero connections for 15 min (potential outage)
-- **DynamoDB** (per table): read throttles >= 5 in 5 min | write throttles >= 5 in 5 min
-- **Step Functions**: evaluation pipeline failures >= 1
+39 alarms without eval, 47 with eval (publish to an SNS topic; `alarmEmail` subscribes):
+- **Lambda** (per monitored function: chat, session, feedback, sync-kb, metadata handler, metrics, delete, get, upload, user admin, plus eval results with eval): errors >= 3 in two 5-min periods, throttles >= 1 in two 5-min periods
+- **Chat:** average duration > 60s over three 5-min periods; any `SessionSaveFailures` EMF metric in 5 min
+- **PreSignUp:** errors or rejected sign-ups >= 5 in 5 min
+- **DynamoDB** (per monitored table, 7 without eval and 9 with): read throttles >= 5 and write throttles >= 5 in two 5-min periods
+- **HTTP API:** 5xx >= 10 (two periods), 4xx >= 50 (three periods)
+- **Step Functions (eval only):** any evaluation pipeline failure
+- **SQS DLQ (eval only):** any message in the feedback-to-test-library DLQ
 
-Dashboard rows: Lambda invocations/errors → chat latency (avg + p99) → HTTP API metrics → WebSocket + DynamoDB → eval pipeline + active alarms
-
-Deploy with `-c alarmEmail=you@example.com` to subscribe.
+Dashboard rows: Lambda invocations and errors, chat latency (average and p99) and throttles, HTTP API requests, errors and latency, WebSocket connections and DynamoDB throttles, eval pipeline executions and an alarm summary.
 
 ## Evaluation Pipeline
 
-Admin-triggered Step Functions state machine:
+Admin-triggered Step Functions state machine, only deployed when `enableEval` is true (6 hour execution timeout):
 
 ```
-Split Test Cases → [Map: parallel eval, max 2 concurrent] → Aggregate Results → Save to DynamoDB → Cleanup S3
-                          ↓ (on error)
-                     Pass Error → Save partial results
+Split Test Cases -> [Map: one question each, max 3 concurrent: generate + evaluate] -> Aggregate Results -> Save to DynamoDB -> Cleanup S3
+                          | (on error)
+                     Pass Error -> Save partial results
 ```
 
-1. Upload test cases (CSV/JSON with `question` + `expectedResponse` columns) → state machine starts
-2. Split into chunks of 15 → saved to S3
-3. Each chunk: generate LLM response → evaluate with RAGAS 0.2.14 Docker Lambda (10 GB memory, 15 min timeout)
-4. **7 metrics computed:**
-   - Similarity (semantic similarity via sentence-transformers)
-   - Relevance (answer relevance to question)
-   - Correctness (answer correctness vs. expected)
-   - Context Precision (fraction of relevant context chunks)
-   - Context Recall (fraction of gold context retrieved)
-   - Response Relevancy (RAGAS metric)
-   - Faithfulness (factual consistency with context)
-5. Aggregate averages across chunks; validate scores in [0, 1] range
-6. Results stored in DynamoDB (`EvaluationSummariesTable` + `EvaluationResultsTable`) + S3
-7. Cleanup: delete chunks/, partial_results/, aggregated_results/ from S3
+1. Upload test cases (CSV/JSON with `question` + `expectedResponse` columns); the state machine starts
+2. Split into chunks of 1 question, saved to S3
+3. Each question: `GenerateResponseFunction` runs the production agent loop (same LIVE prompt, read-only; same default model; real tools) and `LlmEvaluationFunction` scores it with RAGAS 0.2.14 (judge: the primary model; embeddings: Titan V2)
+4. **6 metrics computed:** similarity (semantic), correctness (answer correctness vs expected), context precision, context recall, response relevancy, faithfulness
+5. Questions that fail are recorded with their error and excluded from the averages; aggregation validates scores in [0, 1]
+6. Results stored in DynamoDB (`EvaluationSummariesTable` + `EvaluationResultsTable`) and S3
+7. Cleanup deletes the S3 chunk and partial-result artifacts
 
 ### Feedback-to-Test-Library Pipeline
-An admin promotes a piece of positive (thumbs-up) feedback from the Feedback Manager (`POST /admin/feedback/{id}/promote-to-candidate`, admin-gated) → the feedback handler enqueues it to the SQS queue → consumer LLM-rewrites the question to be standalone → upsert to `TestLibraryTable` with normalized question deduplication and version history. The question/answer are read server-side from the stored response trace, not supplied by the client.
+An admin promotes a piece of positive (thumbs-up) feedback from the Feedback Manager (`POST /admin/feedback/{id}/promote-to-candidate`, admin-gated). The feedback handler enqueues it to SQS; the consumer LLM-rewrites the question to be standalone and upserts it into `TestLibraryTable` with normalized-question deduplication and version history. The question and answer are read server-side from the stored response trace, not supplied by the client. Failed messages go to the DLQ after 3 attempts (retained 14 days).
 
 ## CI/CD
 
-### Deploy (push to `main`)
-1. Checkout → setup Node.js 20 + Python 3.12
-2. AWS OIDC role assumption (no secrets stored)
-3. Install dependencies (backend + frontend)
-4. Run tests: `npm run test:lambda` (Vitest) + `pytest` (5 Python Lambda tests)
-5. CDK bootstrap → wait for stack stability (up to 30 min) → `cdk deploy`
-6. Upload stack outputs as artifact
+### Test (`test.yml`, called by deploy and PR check)
+Typecheck the CDK app, Jest, Vitest, pytest (every committed `test_*.py` under `lib/`), then frontend lint, typecheck and tests. No AWS credentials, no Docker.
 
-### PR Check (pull requests)
-1. Same setup + install
-2. Run tests with coverage: 6 Python Lambda tests + frontend tests
-3. Coverage artifacts uploaded; summary posted as PR comment
-4. CDK diff posted as PR comment (first 300 lines)
+### PR Check (pull requests to `main`)
+Runs `test.yml` with coverage (artifact plus a summary). If the `AWS_DIFF_ROLE_ARN` secret exists, writes a `cdk diff` to the job summary. Fork PRs get no secrets, so they skip the diff.
+
+### Deploy (push to `main`, or manual)
+1. Run `test.yml`
+2. Only if the `AWS_ROLE_ARN` secret is set (otherwise tests only, deploy skipped): checkout, Node from `.nvmrc`, export non-empty repo Variables and Secrets as deployment settings
+3. AWS OIDC role assumption (trust scoped to `repo:<owner>/<repo>:ref:refs/heads/main`; no stored keys)
+4. `npm ci` (backend and frontend), `npm run brand:sync`
+5. `cdk bootstrap` (idempotent), wait for stack stability (up to 30 min), `cdk deploy --require-approval never`
+6. Job summary with the app URL and the `create-admin.sh` command
+
+Repo Secrets: `AWS_ROLE_ARN`, `AWS_DIFF_ROLE_ARN`, `CERTIFICATE_ARN`, `ALARM_EMAIL`. Repo Variables: `AWS_REGION`, `STACK_NAME`, `CUSTOM_DOMAIN`, `ALLOWED_SIGNUP_DOMAINS`, `COGNITO_FEATURE_PLAN`, `ENABLE_EVAL`, `KB_PARSER_MODEL`, `API_GATEWAY_ACCOUNT_ROLE`, `ENVIRONMENT`, `PRIMARY_MODEL_ID`, `FAST_MODEL_ID`, `GUARDRAIL_ID`, `GUARDRAIL_VERSION`, `ASSISTANT_NAME`, `SHORT_NAME`, `ORGANIZATION_NAME`, `BRAND_TAGLINE`, `SUPPORT_CONTACT`, `DOMAIN_CONTEXT`, `BRAND_TIMEZONE`.
 
 ### Test Coverage
-| Lambda | Tests | Status |
-|--------|-------|--------|
-| websocket-chat (Node.js) | Vitest unit tests | Covered |
-| excel-index/query | pytest with moto mock | Covered |
-| excel-index/parser | pytest | Covered |
-| metadata-retrieval | pytest (cache + filter) | Covered |
-| metadata-handler | pytest | Covered |
-| session-handler | pytest (basic CRUD) | Covered |
-| websocket-api-authorizer | pytest (JWT validation) | Covered |
-| feedback-handler | — | Not tested |
-| evaluation pipeline (5 Lambdas) | — | Not tested |
-| sync-orchestrator | pytest (backfill + placeholder detection) | Covered |
-| sync-schedule | — | Not tested |
-| metrics-handler | — | Not tested |
-| context-summarizer | — | Not tested |
+| Area | Tests | Status |
+|------|-------|--------|
+| CDK stack (synth, nag, Cognito, IAM, eval toggle) | Jest in `test/abe.test.ts` | Covered |
+| websocket-chat (agent loop, tools, KB, citations, compaction, persistence, prompt registry, model) | Vitest | Covered |
+| shared-node auth, source-presign, excel-index API, generate-response | Vitest | Covered |
+| Python admin gates (every admin handler returns 403 for non-admins) | `test_admin_gates.py` | Covered |
+| user-admin, pre-signup, websocket-api-authorizer, python-common auth | pytest | Covered |
+| session-handler, metrics-handler, context-summarizer | pytest | Covered |
+| excel-index parser and query | pytest | Covered |
+| metadata-handler, metadata-retrieval | pytest | Covered |
+| sync-orchestrator (backfill, placeholder detection), sync-schedule | pytest | Covered |
+| eval pipeline (eval, aggregate, results-to-ddb) | pytest (`test_eval_pipeline.py`) | Covered |
+| opensearch create-index | pytest | Covered |
+| feedback-handler | Admin gate only | Partial |
+| faq-classifier, kb-sync, delete-s3, test-library, eval-results, feedback-to-test-library, transcribe-presign, get-s3, upload-s3, start-llm-eval | none | Not tested |
+| Frontend (login, chat, admin pages, hooks, api clients, a11y) | Vitest + Testing Library | Covered |
 
 ## Frontend Routes
 
 ```
-/ → Landing page (no sidebar)
-/about → Landing info (no sidebar)
-/get-started → Landing start (no sidebar)
+/ -> Landing page (no sidebar)
+/about -> Landing info (no sidebar)
+/get-started -> Landing start (no sidebar)
 
 /chatbot/* (with sidebar)
-  /playground/:sessionId → Chat UI
-  /sessions → Sessions list
+  /playground/:sessionId -> Chat UI
+  /sessions -> Sessions list
 
-/admin/* (with sidebar)
-  /data → Data management (documents, indexes, automation/sync)
-  /user-feedback → Feedback manager
-  /user-feedback/:feedbackId → Feedback details
-  /metrics → Analytics dashboard (charts via @mui/x-charts)
-  /llm-evaluation → Evaluations list
-  /llm-evaluation/:evaluationId → Detailed evaluation
+/admin/* (with sidebar, admins only)
+  /data -> Data management (documents, indexes, automation/sync)
+  /users -> User management (invite, roles, enable/disable, delete)
+  /user-feedback -> Feedback Manager (queue, trends, instructions)
+  /user-feedback/:feedbackId -> Feedback details
+  /metrics -> Analytics dashboard (charts via @mui/x-charts)
+  /llm-evaluation -> Evaluations list (hidden when eval is disabled)
+  /llm-evaluation/:evaluationId -> Detailed evaluation
 
-/help → Help/FAQ page
-* → 404
+/help -> Help/FAQ page
+* -> 404
 ```
 
 ### Frontend Component Hierarchy
 ```
-AppConfigured (auth, theme, Amplify config)
-  └─ App (React Router)
-     ├─ LandingPage / LandingPageInfo / LandingPageStart
-     └─ BaseAppLayout (header + drawer + content)
-        ├─ GlobalHeader (logo, hamburger, user menu, theme toggle)
-        ├─ NavigationPanel (new chat, sessions list, admin links)
-        └─ Outlet
-           ├─ Playground → Chat → ChatMessage[] + ChatInputPanel + useWebSocketChat
-           ├─ SessionsPage
-           └─ Admin pages (Data, Feedback, Metrics, Evaluations)
+AppConfigured (aws-exports, Amplify, auth gate, theme)
+  +- LoginPage (signed out)
+  +- App (React Router)
+     +- LandingPage / LandingPageInfo / LandingPageStart
+     +- BaseAppLayout (header + drawer + content)
+        +- GlobalHeader (logo, hamburger, account menu with two-step verification, theme toggle)
+        +- NavigationPanel (new chat, sessions list, admin links)
+        +- Outlet
+           +- Playground -> Chat -> ChatMessage[] + ChatInputPanel + useWebSocketChat
+           +- SessionsPage
+           +- AdminRoute -> admin pages (Data, Users, Feedback, Metrics, Evaluations)
 ```
