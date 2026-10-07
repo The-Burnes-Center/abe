@@ -16,7 +16,13 @@
 </p>
 
 <!-- DEMO:START -->
-Demo video coming soon.
+<p align="center">
+  <a href="docs/media/abe-demo.mp4">
+    <img src="docs/media/abe-demo.gif" alt="ABE demo: a question answered from company documents with inline citations, the app rebranded from config/brand.ts, and the stack deployed with cdk deploy" width="860">
+  </a>
+  <br>
+  <sub>22-second tour. Click the preview for the full-quality video with sound.</sub>
+</p>
 <!-- DEMO:END -->
 
 ## What it is
