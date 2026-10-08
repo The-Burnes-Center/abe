@@ -1,12 +1,12 @@
 # Contributing to ABE
 
-Thanks for helping. This guide covers setting up a development environment, how changes flow into `main`, and the checks every pull request has to pass. By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Security problems go through [SECURITY.md](SECURITY.md), not public issues.
+Thanks for helping. This guide covers setting up a development environment, how changes flow into `main`, and the checks every pull request has to pass. By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Security problems go through [SECURITY.md](SECURITY.md), not public issues. Questions and early ideas belong in [Discussions](https://github.com/The-Burnes-Center/abe/discussions). Issues are for confirmed bugs and planned work.
 
 ## Ways to help
 
-- Report a bug or propose a feature with an issue (templates are provided).
+- Report a bug or propose a planned feature with an issue (forms are provided). Ask questions and float ideas in [Discussions](https://github.com/The-Burnes-Center/abe/discussions) first.
 - Improve the docs: the README, `docs/`, and code comments.
-- Pick up an open issue. For anything bigger than a small fix, comment on the issue first so we can agree on the approach before you write code.
+- Pick up an open issue. For anything bigger than a small fix, comment on the issue first so we can agree on the approach before you write code. Breaking changes, new AWS services and changes to the auth or security model always need that agreement first (see [GOVERNANCE.md](GOVERNANCE.md)).
 
 ## Development setup
 
@@ -28,7 +28,9 @@ Deploying a copy of the stack to your own AWS account (recommended before you ch
 2. Make small, focused commits.
 3. Run the checks below before you push.
 4. Open a pull request against `main` and fill in the template, including the test plan.
-5. CI (`.github/workflows/test.yml`, called by `pr-check.yml`) runs the same checks. Expect a green run and a maintainer review before merge.
+5. CI (`.github/workflows/test.yml`, called by `pr-check.yml`) runs the same checks.
+
+`main` is protected: nobody pushes to it directly. Every change lands through a pull request, CI must pass, and a maintainer reviews it before merge (the maintainers are listed in [MAINTAINERS.md](MAINTAINERS.md)). Admins can bypass the rule for emergencies only. Add a line under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) for any change users will notice.
 
 `main` deploys automatically in repositories that configure AWS credentials (see [CI/CD](README.md#cicd-with-github-actions)), so keep `main` releasable.
 

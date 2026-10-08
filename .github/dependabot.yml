@@ -1,0 +1,106 @@
+# Weekly dependency updates. Minor and patch updates are grouped into one pull
+# request per ecosystem and directory. Major updates arrive as separate pull
+# requests so they can be reviewed on their own.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /lib/user-interface/app
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      frontend-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /lib/authorization/websocket-api-authorizer
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /lib/chatbot-api/functions/context-summarizer
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /lib/chatbot-api/functions/excel-index/parser
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /lib/chatbot-api/functions/excel-index/query
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  # requirements.in is the pip-compile source and requirements.txt the pinned
+  # output. Dependabot updates the pinned file. Keep the two in step by hand.
+  - package-ecosystem: pip
+    directory: /lib/chatbot-api/functions/step-functions/llm-evaluation/eval
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /lib/chatbot-api/opensearch/create-index-lambda
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /lib/chatbot-api/functions/step-functions/llm-evaluation/eval
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]

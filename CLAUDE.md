@@ -388,12 +388,22 @@ Runs `test.yml` with coverage (artifact plus a summary). If the `AWS_DIFF_ROLE_A
 ### Deploy (push to `main`, or manual)
 1. Run `test.yml`
 2. Only if the `AWS_ROLE_ARN` secret is set (otherwise tests only, deploy skipped): checkout, Node from `.nvmrc`, export non-empty repo Variables and Secrets as deployment settings
-3. AWS OIDC role assumption (trust scoped to `repo:<owner>/<repo>:ref:refs/heads/main`; no stored keys)
+3. AWS OIDC role assumption (trust scoped to `repo:<owner>/<repo>:ref:refs/heads/main`; no stored keys; account ID masked in logs because the repo is public)
 4. `npm ci` (backend and frontend), `npm run brand:sync`
-5. `cdk bootstrap` (idempotent), wait for stack stability (up to 30 min), `cdk deploy --require-approval never`
+5. `cdk bootstrap` only when `CDKToolkit` is missing, wait for stack stability (up to 30 min), `cdk deploy --require-approval never`
 6. Job summary with the app URL and the `create-admin.sh` command
 
 Repo Secrets: `AWS_ROLE_ARN`, `AWS_DIFF_ROLE_ARN`, `CERTIFICATE_ARN`, `ALARM_EMAIL`. Repo Variables: `AWS_REGION`, `STACK_NAME`, `CUSTOM_DOMAIN`, `ALLOWED_SIGNUP_DOMAINS`, `COGNITO_FEATURE_PLAN`, `ENABLE_EVAL`, `KB_PARSER_MODEL`, `API_GATEWAY_ACCOUNT_ROLE`, `ENVIRONMENT`, `PRIMARY_MODEL_ID`, `FAST_MODEL_ID`, `GUARDRAIL_ID`, `GUARDRAIL_VERSION`, `ASSISTANT_NAME`, `SHORT_NAME`, `ORGANIZATION_NAME`, `BRAND_TAGLINE`, `SUPPORT_CONTACT`, `DOMAIN_CONTEXT`, `BRAND_TIMEZONE`.
+
+### Scorecard (`scorecard.yml`, push to `main` and weekly)
+OpenSSF Scorecard; results go to code scanning and the README badge.
+
+### Repo maintenance
+- `main` is protected by a ruleset: pull request plus a passing `test / test` check, no force pushes or deletion; repo admins can bypass.
+- Squash merges only; head branches auto-delete.
+- Dependabot (`.github/dependabot.yml`) opens weekly grouped updates for npm, pip, GitHub Actions and the eval Dockerfile. For the eval image, regenerate `requirements.txt` from `requirements.in` with uv rather than hand-editing.
+- CodeQL default setup, secret scanning with push protection, and private vulnerability reporting are on.
+- Releases: semver tags plus `CHANGELOG.md` (Keep a Changelog). See GOVERNANCE.md.
 
 ### Test Coverage
 | Area | Tests | Status |

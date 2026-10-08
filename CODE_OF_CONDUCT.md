@@ -52,18 +52,20 @@ decisions when appropriate.
 
 This Code of Conduct applies within all community spaces, and also applies when
 an individual is officially representing the community in public spaces.
-Examples of representing our community include using an official email address,
-posting via an official social media account, or acting as an appointed
+Examples of representing our community include posting from an official
+project account, or acting as an appointed
 representative at an online or offline event.
 
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement through the
-repository's private reporting channel: open a GitHub Security Advisory on this
-repository (Security tab, then Report a vulnerability) and state that the report
-is a Code of Conduct matter, or contact the maintainers directly through their
-GitHub profiles. All complaints will be reviewed and investigated promptly and
+reported to the community leaders responsible for enforcement, who are the
+maintainers listed in [MAINTAINERS.md](MAINTAINERS.md). Report privately and by
+GitHub handle: open a private advisory on this repository
+(https://github.com/The-Burnes-Center/abe/security/advisories/new) and say in
+the first line that it is a Code of Conduct matter, or contact a maintainer
+through their GitHub profile. Please do not report in a public issue or
+Discussion. All complaints will be reviewed and investigated promptly and
 fairly.
 
 All community leaders are obligated to respect the privacy and security of the

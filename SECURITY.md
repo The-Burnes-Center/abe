@@ -2,8 +2,8 @@
 
 ## Supported versions
 
-Only the `main` branch is supported. Fixes land on `main` and are not
-back-ported. If you run a fork or a pinned commit, update to the latest `main`
+Only the latest release and the `main` branch are supported. Fixes land on
+`main`, are released as a new version, and are not back-ported. If you run a fork or a pinned commit, update to the latest `main`
 to receive security fixes.
 
 ## Reporting a vulnerability
@@ -11,9 +11,13 @@ to receive security fixes.
 Please report vulnerabilities privately. Do not open a public issue or pull
 request for a security problem.
 
-Use GitHub's private vulnerability reporting: on the repository page, open the
-**Security** tab, choose **Report a vulnerability**, and fill in the advisory
-form. This opens a private thread with the maintainers.
+Use GitHub's private vulnerability reporting: go to
+https://github.com/The-Burnes-Center/abe/security/advisories/new, or open the
+**Security** tab on the repository page, choose **Report a vulnerability**, and
+fill in the advisory form. This opens a private thread with the maintainers
+listed in [MAINTAINERS.md](MAINTAINERS.md). There is no email address for
+security reports. If you cannot use GitHub, open a Discussion asking for a
+private contact, without any details of the issue.
 
 Helpful details to include:
 

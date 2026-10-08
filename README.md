@@ -13,6 +13,7 @@
   <a href="https://github.com/The-Burnes-Center/abe/actions/workflows/deploy.yml"><img alt="CI status" src="https://github.com/The-Burnes-Center/abe/actions/workflows/deploy.yml/badge.svg"></a>
   <img alt="Node 22" src="https://img.shields.io/badge/node-22-339933.svg">
   <img alt="AWS CDK v2" src="https://img.shields.io/badge/AWS%20CDK-v2-FF9900.svg">
+  <a href="https://scorecard.dev/viewer/?uri=github.com/The-Burnes-Center/abe"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/The-Burnes-Center/abe/badge"></a>
 </p>
 
 <!-- DEMO:START -->
@@ -241,13 +242,14 @@ If the registry is unreachable, the chat Lambda serves the embedded default rath
 
 ## CI/CD with GitHub Actions
 
-Three workflows live in `.github/workflows/`:
+Four workflows live in `.github/workflows/`:
 
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | `test.yml` | Called by the other two | Typechecks the CDK app, runs the Jest, Vitest and pytest suites, and lints, typechecks and tests the frontend. Needs no AWS credentials and no Docker. |
 | `pr-check.yml` | Pull requests to `main` | Runs `test.yml` with coverage. If `AWS_DIFF_ROLE_ARN` is set, also writes a `cdk diff` to the job summary. |
 | `deploy.yml` | Push to `main`, or manual run | Runs `test.yml`, then (only if `AWS_ROLE_ARN` is set) syncs the brand files, bootstraps CDK, waits for the stack to settle, and runs `cdk deploy`. |
+| `scorecard.yml` | Push to `main`, weekly, and branch protection changes | Runs the [OpenSSF Scorecard](https://scorecard.dev) supply-chain checks and uploads the results to code scanning. Needs no AWS credentials. |
 
 **Deploy is skipped without `AWS_ROLE_ARN`.** A fork with no AWS configuration still gets the tests; the deploy job is simply skipped.
 
@@ -455,12 +457,21 @@ abe/
 ├── scripts/                        create-admin.sh, sync-brand.ts
 ├── docs/                           Architecture diagram, custom domain, data ingestion
 ├── test/                           CDK stack tests
-└── .github/workflows/              test, PR check, deploy
+└── .github/workflows/              test, PR check, deploy, scorecard
 ```
 
 ## Contributing
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, the branch and pull request flow, and the tests every change needs. Follow the [Code of Conduct](CODE_OF_CONDUCT.md). `CLAUDE.md` holds the detailed architecture notes and conventions.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, the branch and pull request flow (`main` is protected, so changes land through pull requests), and the tests every change needs. Follow the [Code of Conduct](CODE_OF_CONDUCT.md). `CLAUDE.md` holds the detailed architecture notes and conventions.
+
+## Community and support
+
+- **Questions and ideas:** [GitHub Discussions](https://github.com/The-Burnes-Center/abe/discussions). Issues are for confirmed bugs and planned work.
+- **Getting help:** [SUPPORT.md](SUPPORT.md) says where to ask, what is out of scope and what response times to expect.
+- **How the project is run:** [GOVERNANCE.md](GOVERNANCE.md) covers roles, decisions and releases, and [MAINTAINERS.md](MAINTAINERS.md) lists who to contact.
+- **What changed:** [CHANGELOG.md](CHANGELOG.md) and the [GitHub Releases](https://github.com/The-Burnes-Center/abe/releases).
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+- **Security:** [SECURITY.md](SECURITY.md). Report vulnerabilities privately, never in a public issue.
 
 ## License
 

@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use ABE in your work, please cite it using the metadata in this file."
+title: "ABE"
+type: software
+version: 1.0.0
+date-released: 2026-10-08
+license: MIT
+repository-code: "https://github.com/The-Burnes-Center/abe"
+url: "https://github.com/The-Burnes-Center/abe"
+authors:
+  - name: "AI for Impact"
+abstract: >-
+  ABE is an open-source, white-label AI assistant that answers questions from
+  your documents and spreadsheets, with citations. It combines an Amazon
+  Bedrock Knowledge Base with structured spreadsheet indexes through an
+  agentic tool loop, and deploys into your own AWS account with one CDK stack.
+keywords:
+  - retrieval-augmented generation
+  - chatbot
+  - AWS CDK
+  - Amazon Bedrock
+  - open source

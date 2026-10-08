@@ -1,0 +1,64 @@
+name: Bug report
+description: Something is broken or behaves differently from the docs
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Use this form for confirmed bugs. For questions and ideas, use [Discussions](https://github.com/The-Burnes-Center/abe/discussions).
+
+        **Security problems do not belong here.** Report them privately through [GitHub private vulnerability reporting](https://github.com/The-Burnes-Center/abe/security/advisories/new) (see SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: A clear description of the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ABE release, branch or commit
+      description: A release tag (for example v1.0.0), a branch name, or a commit SHA.
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: input
+    id: region
+    attributes:
+      label: AWS region
+      placeholder: us-east-1
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Deployment settings that differ from the defaults
+      description: For example enableEval, allowedSignupDomains, kbParserModel, custom domain, model overrides.
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and operating system
+      description: Only needed for a UI problem.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: CloudWatch log excerpts, browser console errors, screenshots. Remove account IDs, emails and any document content you cannot share.
+      render: shell
