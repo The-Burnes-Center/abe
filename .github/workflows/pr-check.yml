@@ -95,6 +95,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DIFF_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: pr-diff-${{ github.event.pull_request.number }}
+          mask-aws-account-id: true
 
       - name: Install dependencies
         run: |
