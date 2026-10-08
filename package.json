@@ -19,13 +19,13 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@aws-sdk/client-s3": "^3.689.0",
-    "@aws-sdk/s3-request-presigner": "^3.689.0",
+    "@aws-sdk/client-s3": "^3.1146.0",
+    "@aws-sdk/s3-request-presigner": "^3.1146.0",
     "@types/jest": "^29.5.12",
     "@types/node": "^22.10.0",
     "aws-cdk": "^2.1144.0",
     "jest": "^29.7.0",
-    "ts-jest": "^29.1.2",
+    "ts-jest": "^29.4.14",
     "ts-node": "^10.9.2",
     "typescript": "~5.4.5",
     "vitest": "^4.1.2"
