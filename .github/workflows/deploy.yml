@@ -108,6 +108,8 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: deploy-${{ github.run_id }}
+          # Public repo: keep the account ID out of the world-readable logs.
+          mask-aws-account-id: true
 
       - name: Install backend dependencies
         run: npm ci
