@@ -20,7 +20,7 @@
     "@emotion/styled": "^11.14.0",
     "@mui/icons-material": "^6.4.8",
     "@mui/material": "^6.5.0",
-    "@mui/system": "^6.5.0",
+    "@mui/system": "^9.4.0",
     "@mui/x-charts": "^7.29.1",
     "@smithy/eventstream-codec": "^4.5.2",
     "@smithy/util-utf8": "^4.5.2",
