@@ -1,7 +1,7 @@
 # Pinned by digest (the multi-arch manifest list for python:3.12) so rebuilds
 # don't silently pick up a new base. Refresh with:
 #   docker buildx imagetools inspect public.ecr.aws/lambda/python:3.12
-FROM public.ecr.aws/lambda/python:3.12@sha256:517bcc7dc1a3ba62e324961c1563cc54a2bd6dc1060188f9d376211ecb7b2926
+FROM public.ecr.aws/lambda/python:3.14@sha256:486b444fbc2079290e331eb86c4e1a5f11eb72873bd2ea883b177a1cd070ed09
 
 
 # Copy function code
