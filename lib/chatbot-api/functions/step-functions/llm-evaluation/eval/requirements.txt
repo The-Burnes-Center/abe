@@ -12,15 +12,14 @@ certifi==2025.4.26
 charset-normalizer==3.4.2
 click==8.2.1
 dataclasses-json==0.6.7
-datasets==3.6.0
+datasets==5.0.1
 defusedxml==0.7.1
 dill==0.3.8
 diskcache==5.6.3
 distro==1.9.0
 filelock==3.18.0
 frozenlist==1.6.0
-fsspec==2025.3.0
-greenlet==3.2.2
+fsspec[http]==2025.3.0
 h11==0.16.0
 hf-xet==1.1.2
 httpcore==1.0.9
@@ -52,7 +51,7 @@ orjson==3.10.18
 packaging==24.2
 pandas==2.2.3
 propcache==0.3.1
-pyarrow==20.0.0
+pyarrow==26.0.1
 pydantic==2.11.5
 pydantic-core==2.33.2
 pydantic-settings==2.9.1

@@ -6,7 +6,7 @@ ragas==0.2.14
 langchain-aws>=0.2,<0.3
 langchain-community>=0.3,<0.4
 langchain>=0.3,<0.4
-datasets>=3.0
+datasets>=5.0.1
 pandas>=2.2
 boto3>=1.35
 nltk>=3.10.3
