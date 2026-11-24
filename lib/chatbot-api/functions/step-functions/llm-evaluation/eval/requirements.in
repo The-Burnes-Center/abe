@@ -4,7 +4,7 @@
 #     --python-platform x86_64-manylinux_2_28 --no-header --no-annotate -o requirements.txt
 ragas==0.2.14
 langchain-aws>=0.2,<0.3
-langchain-community>=0.3,<0.4
+langchain-community>=0.3.27,<0.4
 langchain>=0.3,<0.4
 datasets>=3.0
 pandas>=2.2
